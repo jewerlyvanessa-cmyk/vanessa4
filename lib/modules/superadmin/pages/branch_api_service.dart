@@ -162,22 +162,22 @@ class BranchApiService {
     }
   }
 
-  Future<bool> validateBranchCode(String code, {String? excludeBranchId}) async {
+  Future<bool?> validateBranchCode(String code, {String? excludeBranchId}) async {
     try {
       final queryParams = <String, String>{'code': code};
       if (excludeBranchId != null) queryParams['exclude'] = excludeBranchId;
 
-      final uri = Uri.parse('$baseUrl/branches/validate-code').replace(queryParameters: queryParams);
+      final uri = Uri.parse('$baseUrl/branches/validation/code').replace(queryParameters: queryParams);
       final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
 
       if (response.statusCode == 200) {
         final result = json.decode(response.body);
         return result['valid'] ?? false;
       } else {
-        return false;
+        return null;
       }
     } catch (e) {
-      return false;
+      return null;
     }
   }
 }

@@ -110,7 +110,7 @@ class OrderTodayStatsNotifier
 
       final client = http.Client();
       final response = await client
-          .get(uri, headers: {'Content-Type': 'application/json'})
+          .get(uri, headers: NetworkConfig.defaultHeaders)
           .timeout(NetworkConfig.connectionTimeout);
       client.close();
 
@@ -206,7 +206,7 @@ class TodayOrdersNotifier
 
       final client = http.Client();
       final response = await client
-          .get(uri, headers: {'Content-Type': 'application/json'})
+          .get(uri, headers: NetworkConfig.defaultHeaders)
           .timeout(NetworkConfig.connectionTimeout);
       client.close();
 
@@ -253,7 +253,7 @@ class TodayOrdersNotifier
       ).replace(queryParameters: queryParams);
       final client = http.Client();
       final orderItemsResponse = await client
-          .get(orderItemsUri, headers: {'Content-Type': 'application/json'})
+          .get(orderItemsUri, headers: NetworkConfig.defaultHeaders)
           .timeout(NetworkConfig.connectionTimeout);
       client.close();
 

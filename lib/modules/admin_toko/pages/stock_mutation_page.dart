@@ -37,7 +37,7 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
 
       final response = await http.get(
         Uri.parse('$baseUrl/stock-mutations?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

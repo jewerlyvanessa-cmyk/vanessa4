@@ -154,7 +154,7 @@ router.delete('/branches/:id', async (req, res) => {
 
     // Check if branch has related data (users, orders, etc.)
     const userCount = await pool.query(
-      'SELECT COUNT(*) FROM users WHERE branch_id = $1',
+      'SELECT COUNT(*) FROM user_branch_roles WHERE branch_id = $1',
       [id]
     );
 

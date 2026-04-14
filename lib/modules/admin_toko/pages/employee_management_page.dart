@@ -38,7 +38,7 @@ class _EmployeeManagementPageState
 
       final response = await http.get(
         Uri.parse('$baseUrl/employees?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -338,7 +338,7 @@ class _EmployeeManagementPageState
 
       final response = await http.put(
         Uri.parse('$baseUrl/employees/${employee['user_id']}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode({'status': newStatus}),
       );
 
@@ -401,7 +401,7 @@ class _EmployeeManagementPageState
 
       final response = await http.delete(
         Uri.parse('$baseUrl/employees/${employee['user_id']}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -549,7 +549,7 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/employees'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(employeeData),
       );
 
@@ -695,7 +695,7 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
 
       final response = await http.put(
         Uri.parse('$baseUrl/employees/${widget.employee['user_id']}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(employeeData),
       );
 

@@ -4,6 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import '../utils/network_config.dart';
 
+class UnauthorizedApiException implements Exception {
+  final String message;
+  UnauthorizedApiException([this.message = 'Session expired. Please login again.']);
+
+  @override
+  String toString() => message;
+}
+
 class ApiService {
   static String get baseUrl => NetworkConfig.baseUrl;
 
@@ -22,6 +30,10 @@ class ApiService {
     for (int attempt = 0; attempt <= retries; attempt++) {
       try {
         final response = await request().timeout(timeout);
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          NetworkConfig.setAuthToken(null);
+          throw UnauthorizedApiException();
+        }
         return response;
       } on TimeoutException {
         if (attempt == retries) {
@@ -73,8 +85,6 @@ class ApiService {
               body: jsonEncode({'username': username, 'password': password}),
             )
             .timeout(NetworkConfig.connectionTimeout);
-
-        debugPrint('Raw login response: ${response.body}');
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);

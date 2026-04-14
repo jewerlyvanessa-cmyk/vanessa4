@@ -36,7 +36,7 @@ class _StockPageState extends ConsumerState<StockPage> {
 
       final response = await http.get(
         Uri.parse('$baseUrl/items?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -378,7 +378,7 @@ class _StockPageState extends ConsumerState<StockPage> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/items'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode({
           'name': name,
           'kode_produk': kodeBarang,

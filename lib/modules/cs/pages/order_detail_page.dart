@@ -585,7 +585,7 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
                 // Make API call to update order
                 final response = await http.put(
                   Uri.parse('$baseUrl/orders/$orderId'),
-                  headers: {'Content-Type': 'application/json'},
+                  headers: NetworkConfig.defaultHeaders,
                   body: jsonEncode(updateData),
                 );
 

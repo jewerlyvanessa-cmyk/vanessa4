@@ -107,6 +107,8 @@ class NetworkConfig {
     _authToken = token;
   }
 
+  static String? get authToken => _authToken;
+
   static Map<String, String> get defaultHeaders => {
     'Content-Type': 'application/json',
     'Accept': 'application/json',

@@ -12,14 +12,14 @@ const db = require('./db');
  */
 async function setupSuperadminUser() {
   const username = process.env.SUPERADMIN_USERNAME || 'superadmin';
-  const password = process.env.SUPERADMIN_PASSWORD || 'superadmin123';
+  const password = process.env.SUPERADMIN_PASSWORD;
   const branchCode = process.env.SUPERADMIN_BRANCH_CODE || 'MAIN';
   const branchName = process.env.SUPERADMIN_BRANCH_NAME || 'Cabang Utama';
   const branchAlias = process.env.SUPERADMIN_BRANCH_ALIAS || 'Main Branch';
   const branchAddress = process.env.SUPERADMIN_BRANCH_ADDRESS || 'Jl. Raya No. 123';
 
   if (!username || !password) {
-    throw new Error('SUPERADMIN_USERNAME and SUPERADMIN_PASSWORD must be provided.');
+    throw new Error('SUPERADMIN_PASSWORD must be provided explicitly for security.');
   }
 
   try {

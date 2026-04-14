@@ -17,6 +17,7 @@ const path = require('path');
 const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const customersRoute = require('./routes/customers'); // Import customers route
 const apiRoutes = require('./api'); // Import new API routes
@@ -26,9 +27,26 @@ const app = express();
 const port = process.env.PORT || 3000; // Update port to 3000
 const SECRET_KEY = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server/mobile requests (no browser origin)
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS origin not allowed'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(bodyParser.json());
 
 if (!SECRET_KEY) {
@@ -60,6 +78,22 @@ const requireRoles = (...roles) => (req, res, next) => {
   next();
 };
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again later.' },
+});
+
+const writeApiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' },
+});
+
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -90,6 +124,21 @@ app.use('/employees', authenticateToken, requireRoles('superadmin', 'admin_toko'
 app.use('/user-branch-roles', authenticateToken, requireRoles('superadmin'));
 app.use('/branches', authenticateToken, requireRoles('superadmin'));
 app.use('/api/branches', authenticateToken, requireRoles('superadmin'));
+app.use('/orders', authenticateToken);
+app.use('/payments', authenticateToken);
+app.use('/transfers', authenticateToken);
+app.use('/items', authenticateToken);
+app.use('/item-conditions', authenticateToken);
+app.use('/order-items', authenticateToken);
+app.use('/stock-mutations', authenticateToken);
+app.use('/stock-history', authenticateToken, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
+app.use('/reports', authenticateToken, requireRoles('superadmin', 'manajer'));
+app.use('/api', authenticateToken);
+app.use('/api/workshop', authenticateToken, requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer'));
+app.use('/workshop-orders', authenticateToken, requireRoles('superadmin', 'admin_workshop', 'tukang'));
+app.use('/technicians', authenticateToken, requireRoles('superadmin', 'admin_workshop'));
+app.use('/test-db', authenticateToken, requireRoles('superadmin'));
+app.use(['/orders', '/payments', '/transfers', '/items', '/stock-history', '/stock-mutations', '/employees', '/branches', '/users'], writeApiLimiter);
 
 // Sample data
 let orders = [];
@@ -714,7 +763,7 @@ app.get('/orders/pending-payment', async (req, res) => {
 });
 
 // Get daily payments for kasir and admin toko
-app.get('/payments/daily', async (req, res) => {
+app.get('/payments/daily-summary', async (req, res) => {
   try {
     const { branch_id, date } = req.query;
 
@@ -803,7 +852,7 @@ app.get('/payments/daily', async (req, res) => {
 });
 
 // Get orders with date filter for admin toko
-app.get('/orders', async (req, res) => {
+app.get('/orders/by-date', async (req, res) => {
   try {
     const { branch_id, date } = req.query;
 
@@ -872,7 +921,7 @@ app.get('/orders', async (req, res) => {
 });
 
 // Get transfers for goods transfer page
-app.get('/transfers', async (req, res) => {
+app.get('/transfers/legacy', async (req, res) => {
   try {
     const { branch_id, status } = req.query;
 
@@ -1045,8 +1094,11 @@ app.get('/branches', async (req, res) => {
       SELECT
         branch_id,
         name,
+        code,
+        alias,
+        initials,
         address,
-        phone_number as phone,
+        phone_number,
         status
       FROM branches
       ORDER BY name
@@ -1056,8 +1108,11 @@ app.get('/branches', async (req, res) => {
     const processedRows = result.rows.map(row => ({
       branch_id: row.branch_id.toString(),
       name: row.name,
+      code: row.code,
+      alias: row.alias,
+      initials: row.initials,
       address: row.address,
-      phone: row.phone,
+      phone_number: row.phone_number,
       status: row.status
     }));
 
@@ -1065,6 +1120,32 @@ app.get('/branches', async (req, res) => {
   } catch (error) {
     console.error('Error fetching branches:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+app.post('/branches', async (req, res) => {
+  try {
+    const { name, code, alias, initials, address, phone_number } = req.body;
+
+    if (!name || !code) {
+      return res.status(400).json({ error: 'name and code are required' });
+    }
+
+    const insertQuery = `
+      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), NOW())
+      RETURNING branch_id, name, code, alias, initials, address, phone_number, status, created_at, updated_at
+    `;
+    const result = await db.query(insertQuery, [name, code, alias, initials, address, phone_number]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating branch:', error);
+    if (error.code === '23505') {
+      res.status(400).json({ error: 'Branch code already exists' });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
 });
 
@@ -1680,7 +1761,7 @@ app.get('/branches', async (req, res) => {
   }
 });
 
-app.get('/branches/:id', async (req, res) => {
+app.get('/branches/:id/basic', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const query = `
@@ -1895,7 +1976,8 @@ app.delete('/branches/:id', async (req, res) => {
 });
 
 // Validate branch code uniqueness
-app.get('/branches/validate-code', async (req, res) => {
+// Use a non-ambiguous path so it won't collide with /branches/:id
+app.get('/branches/validation/code', async (req, res) => {
   try {
     const { code, exclude } = req.query;
 
@@ -2167,7 +2249,7 @@ app.post('/payments', async (req, res) => {
 });
 
 // Endpoint untuk login dan pengaturan session
-app.post('/login', async (req, res) => {
+app.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {

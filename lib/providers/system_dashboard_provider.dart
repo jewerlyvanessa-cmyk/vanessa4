@@ -94,13 +94,18 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
 
       final response = await http.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final dashboardData = SystemDashboardData.fromJson(data);
         state = AsyncValue.data(dashboardData);
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        state = AsyncValue.error(
+          'Unauthorized access. Please login again.',
+          StackTrace.current,
+        );
       } else {
         // Fallback to mock data if API not available
         final mockData = SystemDashboardData(

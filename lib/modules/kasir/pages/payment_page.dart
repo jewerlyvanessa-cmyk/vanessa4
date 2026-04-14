@@ -50,7 +50,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/payments'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(paymentData),
       );
 

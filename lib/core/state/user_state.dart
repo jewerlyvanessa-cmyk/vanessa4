@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import '../../utils/network_config.dart';
 
 class UserState {
   final int? userId;
@@ -45,6 +47,8 @@ class UserState {
 
 class UserStateNotifier extends StateNotifier<UserState> {
   static const String _userDataKey = 'user_data';
+  static const String _authTokenKey = 'auth_token';
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
   UserStateNotifier() : super(UserState()) {
     _loadUserData();
@@ -57,15 +61,24 @@ class UserStateNotifier extends StateNotifier<UserState> {
 
       if (userDataJson != null) {
         final userData = jsonDecode(userDataJson);
+        String authToken = '';
+        try {
+          authToken = await _secureStorage.read(key: _authTokenKey) ?? '';
+        } catch (e) {
+          // Backward compatibility: fallback token stored in shared preferences.
+          authToken = userData['authToken'] ?? '';
+        }
+
         state = UserState(
           userId: userData['userId'],
           username: userData['username'] ?? '',
           branch: userData['branch'] ?? '',
           role: userData['role'] ?? '',
-          authToken: userData['authToken'] ?? '',
+          authToken: authToken,
           roles: List<String>.from(userData['roles'] ?? []),
           branches: List<Map<String, dynamic>>.from(userData['branches'] ?? []),
         );
+        NetworkConfig.setAuthToken(authToken.isEmpty ? null : authToken);
       }
     } catch (e) {
       // If loading fails, keep the default empty state
@@ -86,6 +99,11 @@ class UserStateNotifier extends StateNotifier<UserState> {
         'branches': state.branches,
       };
       await prefs.setString(_userDataKey, jsonEncode(userData));
+      if (state.authToken.isNotEmpty) {
+        await _secureStorage.write(key: _authTokenKey, value: state.authToken);
+      } else {
+        await _secureStorage.delete(key: _authTokenKey);
+      }
     } catch (e) {
       developer.log('Error saving user data', error: e);
     }
@@ -134,6 +152,7 @@ class UserStateNotifier extends StateNotifier<UserState> {
       roles: roles,
       branches: branches,
     );
+    NetworkConfig.setAuthToken(authToken.isEmpty ? null : authToken);
     _saveUserData();
   }
 
@@ -146,6 +165,8 @@ class UserStateNotifier extends StateNotifier<UserState> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_userDataKey);
+      await _secureStorage.delete(key: _authTokenKey);
+      NetworkConfig.setAuthToken(null);
     } catch (e) {
       developer.log('Error clearing user data', error: e);
     }

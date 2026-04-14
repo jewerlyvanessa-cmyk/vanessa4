@@ -65,7 +65,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
         Uri.parse(
           '$baseUrl/orders?branch_id=${userState.branch}&status=completed',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -145,7 +145,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       final baseUrl = NetworkConfig.baseUrl;
       final response = await (widget.client ?? http.Client()).post(
         Uri.parse('$baseUrl/orders'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(orderData),
       );
 

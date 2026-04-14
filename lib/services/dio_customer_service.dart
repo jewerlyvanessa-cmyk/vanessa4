@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import '../utils/network_config.dart';
 
 class DioCustomerService {
   final Dio _dio;
@@ -8,7 +9,16 @@ class DioCustomerService {
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 10),
-        ));
+        )) {
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          options.headers.addAll(NetworkConfig.defaultHeaders);
+          handler.next(options);
+        },
+      ),
+    );
+  }
 
   Future<Map<String, dynamic>?> addCustomer(String name, String phone, String address) async {
     try {

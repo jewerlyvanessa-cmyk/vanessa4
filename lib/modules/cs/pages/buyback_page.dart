@@ -310,7 +310,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         Uri.parse(
           '$baseUrl/orders?order_number=$notaLama${notaLama.isNotEmpty ? '' : '&branch_id=$branchId'}',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -541,7 +541,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
           Uri.parse('$baseUrl/customers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
             'phone': phoneController.text,

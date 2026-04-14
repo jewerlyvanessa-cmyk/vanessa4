@@ -1,12 +1,29 @@
 const { Pool } = require('pg');
 
+const requiredDbEnv = ['DB_USER', 'DB_HOST', 'DB_NAME', 'DB_PASSWORD', 'DB_PORT'];
+const missingDbEnv = requiredDbEnv.filter((key) => !process.env[key]);
+const isStrictDbEnv =
+  process.env.STRICT_DB_ENV === 'true' ||
+  process.env.NODE_ENV === 'production';
+
+if (isStrictDbEnv && missingDbEnv.length > 0) {
+  throw new Error(`Missing required database environment variables: ${missingDbEnv.join(', ')}`);
+}
+
+if (!isStrictDbEnv && missingDbEnv.length > 0) {
+  // Keep local/dev usable while production remains strict.
+  console.warn(
+    `[db] Missing env vars (${missingDbEnv.join(', ')}). Falling back to local defaults for development.`
+  );
+}
+
 // Konfigurasi koneksi database
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres', // Ganti dengan username database Anda
-  host: process.env.DB_HOST || 'localhost', // Host database
-  database: process.env.DB_NAME || 'vanessa3', // Nama database
-  password: process.env.DB_PASSWORD || 'password', // Password database
-  port: process.env.DB_PORT || 5432, // Port database
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME || 'vanessa3',
+  password: process.env.DB_PASSWORD || 'password',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
 });
 
 module.exports = {

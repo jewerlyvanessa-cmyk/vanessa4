@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../utils/network_config.dart';
 
 class CustomerService {
   final String baseUrl;
@@ -10,7 +11,7 @@ class CustomerService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/customers'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode({'name': name, 'phone': phone, 'address': address}),
       ).timeout(const Duration(seconds: 10));
 
@@ -28,7 +29,7 @@ class CustomerService {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/customers'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {

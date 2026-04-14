@@ -170,7 +170,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
           Uri.parse('$baseUrl/customers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
             'phone': phoneController.text,
@@ -271,7 +271,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/orders'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(orderData),
       );
 
@@ -319,7 +319,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         Uri.parse(
           '$baseUrl/orders?order_number=${Uri.encodeComponent(notaLama)}',
         ),
-        headers: const {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode != 200) {

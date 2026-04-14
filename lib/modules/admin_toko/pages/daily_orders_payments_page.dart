@@ -44,7 +44,7 @@ class _DailyOrdersPaymentsPageState
         Uri.parse(
           '$baseUrl/orders/daily?branch_id=${userState.branch}&date=$dateStr',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       // Load payments data
@@ -52,7 +52,7 @@ class _DailyOrdersPaymentsPageState
         Uri.parse(
           '$baseUrl/payments/daily?date=$dateStr&branch_id=${userState.branch}',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (ordersResponse.statusCode == 200 &&

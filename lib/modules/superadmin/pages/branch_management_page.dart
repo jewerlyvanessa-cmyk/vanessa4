@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'branch_api_service.dart';
 import '../../../utils/network_config.dart';
 
 class BranchManagementPage extends ConsumerStatefulWidget {
@@ -12,6 +11,8 @@ class BranchManagementPage extends ConsumerStatefulWidget {
 }
 
 class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
+  BranchApiService get _apiService =>
+      BranchApiService(baseUrl: NetworkConfig.baseUrl);
   List<Map<String, dynamic>> _branches = [];
   List<Map<String, dynamic>> _filteredBranches = [];
   bool _isLoading = true;
@@ -32,31 +33,12 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
     });
 
     try {
-      final response = await http.get(
-        Uri.parse('${NetworkConfig.baseUrl}/branches'),
-        headers: NetworkConfig.defaultHeaders,
-      );
-
-      if (response.statusCode == 200) {
-        final responseData = jsonDecode(response.body);
-        if (responseData is List) {
-          setState(() {
-            _branches = List<Map<String, dynamic>>.from(responseData);
-            _isLoading = false;
-          });
-        } else {
-          setState(() {
-            _error = 'Format data cabang tidak valid';
-            _isLoading = false;
-          });
-        }
-      } else {
-        setState(() {
-          _error = 'Gagal memuat data cabang (${response.statusCode})';
-          _isLoading = false;
-        });
-      }
+      _branches = await _apiService.fetchBranches();
+      _isLoading = false;
       _applyFilters();
+      if (mounted) {
+        setState(() {});
+      }
     } catch (error) {
       debugPrint('Error loading branches: $error');
       String errorMessage = 'Gagal memuat data cabang. ';
@@ -69,6 +51,241 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
         _error = errorMessage;
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _showBranchForm({Map<String, dynamic>? branch}) async {
+    final formKey = GlobalKey<FormState>();
+    final isEdit = branch != null;
+    String name = branch?['name']?.toString() ?? '';
+    String code = branch?['code']?.toString() ?? '';
+    String alias = branch?['alias']?.toString() ?? '';
+    String initials = branch?['initials']?.toString() ?? '';
+    String address = branch?['address']?.toString() ?? '';
+    String phoneNumber = branch?['phone_number']?.toString() ?? '';
+    String status = branch?['status']?.toString() ?? 'active';
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        bool submitting = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(isEdit ? 'Edit Cabang' : 'Tambah Cabang'),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        initialValue: name,
+                        decoration: const InputDecoration(labelText: 'Nama cabang'),
+                        validator: (v) => v == null || v.trim().isEmpty ? 'Nama wajib diisi' : null,
+                        onChanged: (v) => name = v.trim(),
+                      ),
+                      TextFormField(
+                        initialValue: code,
+                        decoration: const InputDecoration(labelText: 'Kode cabang'),
+                        validator: (v) => v == null || v.trim().isEmpty ? 'Kode wajib diisi' : null,
+                        onChanged: (v) => code = v.trim().toUpperCase(),
+                      ),
+                      TextFormField(
+                        initialValue: alias,
+                        decoration: const InputDecoration(labelText: 'Alias'),
+                        onChanged: (v) => alias = v.trim(),
+                      ),
+                      TextFormField(
+                        initialValue: initials,
+                        decoration: const InputDecoration(labelText: 'Inisial'),
+                        onChanged: (v) => initials = v.trim().toUpperCase(),
+                      ),
+                      TextFormField(
+                        initialValue: address,
+                        decoration: const InputDecoration(labelText: 'Alamat'),
+                        onChanged: (v) => address = v.trim(),
+                      ),
+                      TextFormField(
+                        initialValue: phoneNumber,
+                        decoration: const InputDecoration(labelText: 'Nomor telepon'),
+                        keyboardType: TextInputType.phone,
+                        onChanged: (v) => phoneNumber = v.trim(),
+                      ),
+                      if (isEdit)
+                        DropdownButtonFormField<String>(
+                          initialValue: status,
+                          decoration: const InputDecoration(labelText: 'Status'),
+                          items: const [
+                            DropdownMenuItem(value: 'active', child: Text('Aktif')),
+                            DropdownMenuItem(value: 'inactive', child: Text('Tidak Aktif')),
+                          ],
+                          onChanged: (v) => status = v ?? 'active',
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting ? null : () => Navigator.pop(context),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          if (!(formKey.currentState?.validate() ?? false)) return;
+                          setDialogState(() => submitting = true);
+
+                          try {
+                            final isCodeValid = await _apiService.validateBranchCode(
+                              code,
+                              excludeBranchId: isEdit ? branch['branch_id'].toString() : null,
+                            );
+                            if (isCodeValid == false) {
+                              throw Exception('Kode cabang sudah dipakai.');
+                            }
+
+                            final payload = {
+                              'name': name,
+                              'code': code,
+                              'alias': alias.isEmpty ? null : alias,
+                              'initials': initials.isEmpty ? null : initials,
+                              'address': address.isEmpty ? null : address,
+                              'phone_number': phoneNumber.isEmpty ? null : phoneNumber,
+                              if (isEdit) 'status': status,
+                            };
+
+                            bool success;
+                            if (isEdit) {
+                              success = await _apiService.updateBranch(
+                                branch['branch_id'].toString(),
+                                payload,
+                              );
+                            } else {
+                              success = await _apiService.createBranch(payload);
+                            }
+
+                            if (!success) {
+                              throw Exception(isEdit ? 'Gagal mengubah cabang.' : 'Gagal menambah cabang.');
+                            }
+
+                            if (mounted) {
+                              Navigator.pop(context);
+                              await _loadBranches();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isEdit ? 'Cabang berhasil diperbarui' : 'Cabang berhasil ditambahkan',
+                                  ),
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Gagal simpan cabang: $e')),
+                              );
+                            }
+                          } finally {
+                            if (mounted) {
+                              setDialogState(() => submitting = false);
+                            }
+                          }
+                        },
+                  child: Text(isEdit ? 'Simpan' : 'Tambah'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showBranchUsers(String branchId, String branchName) async {
+    try {
+      final users = await _apiService.fetchBranchUsers(branchId);
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Users - $branchName'),
+          content: SizedBox(
+            width: 420,
+            child: users.isEmpty
+                ? const Text('Belum ada user di cabang ini.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: users.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final user = users[index];
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          user['is_primary'] == true ? Icons.star : Icons.person,
+                          color: user['is_primary'] == true ? Colors.amber : null,
+                        ),
+                        title: Text(user['username']?.toString() ?? '-'),
+                        subtitle: Text('Role: ${user['role'] ?? '-'} | Status: ${user['user_status'] ?? '-'}'),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Tutup'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal memuat users cabang: $e')),
+      );
+    }
+  }
+
+  Future<void> _showBranchStats(String branchId, String branchName) async {
+    try {
+      final stats = await _apiService.fetchBranchStatistics(branchId);
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Statistik - $branchName'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Total user: ${stats['total_users'] ?? 0}'),
+                Text('Total transaksi bulan ini: ${stats['total_transactions'] ?? 0}'),
+                Text('Total item: ${stats['total_items'] ?? 0}'),
+                Text('Order completed bulan ini: ${stats['completed_orders_this_month'] ?? 0}'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Tutup'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal memuat statistik cabang: $e')),
+      );
     }
   }
 
@@ -204,11 +421,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.edit),
-                                        onPressed: () {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('Edit functionality coming soon')),
-                                          );
-                                        },
+                                        onPressed: () => _showBranchForm(branch: branch),
                                       ),
                                     ],
                                   ),
@@ -224,21 +437,19 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                                           Row(
                                             children: [
                                               ElevatedButton.icon(
-                                                onPressed: () {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    const SnackBar(content: Text('Users functionality coming soon')),
-                                                  );
-                                                },
+                                                onPressed: () => _showBranchUsers(
+                                                  branch['branch_id'].toString(),
+                                                  branch['name']?.toString() ?? 'Cabang',
+                                                ),
                                                 icon: const Icon(Icons.people),
                                                 label: const Text('Lihat Users'),
                                               ),
                                               const SizedBox(width: 8),
                                               ElevatedButton.icon(
-                                                onPressed: () {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    const SnackBar(content: Text('Statistics functionality coming soon')),
-                                                  );
-                                                },
+                                                onPressed: () => _showBranchStats(
+                                                  branch['branch_id'].toString(),
+                                                  branch['name']?.toString() ?? 'Cabang',
+                                                ),
                                                 icon: const Icon(Icons.bar_chart),
                                                 label: const Text('Statistik'),
                                               ),
@@ -256,11 +467,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Add branch functionality coming soon')),
-          );
-        },
+        onPressed: () => _showBranchForm(),
         child: const Icon(Icons.add),
       ),
     );

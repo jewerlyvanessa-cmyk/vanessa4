@@ -41,7 +41,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
         Uri.parse(
           '${NetworkConfig.baseUrl}/payments/daily?branch_id=${userState.branch}&date=$dateStr',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

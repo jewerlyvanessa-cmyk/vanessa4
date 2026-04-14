@@ -43,7 +43,7 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
 
       final response = await http.get(
         Uri.parse('$baseUrl/workshop-orders?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

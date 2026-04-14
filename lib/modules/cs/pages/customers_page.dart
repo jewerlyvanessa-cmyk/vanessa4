@@ -49,7 +49,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     try {
       final response = await http.get(
         uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
       Logger.logInfo('DEBUG: Response status: ${response.statusCode}');
       Logger.logInfo('DEBUG: Response body length: ${response.body.length}');
@@ -103,7 +103,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     try {
       final response = await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: json.encode({
           'name': name,
           'email': email,
@@ -146,7 +146,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     try {
       final response = await http.patch(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: json.encode({
           'name': name,
           'email': email,

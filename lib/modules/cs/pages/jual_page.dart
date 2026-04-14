@@ -364,7 +364,7 @@ class _JualPageState extends ConsumerState<JualPage> {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
           Uri.parse('$baseUrl/api/customers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
             'phone': phoneController.text,
@@ -591,8 +591,7 @@ class _JualPageState extends ConsumerState<JualPage> {
 
     orderData['order_items'] = orderItems;
 
-    debugPrint('Final order data to submit:');
-    debugPrint(jsonEncode(orderData));
+    debugPrint('Submitting order payload with ${orderItems.length} item(s)');
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
@@ -600,7 +599,7 @@ class _JualPageState extends ConsumerState<JualPage> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/orders'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(orderData),
       );
 

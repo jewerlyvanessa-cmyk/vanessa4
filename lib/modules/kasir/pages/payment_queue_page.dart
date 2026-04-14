@@ -48,11 +48,11 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
         Uri.parse(
           '${NetworkConfig.baseUrl}/orders/pending-payment?branch_id=${userState.branch}',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       Logger.logInfo('Response status: ${response.statusCode}');
-      Logger.logInfo('Response body: ${response.body}');
+      Logger.logInfo('Payment queue fetched with status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

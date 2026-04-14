@@ -168,7 +168,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
           Uri.parse('$baseUrl/customers'),
-          headers: {'Content-Type': 'application/json'},
+          headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
             'phone': phoneController.text,
@@ -282,7 +282,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/orders'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(orderData),
       );
 

@@ -31,7 +31,7 @@ class _CustomerManagementPageState extends ConsumerState<CustomerManagementPage>
     try {
       final response = await http.get(
         Uri.parse('${NetworkConfig.baseUrl}/api/customers'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -271,7 +271,7 @@ class _CustomerManagementPageState extends ConsumerState<CustomerManagementPage>
     try {
       final response = await http.delete(
         Uri.parse('${NetworkConfig.baseUrl}/api/customers/${customer['customer_id']}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -396,7 +396,7 @@ class _AddCustomerDialogState extends State<AddCustomerDialog> {
 
       final response = await http.post(
         Uri.parse('${NetworkConfig.baseUrl}/api/customers'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(customerData),
       );
 
@@ -537,7 +537,7 @@ class _EditCustomerDialogState extends State<EditCustomerDialog> {
 
       final response = await http.put(
         Uri.parse('${NetworkConfig.baseUrl}/api/customers/${widget.customer['customer_id']}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(customerData),
       );
 

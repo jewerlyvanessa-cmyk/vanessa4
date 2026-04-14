@@ -109,7 +109,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
         Uri.parse(
           '${NetworkConfig.baseUrl}/orders/pending-payment?branch_id=${userState.branch}',
         ),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

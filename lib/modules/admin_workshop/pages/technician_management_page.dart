@@ -44,7 +44,7 @@ class _TechnicianManagementPageState
 
       final response = await http.get(
         Uri.parse('$baseUrl/technicians?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

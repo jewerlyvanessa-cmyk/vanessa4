@@ -37,13 +37,13 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       // Load transfer requests
       final transfersResponse = await http.get(
         Uri.parse('$baseUrl/transfers?branch_id=${userState.branch}'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       // Load branches for dropdown
       final branchesResponse = await http.get(
         Uri.parse('$baseUrl/branches'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (transfersResponse.statusCode == 200 && branchesResponse.statusCode == 200) {
@@ -256,7 +256,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
 
       final response = await http.put(
         Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode({'status': 'completed'}),
       );
 
@@ -289,7 +289,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
 
       final response = await http.put(
         Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode({'status': 'rejected'}),
       );
 
@@ -394,7 +394,7 @@ class _CreateTransferDialogState extends State<CreateTransferDialog> {
 
       final response = await http.post(
         Uri.parse('$baseUrl/transfers'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: jsonEncode(transferData),
       );
 

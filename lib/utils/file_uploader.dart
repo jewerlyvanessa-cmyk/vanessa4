@@ -10,8 +10,11 @@ class FileUploader {
     try {
       final request = http.MultipartRequest('POST', Uri.parse(uploadUrl));
       request.files.add(await http.MultipartFile.fromPath('file', imageFile.path));
-      if (token != null && token.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $token';
+      final effectiveToken = (token != null && token.isNotEmpty)
+          ? token
+          : NetworkConfig.authToken;
+      if (effectiveToken != null && effectiveToken.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $effectiveToken';
       }
       final response = await request.send();
       final respStr = await response.stream.bytesToString();
