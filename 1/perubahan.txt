@@ -1,0 +1,238 @@
+1. Filosofi Data
+Semua stok adalah item, tapi tidak semua item ada di stok.
+ID sistem ≠ ID bisnis.
+Item bisa dimiliki oleh cabang, pelanggan, atau unknown.
+2. Konsep Item
+2.1 Identitas Item
+Field	Fungsi
+item_id	ID internal sistem (PK, auto)
+item_code	Kode bisnis / produk
+qr_code	Media identifikasi fisik
+name	Nama barang
+weight	Berat (gram)
+quantity	Jumlah
+material	Material barang
+purity	Tingkat kemurnian
+kategori / jenis / tipe	Klasifikasi internal
+ownership	toko / pelanggan / unknown
+stock_type	inventory / non_inventory
+status	Lifecycle status
+is_quick_registered	true jika QSR
+is_estimated	true jika perkiraan
+branch_id	Cabang barang berada
+photo_url	Foto barang
+source	manual / import / auto
+metadata	JSONB tambahan
+created_at / updated_at	Timestamp
+2.2 Status Item
+draft, unregistered, ready, reserved, sold, buyback, on-service, on-custom, production, done, ready-for-pickup, lost
+2.3 Ownership
+toko | pelanggan | unknown
+2.4 Stock Type
+inventory | non_inventory
+3. Quick Stock Registration (QSR)
+Definisi:
+Daftar barang + langsung dijual, tidak pernah muncul sebagai ready stok.
+Ciri Item QSR:
+is_quick_registered = true
+ownership = toko
+stock_type = inventory
+status = reserved → sold
+Aturan Backend:
+Role: CS Senior / Admin
+Foto wajib
+Maksimum transaksi QSR per hari
+Harga di atas threshold → approval
+Inventory Query aman:
+SELECT *
+FROM items
+WHERE stock_type='inventory'
+AND status='ready'
+AND is_quick_registered=false;
+4. Flow Order (1 Order = 1 Item)
+4.1 Order Jual (3 Jalur)
+Jalur	Status Flow	stock_type	is_quick_registered
+Dari stok normal	ready → reserved → sold	inventory	false
+Barang belum terdaftar	unregistered → sold	non_inventory	false
+QSR	reserved → sold	inventory	true
+4.2 Order Buyback
+Item baru dibuat → status = buyback → QC → ready → inventory
+4.3 Order Service
+Item (lama / baru), ownership = pelanggan
+status = on-service → done → ready-for-pickup
+4.4 Order Custom
+Item baru, ownership = toko
+status = on-custom → production → done → optional ready
+5. Database Design (PostgreSQL 16)
+5.1 Branches, Users, Roles
+Tetap seperti yang ada, tidak diubah.
+5.2 Table items (FINAL)
+CREATE TABLE items (
+  item_id BIGSERIAL PRIMARY KEY,
+  
+  -- Business Identifier
+  item_code TEXT,
+  item_code_source TEXT DEFAULT 'internal',
+  qr_code TEXT UNIQUE,
+  
+  -- Basic Info
+  name TEXT NOT NULL,
+  weight NUMERIC(10,2),
+  quantity INTEGER DEFAULT 1,
+  material TEXT,
+  purity TEXT,
+  
+  kategori TEXT,
+  jenis TEXT,
+  tipe TEXT,
+  
+  -- Ownership & Stock
+  ownership TEXT CHECK (ownership IN ('toko','pelanggan','unknown')) DEFAULT 'unknown',
+  stock_type TEXT CHECK (stock_type IN ('inventory','non_inventory')) DEFAULT 'non_inventory',
+  
+  -- Lifecycle
+  status TEXT NOT NULL,
+  is_quick_registered BOOLEAN DEFAULT FALSE,
+  is_estimated BOOLEAN DEFAULT FALSE,
+  
+  branch_id BIGINT REFERENCES branches(branch_id),
+  
+  -- Media & Metadata
+  photo_url TEXT,
+  source TEXT DEFAULT 'manual',
+  metadata JSONB,
+  
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+
+CREATE UNIQUE INDEX uq_item_code_branch
+ON items(branch_id, item_code)
+WHERE item_code IS NOT NULL;
+5.3 Table orders (FINAL)
+CREATE TABLE orders (
+  order_id BIGSERIAL PRIMARY KEY,
+  order_type TEXT CHECK (order_type IN ('jual','buyback','service','custom')),
+  item_id BIGINT REFERENCES items(item_id),
+  customer_id BIGINT REFERENCES customers(customer_id),
+
+  -- Status workflow
+  status TEXT CHECK (
+    status IN ('draft','submitted','in_progress','done','cancelled')
+  ) DEFAULT 'draft',
+
+  -- Nota / Invoice
+  nota_order TEXT UNIQUE,
+
+  branch_id BIGINT REFERENCES branches(branch_id),
+
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+Note:
+nota_order = <branch_initial>-<branch_code>-<code_order>-<8 digit sequence>
+code_order mapping:
+jual → JL
+buyback → BB
+service → SV
+custom → CT
+5.4 Table stock_history
+CREATE TABLE stock_history (
+  history_id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT REFERENCES items(item_id),
+  old_status TEXT,
+  new_status TEXT,
+  changed_by BIGINT REFERENCES users(user_id),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT now()
+);
+5.5 Sequence & Function Nota Order
+CREATE SEQUENCE order_nota_seq
+START 1
+INCREMENT 1
+MINVALUE 1
+NO CYCLE;
+
+CREATE OR REPLACE FUNCTION generate_nota_order(
+  p_branch_id BIGINT,
+  p_order_type TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+  v_initial TEXT;
+  v_code TEXT;
+  v_order_code TEXT;
+  v_seq BIGINT;
+BEGIN
+  SELECT branch_initial, branch_code
+  INTO v_initial, v_code
+  FROM branches
+  WHERE branch_id = p_branch_id;
+
+  v_order_code := CASE p_order_type
+    WHEN 'jual' THEN 'JL'
+    WHEN 'buyback' THEN 'BB'
+    WHEN 'service' THEN 'SV'
+    WHEN 'custom' THEN 'CT'
+    ELSE NULL
+  END;
+
+  IF v_order_code IS NULL THEN
+    RAISE EXCEPTION 'Invalid order_type: %', p_order_type;
+  END IF;
+
+  v_seq := nextval('order_nota_seq');
+
+  RETURN v_initial || '-' || v_code || '-' || v_order_code || '-' || LPAD(v_seq::TEXT, 8, '0');
+END;
+$$ LANGUAGE plpgsql;
+5.6 Trigger: Cegah Update Nota Order
+CREATE OR REPLACE FUNCTION prevent_nota_order_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.nota_order IS NOT NULL AND NEW.nota_order <> OLD.nota_order THEN
+    RAISE EXCEPTION 'nota_order cannot be modified';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_nota_update
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION prevent_nota_order_update();
+6. Rules Backend
+QSR hanya untuk CS Senior / Admin
+Foto wajib untuk QSR
+Max transaksi QSR / hari
+Harga di atas threshold → approval
+Inventory query aman:
+SELECT *
+FROM items
+WHERE stock_type='inventory'
+AND status='ready'
+AND is_quick_registered=false;
+7. Dampak UI (Flutter)
+CS – Order Jual
+Pilihan:
+Ambil dari stok
+Barang belum terdaftar
+Daftarkan & jual sekarang (QSR)
+Admin Toko
+Normalisasi item
+Generate item_code
+QC buyback / custom
+Workshop
+Service & production queue
+Update status + foto
+Nota Order di UI
+Draft: —
+Submitted ke atas: tampil <branch_initial>-<branch_code>-<code_order>-00000001
+Bisa dicari/filter berdasarkan prefix (JL, BB, SV, CT)
+8. Ringkasan Eksekutif
+Tidak semua barang masuk stok
+Jual tetap jalan meski barang belum terdaftar
+Stok tetap bersih & audit-ready
+QSR aman dan terkontrol
+ID sistem ≠ ID bisnis
+Nota order mencakup cabang + jenis transaksi + urutan unik

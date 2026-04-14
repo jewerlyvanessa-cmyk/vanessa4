@@ -1,0 +1,113 @@
+ERD Lengkap Aplikasi Vanessa
+erDiagram
+    USERS ||--o{ USER_BRANCH_ROLES : has
+    BRANCHES ||--o{ USER_BRANCH_ROLES : has
+    BRANCHES ||--o{ ITEMS : contains
+    BRANCHES ||--o{ ORDERS : contains
+    ITEMS ||--o{ ORDERS : used_in
+    ORDERS ||--o{ ORDER_ITEMS : has
+    ITEMS ||--o{ STOCK_HISTORY : logs
+    USERS ||--o{ STOCK_HISTORY : changes
+
+    USERS {
+        BIGSERIAL user_id PK
+        TEXT username
+        TEXT password_hash
+        TEXT status
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    USER_BRANCH_ROLES {
+        BIGSERIAL id PK
+        BIGINT user_id FK
+        BIGINT branch_id FK
+        TEXT role
+        BOOLEAN is_primary
+    }
+
+    BRANCHES {
+        BIGSERIAL branch_id PK
+        TEXT name
+        TEXT code UNIQUE
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    ITEMS {
+        BIGSERIAL item_id PK
+        TEXT name
+        NUMERIC weight
+        TEXT material
+        TEXT purity
+        TEXT status
+        BIGINT branch_id FK
+        TEXT photo_url
+        TEXT source
+        JSONB metadata
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    ORDERS {
+        BIGSERIAL order_id PK
+        TEXT order_type
+        BIGINT item_id FK
+        BIGINT source_order_item_id FK
+        TEXT name
+        NUMERIC weight
+        TEXT material
+        TEXT purity
+        TEXT photo_url
+        TEXT scanned_qr
+        TEXT status
+        BIGINT branch_id FK
+        TIMESTAMP created_at
+        TIMESTAMP updated_at
+    }
+
+    ORDER_ITEMS {
+        BIGSERIAL order_item_id PK
+        BIGINT order_id FK
+        BIGINT item_id FK
+        TEXT name
+        NUMERIC weight
+        TEXT material
+        TEXT purity
+        TEXT photo_url
+        TEXT scanned_qr
+        TIMESTAMP created_at
+    }
+
+    STOCK_HISTORY {
+        BIGSERIAL history_id PK
+        BIGINT item_id FK
+        TEXT old_status
+        TEXT new_status
+        BIGINT changed_by FK
+        TIMESTAMP timestamp
+    }
+
+Relasi Penting
+
+User ↔ Branch ↔ Role
+
+users dihubungkan dengan branches melalui user_branch_roles
+
+is_primary = TRUE → branch & role utama
+
+Orders ↔ Items
+
+Jual → ambil dari items
+
+Buyback / Service → ambil dari order_items
+
+Custom → manual input (tidak wajib ada di items)
+
+Order ↔ Order_Items
+
+1 order = 1 item, tapi order_items menyimpan detail untuk histori / referensi
+
+Stock History
+
+Log perubahan status setiap item, dihubungkan ke users yang melakukan perubahan

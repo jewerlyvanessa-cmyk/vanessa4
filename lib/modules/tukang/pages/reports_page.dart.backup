@@ -1,0 +1,536 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
+
+class ReportsPage extends ConsumerWidget {
+  const ReportsPage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userState = ref.watch(userStateProvider);
+    final webSocketState = ref.watch(webSocketProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Image.asset(
+              'assets/logo_bulat.png',
+              height: 36,
+              width: 36,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(width: 12),
+            const Text('Laporan'),
+          ],
+        ),
+        actions: [
+          // Real-time connection indicator
+          Container(
+            margin: const EdgeInsets.only(right: 8),
+            child: Row(
+              children: [
+                Icon(
+                  webSocketState != null ? Icons.wifi : Icons.wifi_off,
+                  color: webSocketState != null ? Colors.green : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  'Live',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          SwitchBranchRoleWidget(),
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'Kembali',
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // User Info Header
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Teknisi: ${userState.username}', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text('Branch: ${userState.branch}', style: Theme.of(context).textTheme.bodyMedium),
+              ],
+            ),
+          ),
+
+          // Report Categories
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: GridView.count(
+                crossAxisCount: 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                children: [
+                  _ReportCard(
+                    icon: Icons.work,
+                    title: 'Laporan Harian',
+                    subtitle: 'Ringkasan pekerjaan hari ini',
+                    color: Colors.blue,
+                    onTap: () => _showDailyReport(context),
+                  ),
+                  _ReportCard(
+                    icon: Icons.calendar_month,
+                    title: 'Laporan Mingguan',
+                    subtitle: 'Statistik pekerjaan seminggu',
+                    color: Colors.green,
+                    onTap: () => _showWeeklyReport(context),
+                  ),
+                  _ReportCard(
+                    icon: Icons.inventory,
+                    title: 'Penggunaan Material',
+                    subtitle: 'Laporan material yang digunakan',
+                    color: Colors.orange,
+                    onTap: () => _showMaterialReport(context),
+                  ),
+                  _ReportCard(
+                    icon: Icons.trending_up,
+                    title: 'Performa',
+                    subtitle: 'Analisis performa kerja',
+                    color: Colors.purple,
+                    onTap: () => _showPerformanceReport(context),
+                  ),
+                  _ReportCard(
+                    icon: Icons.warning,
+                    title: 'Issue & Problem',
+                    subtitle: 'Laporan masalah yang terjadi',
+                    color: Colors.red,
+                    onTap: () => _showIssuesReport(context),
+                  ),
+                  _ReportCard(
+                    icon: Icons.download,
+                    title: 'Export Laporan',
+                    subtitle: 'Unduh laporan dalam format PDF',
+                    color: Colors.teal,
+                    onTap: () => _exportReport(context),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Quick Stats
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Statistik Cepat', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _QuickStat(
+                            label: 'Pekerjaan Hari Ini',
+                            value: '8',
+                            icon: Icons.today,
+                            color: Colors.blue,
+                          ),
+                        ),
+                        Expanded(
+                          child: _QuickStat(
+                            label: 'Rata-rata Waktu',
+                            value: '3.2h',
+                            icon: Icons.schedule,
+                            color: Colors.green,
+                          ),
+                        ),
+                        Expanded(
+                          child: _QuickStat(
+                            label: 'Efisiensi',
+                            value: '92%',
+                            icon: Icons.trending_up,
+                            color: Colors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDailyReport(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Laporan Harian'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Tanggal: 15 Januari 2025'),
+              SizedBox(height: 8),
+              Text('Total Pekerjaan: 8'),
+              Text('Pekerjaan Selesai: 7'),
+              Text('Pekerjaan Pending: 1'),
+              Text('Rata-rata Waktu: 3.2 jam'),
+              SizedBox(height: 8),
+              Text('Detail Pekerjaan:'),
+              Text('• Perbaikan Cincin Emas (2.5 jam)'),
+              Text('• Polesan Kalung (1.8 jam)'),
+              Text('• Perbaikan Anting (3.2 jam)'),
+              Text('• Pembuatan Liontin (4.1 jam)'),
+              Text('• Perbaikan Gelang (2.1 jam)'),
+              Text('• Polesan Cincin (1.5 jam)'),
+              Text('• Perbaikan Bros (3.8 jam)'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Tutup'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Laporan harian diekspor')),
+              );
+            },
+            child: const Text('Export'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showWeeklyReport(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Laporan Mingguan'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Periode: 8 - 14 Januari 2025'),
+              SizedBox(height: 8),
+              Text('Total Pekerjaan: 47'),
+              Text('Pekerjaan Selesai: 45'),
+              Text('Pekerjaan Pending: 2'),
+              Text('Rata-rata Waktu per Pekerjaan: 3.2 jam'),
+              Text('Total Waktu Kerja: 150.4 jam'),
+              SizedBox(height: 8),
+              Text('Pekerjaan per Hari:'),
+              Text('• Senin: 8 pekerjaan'),
+              Text('• Selasa: 6 pekerjaan'),
+              Text('• Rabu: 9 pekerjaan'),
+              Text('• Kamis: 7 pekerjaan'),
+              Text('• Jumat: 10 pekerjaan'),
+              Text('• Sabtu: 4 pekerjaan'),
+              Text('• Minggu: 3 pekerjaan'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Tutup'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Laporan mingguan diekspor')),
+              );
+            },
+            child: const Text('Export'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMaterialReport(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Laporan Penggunaan Material'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Periode: Januari 2025'),
+              SizedBox(height: 8),
+              Text('Total Material Digunakan:'),
+              Text('• Emas 24K: 125.5 gram'),
+              Text('• Emas 18K: 89.2 gram'),
+              Text('• Perak 99.9%: 234.1 gram'),
+              Text('• Tembaga: 45.8 gram'),
+              Text('• Bahan Lem: 12.3 gram'),
+              Text('• Cat Emas: 8.7 gram'),
+              SizedBox(height: 8),
+              Text('Material per Kategori Pekerjaan:'),
+              Text('• Perbaikan: 68%'),
+              Text('• Polesan: 22%'),
+              Text('• Pembuatan: 10%'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Tutup'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Laporan material diekspor')),
+              );
+            },
+            child: const Text('Export'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPerformanceReport(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Laporan Performa'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Periode: Januari 2025'),
+              SizedBox(height: 8),
+              Text('Metrik Performa:'),
+              Text('• Efisiensi Kerja: 92%'),
+              Text('• Tingkat Kepuasan: 95%'),
+              Text('• Rata-rata Waktu per Pekerjaan: 3.2 jam'),
+              Text('• On-time Delivery: 88%'),
+              SizedBox(height: 8),
+              Text('Kekuatan:'),
+              Text('• Spesialisasi dalam perbaikan emas'),
+              Text('• Konsistensi kualitas tinggi'),
+              Text('• Kemampuan menyelesaikan pekerjaan kompleks'),
+              SizedBox(height: 8),
+              Text('Area Perbaikan:'),
+              Text('• Pengurangan waktu jeda antar pekerjaan'),
+              Text('• Peningkatan akurasi estimasi waktu'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showIssuesReport(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Laporan Issue & Problem'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Issue Bulan Januari 2025:'),
+              SizedBox(height: 8),
+              Text('1. Kekurangan material emas 24K (2 kasus)'),
+              Text('   - Tanggal: 5 Jan, 12 Jan'),
+              Text('   - Dampak: Delay 2 jam per kasus'),
+              SizedBox(height: 8),
+              Text('2. Kerusakan peralatan poles (1 kasus)'),
+              Text('   - Tanggal: 18 Jan'),
+              Text('   - Dampak: Penggunaan peralatan cadangan'),
+              SizedBox(height: 8),
+              Text('3. Kesulitan teknis pada design kompleks (1 kasus)'),
+              Text('   - Tanggal: 22 Jan'),
+              Text('   - Dampak: Perlu konsultasi dengan senior'),
+              SizedBox(height: 8),
+              Text('Total Issue: 4'),
+              Text('Resolusi Rate: 100%'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Tutup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _exportReport(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Memilih jenis laporan untuk diekspor...')),
+    );
+
+    // Show export options
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Pilih Jenis Laporan', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.today),
+              title: const Text('Laporan Harian'),
+              onTap: () {
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Laporan harian diekspor ke PDF')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.calendar_month),
+              title: const Text('Laporan Mingguan'),
+              onTap: () {
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Laporan mingguan diekspor ke PDF')),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.inventory),
+              title: const Text('Laporan Material'),
+              onTap: () {
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Laporan material diekspor ke PDF')),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ReportCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Card(
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 32, color: color),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  const _QuickStat({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall,
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+}

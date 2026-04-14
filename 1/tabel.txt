@@ -1,0 +1,94 @@
+1. TABEL USERS
+Kolom	Tipe	Keterangan
+user_id	BIGSERIAL PK	Primary key
+username	TEXT UNIQUE	Nama pengguna/login
+password_hash	TEXT	Hash password
+status	TEXT	'active' / 'inactive', default 'active'
+created_at	TIMESTAMP	Waktu dibuat, default now()
+updated_at	TIMESTAMP	Waktu update terakhir, default now()
+2. TABEL BRANCHES
+Kolom	Tipe	Keterangan
+branch_id	BIGSERIAL PK	Primary key
+name	TEXT	Nama cabang
+code	TEXT UNIQUE	Kode cabang
+created_at	TIMESTAMP	Waktu dibuat
+updated_at	TIMESTAMP	Waktu update
+3. TABEL USER_BRANCH_ROLES
+Kolom	Tipe	Keterangan
+id	BIGSERIAL PK	Primary key
+user_id	BIGINT FK	Foreign key ke users(user_id)
+branch_id	BIGINT FK	Foreign key ke branches(branch_id)
+role	TEXT	'cs','kasir','admin_toko','admin_workshop','tukang','manajer','superadmin'
+is_primary	BOOLEAN	TRUE = branch & role utama untuk dashboard
+UNIQUE(user_id, branch_id, role)	-	Pastikan kombinasi unik
+4. TABEL ITEMS
+Kolom	Tipe	Keterangan
+item_id	BIGSERIAL PK	Primary key
+name	TEXT	Nama item
+weight	NUMERIC(10,2)	Berat item
+material	TEXT	Material
+purity	TEXT	Tingkat kemurnian
+status	TEXT	'ready','reserved','sold','buyback','on-service','on-custom','sent-to-workshop','in-workshop','done-workshop','ready-for-pickup','transfer','production','lost'
+branch_id	BIGINT FK	Cabang tempat item berada
+photo_url	TEXT	URL foto item
+source	TEXT	Sumber item (stok/manual)
+metadata	JSONB	Metadata fleksibel (atribut custom)
+created_at	TIMESTAMP	Waktu dibuat
+updated_at	TIMESTAMP	Waktu update
+5. TABEL ORDERS (1 ORDER = 1 ITEM)
+Kolom	Tipe	Keterangan
+order_id	BIGSERIAL PK	Primary key
+order_type	TEXT	'jual','buyback','service','custom'
+item_id	BIGINT FK	ID item dari tabel items (nullable untuk manual)
+source_order_item_id	BIGINT FK	ID order_item sumber (nullable)
+name	TEXT	Nama item (manual input)
+weight	NUMERIC(10,2)	Berat item
+material	TEXT	Material item
+purity	TEXT	Tingkat kemurnian
+photo_url	TEXT	URL foto produk
+scanned_qr	TEXT	QR code yang discan
+status	TEXT	'draft','reserved','sold','buyback','on-service','done','production'
+branch_id	BIGINT FK	Cabang terkait
+created_at	TIMESTAMP	Waktu dibuat
+updated_at	TIMESTAMP	Waktu update
+6. TABEL ORDER_ITEMS
+Kolom	Tipe	Keterangan
+order_item_id	BIGSERIAL PK	Primary key
+order_id	BIGINT FK	Foreign key ke orders(order_id)
+item_id	BIGINT FK	Foreign key ke items(item_id), nullable
+name	TEXT	Nama item (manual)
+weight	NUMERIC(10,2)	Berat item
+material	TEXT	Material
+purity	TEXT	Tingkat kemurnian
+photo_url	TEXT	URL foto
+scanned_qr	TEXT	QR scan jika ada
+created_at	TIMESTAMP	Waktu dibuat
+7. TABEL STOCK_HISTORY
+Kolom	Tipe	Keterangan
+history_id	BIGSERIAL PK	Primary key
+item_id	BIGINT FK	Foreign key ke items(item_id)
+old_status	TEXT	Status item sebelum update
+new_status	TEXT	Status item setelah update
+changed_by	BIGINT FK	User yang melakukan perubahan
+timestamp	TIMESTAMP	Waktu perubahan
+8. TABEL PAYMENTS / FINANCE (Opsional)
+Kolom	Tipe	Keterangan
+payment_id	BIGSERIAL PK	Primary key
+order_id	BIGINT FK	Foreign key ke orders(order_id)
+amount	NUMERIC(12,2)	Jumlah pembayaran
+type	TEXT	'dp','pelunasan','buyback','custom'
+status	TEXT	'pending','paid','cancelled'
+proof_url	TEXT	Upload bukti / slip pembayaran
+created_at	TIMESTAMP	Waktu dibuat
+updated_at	TIMESTAMP	Waktu update
+9. RELASI PENTING
+
+users ↔ user_branch_roles ↔ branches → multi-branch & multi-role
+
+orders → mengambil data dari items (jual) / order_items (buyback/service) / manual input (custom)
+
+orders → 1 order = 1 item
+
+stock_history → mencatat semua perubahan status item
+
+order_items → menyimpan data item referensi atau manual input per order

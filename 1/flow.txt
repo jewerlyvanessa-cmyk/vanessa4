@@ -1,0 +1,130 @@
+FLOW LENGKAP APLIKASI VANESSA
+1. FLOW LOGIN & DASHBOARD UTAMA
+flowchart TD
+    A[User buka aplikasi] --> B[Login Page]
+    B --> C[Input email & password]
+    C --> D[Klik Login]
+    D --> E{Validasi backend?}
+    E -->|Tidak| F[Tampil error login]
+    E -->|Ya| G[Ambil semua branch & role user]
+    G --> H{Ada branch & role utama (is_primary)?}
+    H -->|Ya| I[Set session branch & role = utama]
+    H -->|Tidak| J[Tampilkan pilihan branch & role]
+    I --> K[Redirect ke dashboard utama sesuai branch & role]
+    J --> K2[User pilih branch & role untuk session]
+    K2 --> K
+    K --> L[Dashboard tampil sesuai branch & role session]
+    L --> M[User bisa switch branch / role]
+
+
+Catatan:
+
+1 user dapat memiliki multi-branch dan multi-role per branch
+
+Dashboard otomatis menampilkan branch & role utama
+
+Switch branch/role opsional melalui menu
+
+2. FLOW ORDER (1 ORDER = 1 ITEM)
+flowchart TD
+    A[CS pilih tipe order] --> B{Order Type?}
+    B -->|Jual| C[Ambil item dari stok / manual input]
+    B -->|Buyback| D[Ambil item dari order_items / manual input]
+    B -->|Service| D
+    B -->|Custom| E[Manual input item sesuai pesanan]
+
+    C --> F[Scan QR Code (opsional untuk Jual)]
+    D --> F[Scan QR Code (opsional untuk Buyback/Service)]
+    E --> F[Scan QR tidak tersedia]
+
+    F --> G[Upload foto produk (opsional Jual, wajib Buyback/Service/Custom)]
+    G --> H[Validasi data item (weight, material, purity, quantity)]
+    H --> I[Submit order ke backend]
+
+    I --> J[Update status item di tabel items / order_items]
+    J --> K[Generate PDF / nota (Edge Function)]
+    J --> L[Push Realtime Notification ke dashboard terkait]
+    K --> M[Tampilkan preview / share PDF di aplikasi]
+
+
+Status Update per Order Type:
+
+Order Type	Status Awal	Status Akhir
+Jual	reserved	sold
+Buyback	buyback masuk stok	ready / on-service
+Service	on-service	done
+Custom	production	done
+3. FLOW INVENTORY / STOCK UPDATE
+flowchart TD
+    A[Item baru / buyback / service / custom] --> B[Masuk tabel items / order_items]
+    B --> C[Ubah status item sesuai order type]
+    C --> D[Update stock_history]
+    D --> E[Jika transfer antar branch, update branch_id & status]
+    E --> F[Realtime update ke dashboard cabang terkait]
+
+
+Catatan:
+
+Semua item dicatat di tabel items atau order_items
+
+Setiap perubahan status dicatat di stock_history
+
+Filter / search per cabang, status, kategori
+
+4. FLOW PAYMENT / KASIR
+flowchart TD
+    A[Kasir buka antrian pembayaran] --> B[Pilih order dari list]
+    B --> C[Scan QR order / input manual order ID]
+    C --> D[Validasi total harga / DP / pelunasan]
+    D --> E[Upload bukti pembayaran / generate PDF nota]
+    E --> F[Update status order ke 'paid']
+    F --> G[Update ke laporan keuangan]
+    G --> H[Realtime update dashboard manajer / admin]
+
+5. FLOW WORKSHOP / TUKANG
+flowchart TD
+    A[Tukang buka antrian pekerjaan] --> B[Pilih order yang ditugaskan]
+    B --> C[Lihat detail item & foto produk]
+    C --> D[Input progres pekerjaan + upload foto]
+    D --> E[Update bahan yang digunakan / stok bahan]
+    E --> F[Selesai pekerjaan → update status item ke 'done' / 'ready']
+    F --> G[Push Realtime Notification ke CS / Manajer]
+
+6. FLOW REALTIME NOTIFICATION
+Event	Target	Cara
+Order baru dibuat	Dashboard CS / Admin	WebSocket / FCM
+Order selesai workshop	CS / Manajer	WebSocket / FCM
+Barang siap diambil	CS / Pelanggan	WebSocket / FCM
+Assignment tukang	Tukang / Admin Workshop	WebSocket / FCM
+Pembayaran diterima	Dashboard Manajer / Admin	WebSocket / FCM
+7. FLOW LAPORAN & ANALYTICS
+flowchart TD
+    A[User pilih menu Laporan] --> B[Pilih filter: cabang / periode / tipe order]
+    B --> C[Query data dari backend]
+    C --> D[Hitung rekap pendapatan, laba rugi, stok opname]
+    D --> E[Tampilkan grafik / tabel / export PDF]
+
+
+Filter laporan:
+
+Toko → penjualan harian, pembayaran, stok & opname
+
+Workshop → pekerjaan tukang, lama pengerjaan, biaya bahan
+
+Manajer area → pendapatan area, laporan kas, setoran
+
+Manajemen umum → rekap seluruh pendapatan, laba rugi, grafik bulanan
+
+8. SUMMARY FLOW
+
+User login → pilih branch & role → dashboard utama
+
+CS / Kasir / Tukang / Admin → akses sesuai role
+
+Order flow → scan QR / upload foto / manual input → submit → update status → stock history
+
+Payment flow → validasi → upload bukti → update status → laporan
+
+Workshop flow → progres input → bahan / stok update → selesai → notif realtime
+
+Reporting & Analytics → filter → grafik / tabel / export PDF

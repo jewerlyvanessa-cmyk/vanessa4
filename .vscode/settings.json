@@ -1,0 +1,8 @@
+{
+    "editor.aiStats.enabled": true,
+    "files.autoSave": "afterDelay",
+    "files.autoSaveWorkspaceFilesOnly": true,
+    "editor.formatOnSave": true,
+    "editor.codeActions.triggerOnFocusChange": true,
+    "cmake.sourceDirectory": "/Users/macbookpro2019/Documents/vanessa/vanessa 3/vanessa3/linux"
+}

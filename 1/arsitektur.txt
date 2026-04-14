@@ -1,0 +1,227 @@
+ARSITEKTUR APLIKASI VANESSA (VERSI FINAL)
+1. OVERVIEW ARSITEKTUR
++-------------------------+
+|       FRONTEND          |  Flutter App
+|-------------------------|
+| - Login / Dashboard     |
+| - Order Page (1 item)   |
+| - Scan QR / Upload Foto |
+| - Manual Input Item     |
+| - Payment / Kasir       |
+| - Workshop / Tukang     |
+| - Reporting / Analytics |
++-------------------------+
+           |
+           | HTTPS / REST API / WebSocket
+           v
++-------------------------+
+|       BACKEND API       |  Node.js / FastAPI
+|-------------------------|
+| - Auth & JWT Token      |
+| - Branch & Role Session |
+| - CRUD Orders / Items   |
+| - Stock History         |
+| - Payment & Finance     |
+| - PDF / Nota Generator  |
+| - Push Notification     |
++-------------------------+
+           |
+           | SQL
+           v
++-------------------------+
+|       DATABASE          |  PostgreSQL 16
+|-------------------------|
+| - users                 |
+| - branches              |
+| - user_branch_roles     |
+| - items                 |
+| - orders                |
+| - order_items           |
+| - stock_history         |
++-------------------------+
+           |
+           | File Storage
+           v
++-------------------------+
+|       STORAGE           |  Lokal / Cloud (MinIO / S3)
+|-------------------------|
+| - Foto Produk           |
+| - PDF Nota / Slip       |
++-------------------------+
+           |
+           | WebSocket / Push
+           v
++-------------------------+
+|    NOTIFIKASI REALTIME  |  FCM / WebSocket
+|-------------------------|
+| - Order baru            |
+| - Barang siap / selesai |
+| - Assignment Tukang     |
++-------------------------+
+
+2. DETAIL ARSITEKTUR
+2.1 Frontend (Flutter)
+
+Modular Structure per Role
+
+lib/
+ ├─ main.dart
+ ├─ core/               # constants, utils, theme
+ ├─ data/               # API services, repositories
+ ├─ modules/
+ │   ├─ cs/
+ │   │   ├─ pages/      # Order, Scan QR, Upload Foto, Manual Input, Order Detail
+ │   │   ├─ widgets/    # Stepper, Foto Preview, QR Scanner Widget, Manual Item Form
+ │   │   └─ bloc/       # State management draft order, foto, QR scan, manual item
+ │   ├─ kasir/
+ │   ├─ admin_toko/
+ │   ├─ admin_workshop/
+ │   ├─ tukang/
+ │   ├─ manajer/
+ │   └─ superadmin/
+ ├─ shared_widgets/
+ ├─ routes/
+ └─ models/
+
+
+Fitur Frontend:
+
+Login / logout + branch & role utama
+
+Offline draft order → Hive
+
+Scan QR / upload foto → camera/gallery widget
+
+Dashboard sesuai role & branch session
+
+Switch branch / role opsional
+
+Reporting → charts_flutter / fl_chart
+
+Realtime → WebSocket / StreamBuilder
+
+Upload file → REST API ke backend storage
+
+2.2 Backend (Node.js / FastAPI)
+
+Layered Architecture
+
+Backend API
+├─ routes/controllers   # REST API endpoint
+├─ services            # Business logic (orders, stock, payments)
+├─ repositories        # DB CRUD abstraction
+├─ models              # ORM / DB mapping
+├─ utils               # Helper, validation
+├─ middleware          # Auth, role & branch guard
+├─ workers             # Edge Functions / cron jobs
+└─ websocket           # Realtime notification
+
+
+Fitur Backend:
+
+Authentication → JWT
+
+Branch & role management per session
+
+Order processing (1 order = 1 item)
+
+Stock history update
+
+PDF / nota generator → file storage
+
+Payment / finance management
+
+Realtime notification → WebSocket / push notification
+
+2.3 Database (PostgreSQL 16)
+
+Tabel utama:
+
+users
+
+branches
+
+user_branch_roles (is_primary)
+
+items
+
+orders
+
+order_items
+
+stock_history
+
+Fitur DB:
+
+JSONB → metadata item fleksibel
+
+Partitioning → tabel transaksi besar (orders, items)
+
+Generated columns → nomor dokumen otomatis
+
+Foreign key & constraints untuk integritas data
+
+2.4 Storage / File Server
+
+Foto produk → /storage/photos/
+
+PDF nota / slip → /storage/pdf/
+
+Bisa menggunakan lokal atau cloud (MinIO / S3 compatible)
+
+2.5 Notifikasi & Realtime
+
+WebSocket / FCM → push notification ke frontend
+
+Event real-time:
+
+Order baru masuk
+
+Pekerjaan workshop selesai
+
+Barang siap diambil / dikirim
+
+Assignment tukang
+
+3. FLOW LOGIN & DASHBOARD
+flowchart TD
+    A[User buka aplikasi] --> B[Login Page]
+    B --> C[Input email & password]
+    C --> D[Klik Login]
+    D --> E{Validasi backend?}
+    E -->|Tidak| F[Tampil error login]
+    E -->|Ya| G[Ambil semua branch & role user]
+    G --> H{Ada branch & role utama (is_primary)?}
+    H -->|Ya| I[Set session branch & role = utama]
+    H -->|Tidak| J[Tampil pilihan branch & role]
+    I --> K[Redirect ke dashboard utama]
+    J --> K2[User pilih branch & role session]
+    K2 --> K
+    K --> L[Dashboard tampil sesuai branch & role session]
+
+4. FLOW ORDER
+flowchart TD
+    A[CS pilih tipe order] --> B{Order Type?}
+    B -->|Jual| C[Ambil item dari stok / manual input]
+    B -->|Buyback| D[Ambil item dari order_items / manual input]
+    B -->|Service| D
+    B -->|Custom| E[Manual input item]
+
+    C --> F[Scan QR (opsional)]
+    D --> F
+    E --> F
+
+    F --> G[Upload foto produk]
+    G --> H[Submit order ke backend]
+    H --> I[Update status item di DB]
+    I --> J[Generate PDF / nota]
+    I --> K[Push Realtime Notification]
+
+5. TEKNOLOGI
+Layer	Teknologi / Tools
+Frontend	Flutter, Riverpod/Bloc, Hive, fl_chart
+Backend	Node.js / FastAPI, REST API, WebSocket
+Database	PostgreSQL 16, JSONB, Partitioning
+Storage	Lokal / MinIO / S3-compatible
+Notifikasi	FCM / WebSocket
+PDF	pdf package / backend generator

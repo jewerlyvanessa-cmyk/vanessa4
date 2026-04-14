@@ -1,0 +1,222 @@
+BLUEPRINT APLIKASI VANESSA — VERSI FINAL
+1. GAMBARAN UMUM APLIKASI
+
+Aplikasi Vanessa adalah sistem manajemen toko dan workshop yang mengintegrasikan:
+
+Toko: penjualan, buyback, service, custom, pengambilan barang
+
+Workshop: pengerjaan service/custom, stok bahan, produksi
+
+Inventory / Stok: tracking barang & bahan, mutasi antar cabang, stok opname
+
+Keuangan: penerimaan, pengeluaran, setoran, jurnal sederhana
+
+User Management: multi-branch per user, multi-role per branch, hak akses sesuai role
+
+Laporan & Analytics: per cabang, area, atau manajemen umum
+
+Teknologi Flutter:
+
+Clean Architecture + Modular Routing
+
+State Management: Riverpod / Bloc
+
+Offline Caching: Hive
+
+Backend API: Node.js / FastAPI + PostgreSQL 16 (self-hosted)
+
+File Storage: lokal atau cloud (foto & PDF)
+
+Edge Functions: generate PDF nota, cron job reminder
+
+Catatan Database:
+
+Gunakan JSONB untuk metadata item fleksibel (foto, atribut custom)
+
+Gunakan partitioning untuk tabel transaksi besar (orders, items)
+
+2. USER, ROLE & DASHBOARD
+2.1 Konsep User / Branch / Role
+
+1 user → multi-branch
+
+1 branch → bisa punya multi-role
+
+Branch & role utama (is_primary) → otomatis menjadi dashboard setelah login
+
+Switch branch/role opsional melalui menu pengaturan
+
+2.2 Role & Menu Utama
+Role	Menu Utama
+CS	Order Jual / Buyback / Service / Custom, Pengambilan Barang, Scan QR, Upload Foto, Manual Input Item
+Kasir	Antrian Pembayaran, Bayar, Pembayaran Hari Ini
+Admin Toko	Order & Pembayaran Harian, Kirim / Terima Barang, Mutasi, Karyawan
+Admin Workshop	Penerimaan / Kirim Barang, Assign Tukang, Stok Bahan & Produksi
+Tukang	Antrian Pekerjaan, Input Progres & Foto, Bahan Digunakan
+Manajer	Rekap Pendapatan, Keuangan, Pengaturan Karyawan
+Superadmin	Manajemen User, Cabang, Area, Import / Export Data
+3. FLOW TRANSAKSI (1 ORDER = 1 ITEM)
+
+Semua order memungkinkan manual input
+
+Scan QR → opsional, wajib jika item berasal dari stok / order sebelumnya
+
+Upload foto produk → wajib untuk Buyback, Service, Custom; opsional untuk Jual
+
+3.1 Alur Order
+flowchart TD
+    A[CS pilih tipe order] --> B{Order Type?}
+    B -->|Jual| C[Ambil item dari stok items / manual input]
+    B -->|Buyback| D[Ambil item dari order_items / manual input]
+    B -->|Service| D
+    B -->|Custom| E[Manual input item]
+
+    C --> F[Scan QR (optional)]
+    D --> F
+    E --> F
+
+    F --> G[Upload foto produk]
+    G --> H[Submit order ke backend]
+    H --> I[Update status item di DB]
+    I --> J[Generate PDF / nota (opsional)]
+    I --> K[Realtime update & push notification]
+
+3.2 Status Item
+Order Type	Item Sumber	Manual Input	Foto	QR Code	Status Item
+Jual	Stok ready	✅	opsional	ya	reserved → sold
+Buyback	Order Pelanggan	✅	wajib	opsional	buyback masuk stok
+Service	Order Pelanggan	✅	wajib	opsional	on-service → done
+Custom	Manual	✅	wajib / referensi	tidak	production → done
+4. DATABASE (PostgreSQL 16)
+4.1 Branches
+CREATE TABLE branches (
+  branch_id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL UNIQUE,
+  alias TEXT,
+  initials TEXT,
+  address TEXT,
+  phone_number TEXT,
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+
+4.2 Users
+CREATE TABLE users (
+  user_id BIGSERIAL PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  status TEXT CHECK (status IN ('active','inactive')) DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+
+4.3 User Branch Roles
+CREATE TABLE user_branch_roles (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT REFERENCES users(user_id),
+  branch_id BIGINT REFERENCES branches(branch_id),
+  role TEXT CHECK(role IN ('cs','kasir','admin_toko','admin_workshop','tukang','manajer','superadmin')),
+  is_primary BOOLEAN DEFAULT FALSE,
+  UNIQUE(user_id, branch_id, role)
+);
+
+4.4 Items
+CREATE TABLE items (
+  item_id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  weight NUMERIC(10,2),
+  material TEXT,
+  purity TEXT,
+  status TEXT CHECK (status IN (
+    'ready','reserved','sold','buyback','on-service','on-custom',
+    'sent-to-workshop','in-workshop','done-workshop','ready-for-pickup',
+    'transfer','production','lost'
+  )) DEFAULT 'ready',
+  branch_id BIGINT REFERENCES branches(branch_id),
+  photo_url TEXT,
+  source TEXT,
+  metadata JSONB,
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+
+4.5 Orders
+CREATE TABLE orders (
+  order_id BIGSERIAL PRIMARY KEY,
+  order_type TEXT CHECK(order_type IN ('jual','buyback','service','custom')),
+  item_id BIGINT REFERENCES items(item_id) NULL,
+  source_order_item_id BIGINT NULL,
+  name TEXT,
+  weight NUMERIC(10,2),
+  material TEXT,
+  purity TEXT,
+  photo_url TEXT,
+  scanned_qr TEXT,
+  status TEXT CHECK(status IN ('draft','reserved','sold','buyback','on-service','done','production')) DEFAULT 'draft',
+  branch_id BIGINT REFERENCES branches(branch_id),
+  created_at TIMESTAMP DEFAULT now(),
+  updated_at TIMESTAMP DEFAULT now()
+);
+
+4.6 Order Items
+CREATE TABLE order_items (
+  order_item_id BIGSERIAL PRIMARY KEY,
+  order_id BIGINT REFERENCES orders(order_id),
+  item_id BIGINT REFERENCES items(item_id) NULL,
+  name TEXT,
+  weight NUMERIC(10,2),
+  material TEXT,
+  purity TEXT,
+  photo_url TEXT,
+  scanned_qr TEXT,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+4.7 Stock History
+CREATE TABLE stock_history (
+  history_id BIGSERIAL PRIMARY KEY,
+  item_id BIGINT REFERENCES items(item_id),
+  old_status TEXT,
+  new_status TEXT,
+  changed_by BIGINT REFERENCES users(user_id),
+  timestamp TIMESTAMP DEFAULT now()
+);
+
+5. ALUR LOGIN & DASHBOARD OTOMATIS
+flowchart TD
+    A[User membuka aplikasi] --> B[Login Page]
+    B --> C[Input email & password]
+    C --> D[Klik Login]
+    D --> E{Validasi backend?}
+    E -->|Tidak Valid| F[Tampil error login]
+    E -->|Valid| G[Ambil semua branch & role user]
+    G --> H{Ada branch & role utama (is_primary)?}
+    H -->|Ya| I[Set session branch & role = utama]
+    H -->|Tidak| J[Tampilkan pilihan branch & role]
+
+    I --> K[Redirect ke dashboard sesuai branch & role utama]
+    J --> K2[User pilih branch & role untuk session]
+    K2 --> K
+
+    K --> L[Dashboard user tampil sesuai branch & role]
+
+6. FLUTTER MODULE STRUCTURE
+lib/
+ ├─ main.dart
+ ├─ core/               # constants, utils, theme
+ ├─ data/               # API services, repositories
+ ├─ modules/
+ │   ├─ cs/
+ │   │   ├─ pages/      # Order, Scan QR, Upload Foto, Manual Input, Order Detail
+ │   │   ├─ widgets/    # Stepper, Foto Preview, QR Scanner Widget, Manual Item Form
+ │   │   └─ bloc/       # State management draft order, foto, QR scan, manual item
+ │   ├─ kasir/
+ │   ├─ admin_toko/
+ │   ├─ admin_workshop/
+ │   ├─ tukang/
+ │   ├─ manajer/
+ │   └─ superadmin/
+ ├─ shared_widgets/
+ ├─ routes/
+ └─ models/

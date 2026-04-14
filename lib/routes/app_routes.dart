@@ -1,0 +1,672 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'dart:io';
+
+import '../data/api_service.dart';
+
+// Conditional imports for platform-specific packages
+import 'package:image_picker/image_picker.dart'
+    if (dart.library.html) '../utils/image_picker_stub.dart';
+import '../modules/cs/pages/main_page.dart';
+import '../modules/cs/pages/jual_page.dart';
+import '../modules/cs/pages/buyback_page.dart';
+import '../modules/cs/pages/service_page.dart';
+import '../modules/cs/pages/ambil_page.dart';
+import '../modules/cs/pages/custom_page.dart';
+import '../modules/kasir/pages/main_page.dart';
+import '../modules/superadmin/pages/main_page.dart';
+import '../modules/dashboard/pages/main_page.dart';
+import '../modules/admin_toko/pages/main_page.dart';
+import '../modules/admin_workshop/pages/main_page.dart';
+import '../modules/tukang/pages/main_page.dart';
+import '../modules/manajer/pages/main_page.dart';
+import '../pages/switch_branch_role_page.dart';
+import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import '../providers/websocket_provider.dart';
+
+class AppRoutes {
+  static const String cs = '/cs';
+  static const String superadmin = '/superadmin';
+  static const String login = '/login';
+  static const String dashboard = '/dashboard';
+  static const String kasir = '/kasir';
+  static const String tukang = '/tukang';
+  static const String adminToko = '/admin_toko';
+  static const String adminWorkshop = '/admin_workshop';
+  static const String manajer = '/manager';
+  static const String switchBranchRole = '/switch_branch_role';
+  static const String orderDetail = '/order_detail';
+  static Map<String, WidgetBuilder> get routes => {
+    login: (context) => const LoginPage(),
+    dashboard: (context) => const DashboardPage(),
+    cs: (context) => const CSMainPage(),
+    kasir: (context) => const KasirMainPage(),
+    superadmin: (context) => const SuperadminMainPage(),
+    adminToko: (context) => const AdminTokoMainPage(),
+    adminWorkshop: (context) => const AdminWorkshopMainPage(),
+    tukang: (context) => const TukangMainPage(),
+    manajer: (context) => const ManajerMainPage(),
+    switchBranchRole: (context) => const SwitchBranchRolePage(),
+    '/jual': (context) => const JualPage(),
+    '/buyback': (context) => const BuybackPage(),
+    '/service': (context) => const ServicePage(),
+    '/custom': (context) => const CustomPage(),
+    '/ambil': (context) => const AmbilPage(),
+  };
+}
+
+class LoginPage extends ConsumerStatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  ConsumerState<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends ConsumerState<LoginPage> {
+  final formKey = GlobalKey<FormState>();
+  final usernameController = TextEditingController();
+  final passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    usernameController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  void login() async {
+    if (formKey.currentState!.validate()) {
+      setState(() {
+        _isLoading = true;
+      });
+
+      final username = usernameController.text;
+      final password = passwordController.text;
+
+      try {
+        final result = await ApiService.login(username, password);
+
+        if (result['success'] == true) {
+          // Handle navigation based on user's primary role and branch
+          final roles = List<String>.from(result['roles'] ?? []);
+          final branches = List<Map<String, dynamic>>.from(
+            result['branches'] ?? [],
+          );
+
+          // Use primary role and branch from login response
+          final primaryRole = result['role'] ?? '';
+          final primaryBranch = result['branch'] ?? '';
+
+          final userStateNotifier = ref.read(userStateProvider.notifier);
+          userStateNotifier.setUserData(
+            userId: int.tryParse(result['user_id'].toString()),
+            username: result['username'] ?? '',
+            branch: primaryBranch,
+            role: primaryRole,
+            authToken: result['token'] ?? '',
+            roles: roles,
+            branches: branches,
+          );
+
+          // Initialize WebSocket connection after successful login
+          ref.read(webSocketProvider.notifier).initializeAfterLogin();
+
+          // Navigate directly to main module based on primary role
+          String route = '';
+          switch (primaryRole) {
+            case 'cs':
+              route = AppRoutes.cs;
+              break;
+            case 'kasir':
+              route = AppRoutes.kasir;
+              break;
+            case 'superadmin':
+              route = AppRoutes.superadmin;
+              break;
+            case 'admin_toko':
+              route = AppRoutes.adminToko;
+              break;
+            case 'admin_workshop':
+              route = AppRoutes.adminWorkshop;
+              break;
+            case 'manajer':
+              route = AppRoutes.manajer;
+              break;
+            case 'tukang':
+              route = AppRoutes.tukang;
+              break;
+            default:
+              route = AppRoutes.dashboard;
+          }
+          debugPrint('Navigating to route: $route for role: $primaryRole');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              Navigator.pushReplacementNamed(context, route);
+            }
+          });
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(result['error'] ?? 'Login gagal')),
+              );
+            }
+          });
+        }
+      } catch (e) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Terjadi error saat login')));
+          }
+        });
+      } finally {
+        if (context.mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width > 600
+                  ? 400
+                  : MediaQuery.of(context).size.width * 0.9,
+            ),
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Logo di atas username
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: Center(
+                      child: Image.asset('assets/logo.png', height: 100),
+                    ),
+                  ),
+                  TextFormField(
+                    controller: usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    validator: (value) => value == null || value.isEmpty
+                        ? 'Username tidak boleh kosong'
+                        : null,
+                    textInputAction: TextInputAction.next,
+                    autofocus: true,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: passwordController,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    obscureText: true,
+                    validator: (value) => value == null || value.isEmpty
+                        ? 'Password tidak boleh kosong'
+                        : null,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) => login(),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : login,
+                      style: ElevatedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                          : const Text('Login', style: TextStyle(fontSize: 16)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Center(
+                    child: Text(
+                      'Versi 1.0.0',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Tambahkan integrasi WebSocket untuk pembaruan realtime
+class WebSocketService {
+  final WebSocketChannel channel;
+
+  WebSocketService(String url)
+    : channel = WebSocketChannel.connect(Uri.parse(url));
+
+  void listen(void Function(dynamic) onMessage) {
+    channel.stream.listen(onMessage);
+  }
+
+  void sendMessage(String message) {
+    channel.sink.add(message);
+  }
+
+  void dispose() {
+    channel.sink.close();
+  }
+}
+
+final branchRoleProvider =
+    StateNotifierProvider<BranchRoleNotifier, BranchRoleState>((ref) {
+      return BranchRoleNotifier();
+    });
+
+class BranchRoleNotifier extends StateNotifier<BranchRoleState> {
+  BranchRoleNotifier() : super(BranchRoleState());
+
+  void setBranch(String branch) {
+    state = state.copyWith(branch: branch);
+  }
+
+  void setRole(String role) {
+    state = state.copyWith(role: role);
+  }
+}
+
+class BranchRoleState {
+  final String branch;
+  final String role;
+
+  BranchRoleState({this.branch = '', this.role = ''});
+
+  BranchRoleState copyWith({String? branch, String? role}) {
+    return BranchRoleState(
+      branch: branch ?? this.branch,
+      role: role ?? this.role,
+    );
+  }
+}
+
+// Tambahkan fitur untuk switch branch/role di dashboard
+class SwitchBranchRoleWidget extends ConsumerWidget {
+  const SwitchBranchRoleWidget({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final branchRole = ref.watch(branchRoleProvider);
+    final branchNotifier = ref.read(branchRoleProvider.notifier);
+
+    return Column(
+      children: [
+        DropdownButton<String>(
+          value: branchRole.branch,
+          items: ['Branch1', 'Branch2', 'Branch3'].map((branch) {
+            return DropdownMenuItem(value: branch, child: Text(branch));
+          }).toList(),
+          onChanged: (value) {
+            if (value != null) {
+              branchNotifier.setBranch(value);
+            }
+          },
+        ),
+        DropdownButton<String>(
+          value: branchRole.role,
+          items: ['Role1', 'Role2', 'Role3'].map((role) {
+            return DropdownMenuItem(value: role, child: Text(role));
+          }).toList(),
+          onChanged: (value) {
+            if (value != null) {
+              branchNotifier.setRole(value);
+            }
+          },
+        ),
+        ElevatedButton(
+          onPressed: () {
+            // Perform action with selected branch and role
+          },
+          child: const Text('Switch'),
+        ),
+      ],
+    );
+  }
+}
+
+// Tambahkan fitur reporting dengan grafik menggunakan fl_chart
+class ReportingPage extends StatelessWidget {
+  const ReportingPage({super.key, required this.data});
+
+  final List<double> data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Reporting')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: LineChart(
+          LineChartData(
+            gridData: FlGridData(show: true),
+            titlesData: FlTitlesData(
+              leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true)),
+              bottomTitles: AxisTitles(
+                sideTitles: SideTitles(showTitles: true),
+              ),
+            ),
+            borderData: FlBorderData(show: true),
+            lineBarsData: [
+              LineChartBarData(
+                spots: data
+                    .asMap()
+                    .entries
+                    .map((e) => FlSpot(e.key.toDouble(), e.value))
+                    .toList(),
+                isCurved: true,
+                gradient: LinearGradient(colors: [Colors.blue]),
+                barWidth: 4,
+                belowBarData: BarAreaData(show: false),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class OrderPage extends StatelessWidget {
+  const OrderPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Order Page')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/jual');
+              },
+              child: const Text('Sell Order'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/buyback');
+              },
+              child: const Text('Buyback Order'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/service');
+              },
+              child: const Text('Service Order'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/custom');
+              },
+              child: const Text('Custom Order'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ScanQRUploadPhotoPage extends StatefulWidget {
+  const ScanQRUploadPhotoPage({super.key});
+
+  @override
+  State<ScanQRUploadPhotoPage> createState() => _ScanQRUploadPhotoPageState();
+}
+
+class _ScanQRUploadPhotoPageState extends State<ScanQRUploadPhotoPage> {
+  final ImagePicker _picker = ImagePicker();
+  XFile? _image;
+
+  Future<void> _pickImage() async {
+    final pickedImage = await _picker.pickImage(source: ImageSource.gallery);
+    setState(() {
+      _image = pickedImage;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Scan QR / Upload Photo')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: _pickImage,
+              child: const Text('Upload Photo'),
+            ),
+            if (_image != null)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Image.file(File(_image!.path)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ManualInputItemPage extends StatefulWidget {
+  const ManualInputItemPage({super.key});
+
+  @override
+  State<ManualInputItemPage> createState() => _ManualInputItemPageState();
+}
+
+class _ManualInputItemPageState extends State<ManualInputItemPage> {
+  final _formKey = GlobalKey<FormState>();
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _weightController = TextEditingController();
+  final TextEditingController _materialController = TextEditingController();
+  final TextEditingController _purityController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Manual Input Item')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Item Name'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the item name';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _weightController,
+                decoration: const InputDecoration(labelText: 'Weight'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the weight';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _materialController,
+                decoration: const InputDecoration(labelText: 'Material'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the material';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _purityController,
+                decoration: const InputDecoration(labelText: 'Purity'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the purity';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class PaymentPage extends StatefulWidget {
+  const PaymentPage({super.key});
+
+  @override
+  State<PaymentPage> createState() => _PaymentPageState();
+}
+
+class _PaymentPageState extends State<PaymentPage> {
+  final _formKey = GlobalKey<FormState>();
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _methodController = TextEditingController();
+
+  void _processPayment() {
+    if (_formKey.currentState!.validate()) {
+      // Simulate payment processing
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment processed successfully!')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Payment System')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _amountController,
+                decoration: const InputDecoration(labelText: 'Amount'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the amount';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _methodController,
+                decoration: const InputDecoration(labelText: 'Payment Method'),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter the payment method';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _processPayment,
+                child: const Text('Process Payment'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class WorkshopPage extends StatefulWidget {
+  const WorkshopPage({super.key});
+
+  @override
+  State<WorkshopPage> createState() => _WorkshopPageState();
+}
+
+class _WorkshopPageState extends State<WorkshopPage> {
+  final List<Map<String, String>> _workOrders = [
+    {'id': '1', 'type': 'Service', 'status': 'In Progress'},
+    {'id': '2', 'type': 'Custom', 'status': 'Pending'},
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Workshop Orders')),
+      body: ListView.builder(
+        itemCount: _workOrders.length,
+        itemBuilder: (context, index) {
+          final order = _workOrders[index];
+          return ListTile(
+            title: Text('Order ID: ${order['id']}'),
+            subtitle: Text(
+              'Type: ${order['type']} - Status: ${order['status']}',
+            ),
+            onTap: () {
+              // Navigate to order details
+            },
+          );
+        },
+      ),
+    );
+  }
+}
