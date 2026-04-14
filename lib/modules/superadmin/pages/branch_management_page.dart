@@ -34,7 +34,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
     try {
       final response = await http.get(
         Uri.parse('${NetworkConfig.baseUrl}/branches'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {

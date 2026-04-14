@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../../../utils/network_config.dart';
 
 class BranchApiService {
   final String baseUrl;
@@ -8,7 +9,10 @@ class BranchApiService {
 
   Future<List<Map<String, dynamic>>> fetchBranches() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/branches'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
@@ -22,7 +26,10 @@ class BranchApiService {
 
   Future<Map<String, dynamic>?> fetchBranchById(String branchId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/branches/$branchId'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches/$branchId'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         return json.decode(response.body);
       } else if (response.statusCode == 404) {
@@ -37,7 +44,10 @@ class BranchApiService {
 
   Future<List<Map<String, dynamic>>> fetchBranchUsers(String branchId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/branches/$branchId/users'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches/$branchId/users'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
@@ -51,7 +61,10 @@ class BranchApiService {
 
   Future<Map<String, dynamic>> fetchBranchStatistics(String branchId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/branches/$branchId/statistics'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches/$branchId/statistics'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         return json.decode(response.body);
       } else {
@@ -66,7 +79,7 @@ class BranchApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/branches'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: json.encode(branch),
       );
       return response.statusCode == 201;
@@ -79,7 +92,7 @@ class BranchApiService {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/branches/$branchId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: json.encode(branch),
       );
       return response.statusCode == 200;
@@ -92,7 +105,7 @@ class BranchApiService {
     try {
       final response = await http.patch(
         Uri.parse('$baseUrl/branches/$branchId/status'),
-        headers: {'Content-Type': 'application/json'},
+        headers: NetworkConfig.defaultHeaders,
         body: json.encode({'status': status}),
       );
       return response.statusCode == 200;
@@ -103,7 +116,10 @@ class BranchApiService {
 
   Future<bool> deleteBranch(String branchId) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/branches/$branchId'));
+      final response = await http.delete(
+        Uri.parse('$baseUrl/branches/$branchId'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       return response.statusCode == 200;
     } catch (e) {
       throw Exception('Error deleting branch: $e');
@@ -117,7 +133,7 @@ class BranchApiService {
       if (status != null) queryParams['status'] = status;
 
       final uri = Uri.parse('$baseUrl/branches').replace(queryParameters: queryParams);
-      final response = await http.get(uri);
+      final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
 
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
@@ -132,7 +148,10 @@ class BranchApiService {
 
   Future<String> exportBranches({String format = 'csv'}) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/branches/export?format=$format'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches/export?format=$format'),
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         return response.body;
       } else {
@@ -149,7 +168,7 @@ class BranchApiService {
       if (excludeBranchId != null) queryParams['exclude'] = excludeBranchId;
 
       final uri = Uri.parse('$baseUrl/branches/validate-code').replace(queryParameters: queryParams);
-      final response = await http.get(uri);
+      final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
 
       if (response.statusCode == 200) {
         final result = json.decode(response.body);
