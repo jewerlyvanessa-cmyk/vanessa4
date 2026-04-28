@@ -67,7 +67,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
 
     await showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         bool submitting = false;
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -171,20 +171,23 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                               throw Exception(isEdit ? 'Gagal mengubah cabang.' : 'Gagal menambah cabang.');
                             }
 
-                            if (mounted) {
-                              Navigator.pop(context);
-                              await _loadBranches();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isEdit ? 'Cabang berhasil diperbarui' : 'Cabang berhasil ditambahkan',
-                                  ),
+                            if (!mounted) return;
+                            if (!dialogContext.mounted) return;
+                            Navigator.pop(dialogContext);
+                            await _loadBranches();
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  isEdit
+                                      ? 'Cabang berhasil diperbarui'
+                                      : 'Cabang berhasil ditambahkan',
                                 ),
-                              );
-                            }
+                              ),
+                            );
                           } catch (e) {
                             if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              ScaffoldMessenger.of(this.context).showSnackBar(
                                 SnackBar(content: Text('Gagal simpan cabang: $e')),
                               );
                             }
@@ -220,7 +223,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                 : ListView.separated(
                     shrinkWrap: true,
                     itemCount: users.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, index) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final user = users[index];
                       return ListTile(

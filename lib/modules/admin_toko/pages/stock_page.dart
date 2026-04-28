@@ -108,16 +108,19 @@ class _StockPageState extends ConsumerState<StockPage> {
     double totalWeight = 0.0;
     for (var item in _items) {
       if (statusFilter == 'all' || item['status'] == statusFilter) {
-        final weight = item['weight'];
-        if (weight != null) {
-          if (weight is num) {
-            totalWeight += weight.toDouble();
-          } else if (weight is String) {
-            final parsed = double.tryParse(weight);
-            if (parsed != null) {
-              totalWeight += parsed;
-            }
-          }
+        final rawWeight = item['weight'];
+        final rawQty = item['quantity'];
+
+        final weightPerItem = rawWeight is num
+            ? rawWeight.toDouble()
+            : double.tryParse(rawWeight?.toString() ?? '') ?? 0.0;
+
+        final qty = rawQty is int
+            ? rawQty
+            : int.tryParse(rawQty?.toString() ?? '') ?? 1;
+
+        if (weightPerItem > 0 && qty > 0) {
+          totalWeight += weightPerItem * qty;
         }
       }
     }
@@ -131,13 +134,13 @@ class _StockPageState extends ConsumerState<StockPage> {
     final nameController = TextEditingController();
     final kodeBarangController = TextEditingController();
     final weightController = TextEditingController();
-    final materialController = TextEditingController();
     final purityController = TextEditingController();
     final quantityController = TextEditingController(text: '1');
 
     String selectedKategori = 'PERHIASAN';
     String selectedJenis = '';
     String selectedTipe = 'BIASA';
+    String selectedMaterial = 'EMAS';
 
     // Kategori options
     final kategoriOptions = ['PERHIASAN', 'LOGAM MULIA', 'AKSESORIES'];
@@ -150,7 +153,8 @@ class _StockPageState extends ConsumerState<StockPage> {
     };
 
     // Tipe options
-    final tipeOptions = ['BIASA', 'SPECIAL', 'CUSTOM'];
+    final tipeOptions = ['BIASA', 'GRESS'];
+    final materialOptions = ['EMAS', 'PERAK', 'LAINNYA'];
 
     await showDialog(
       context: context,
@@ -303,18 +307,19 @@ class _StockPageState extends ConsumerState<StockPage> {
                   const SizedBox(height: 12),
 
                   // Material
-                  TextFormField(
-                    controller: materialController,
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedMaterial,
                     decoration: const InputDecoration(
                       labelText: 'Material',
                       border: OutlineInputBorder(),
-                      hintText: 'Contoh: Emas, Perak, Tembaga',
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Material wajib diisi';
-                      }
-                      return null;
+                    items: materialOptions.map((m) {
+                      return DropdownMenuItem(value: m, child: Text(m));
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        selectedMaterial = value ?? 'EMAS';
+                      });
                     },
                   ),
                   const SizedBox(height: 12),
@@ -348,7 +353,7 @@ class _StockPageState extends ConsumerState<StockPage> {
                     tipe: selectedTipe,
                     weight: double.parse(weightController.text),
                     quantity: int.parse(quantityController.text),
-                    material: materialController.text,
+                    material: selectedMaterial,
                     purity: purityController.text,
                   );
                 }
@@ -696,6 +701,14 @@ class _StockPageState extends ConsumerState<StockPage> {
   }
 
   void _showItemDetails(BuildContext context, dynamic item) {
+    final rawWeight = item['weight'];
+    final rawQty = item['quantity'];
+    final weightPerItem = rawWeight is num
+        ? rawWeight.toDouble()
+        : double.tryParse(rawWeight?.toString() ?? '') ?? 0.0;
+    final qty = rawQty is int ? rawQty : int.tryParse(rawQty?.toString() ?? '') ?? 1;
+    final totalWeight = weightPerItem * (qty <= 0 ? 1 : qty);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -709,8 +722,9 @@ class _StockPageState extends ConsumerState<StockPage> {
               _buildDetailRow('Nama', item['name'] ?? '-'),
               if (item['kode_produk'] != null && item['kode_produk'].isNotEmpty)
                 _buildDetailRow('Kode Barang', item['kode_produk']),
-              _buildDetailRow('Berat', '${item['weight'] ?? 0} gram'),
+              _buildDetailRow('Berat / pcs', '${weightPerItem.toStringAsFixed(2)} gram'),
               _buildDetailRow('Quantity', '${item['quantity'] ?? 1}'),
+              _buildDetailRow('Berat total', '${totalWeight.toStringAsFixed(2)} gram'),
               _buildDetailRow('Material', item['material'] ?? '-'),
               _buildDetailRow('Kadar', item['purity'] ?? '-'),
               _buildDetailRow(

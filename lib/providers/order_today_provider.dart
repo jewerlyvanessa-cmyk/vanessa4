@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/main.dart'; // Import for userStateProvider
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
+import 'package:vanessa3/providers/network_provider.dart';
+import 'package:vanessa3/data/offline_cache.dart';
 
 // Model untuk Order Today
 class OrderTodayStats {
@@ -80,27 +82,37 @@ class OrderTodayStatsNotifier
     state = const AsyncValue.loading();
 
     try {
-      // Use real API call instead of mock data
-      final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
-
-      // Get current user state
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
-      final branchId =
-          int.tryParse(userState.branch) ??
-          1; // Parse branch string to int, default to 1
+      final branchId = int.tryParse(userState.branch) ?? 1;
+      final dateKey = DateTime.now().toIso8601String().split('T')[0];
+
+      final cacheKey = 'orderTodayStats/v1'
+          '?branch_id=$branchId'
+          '&user_id=${userId ?? ''}'
+          '&date=$dateKey';
+
+      final networkState = _ref.read(networkStatusProvider);
+      if (!networkState.isOnline || !networkState.isBackendReachable) {
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
+          return;
+        }
+      }
+
+      // Use real API call instead of mock data
+      final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
       // Build query parameters
       final queryParams = <String, String>{
         'branch_id': branchId.toString(),
-        'date': DateTime.now().toIso8601String().split(
-          'T',
-        )[0], // YYYY-MM-DD format
+        'date': dateKey, // YYYY-MM-DD format
       };
 
-      // Add user_id filter only for non-CS users (CS should see all orders in their branch)
-      final userRole = userState.role.toLowerCase();
-      if (userId != null && userRole != 'cs') {
+      // CS page requirement: show only today's orders created by current user
+      if (userId != null) {
         queryParams['user_id'] = userId.toString();
       }
 
@@ -115,13 +127,37 @@ class OrderTodayStatsNotifier
       client.close();
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await OfflineCache.instance.setJson(
+          cacheKey,
+          data,
+          ttl: const Duration(minutes: 5),
+        );
         final stats = OrderTodayStats.fromJson(data);
         state = AsyncValue.data(stats);
       } else {
         throw Exception('Failed to load order stats: ${response.statusCode}');
       }
     } catch (error, stackTrace) {
+      // Fallback to cache if request failed.
+      try {
+        final userState = _ref.read(userStateProvider);
+        final userId = userState.userId;
+        final branchId = int.tryParse(userState.branch) ?? 1;
+        final dateKey = DateTime.now().toIso8601String().split('T')[0];
+        final cacheKey = 'orderTodayStats/v1'
+            '?branch_id=$branchId'
+            '&user_id=${userId ?? ''}'
+            '&date=$dateKey';
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
+          return;
+        }
+      } catch (_) {
+        // ignore cache errors
+      }
       state = AsyncValue.error(error, stackTrace);
     }
   }
@@ -181,22 +217,34 @@ class TodayOrdersNotifier
     state = const AsyncValue.loading();
 
     try {
-      // Use real API call instead of mock data
-      final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
-
-      // Get current user state
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
-      final branchId =
-          int.tryParse(userState.branch) ??
-          1; // Parse branch string to int, default to 1
+      final branchId = int.tryParse(userState.branch) ?? 1;
+
+      // v3: include orders.jumlah + item_total consistency
+      final cacheKey = 'todayOrders/v3?branch_id=$branchId&user_id=${userId ?? ''}';
+
+      final networkState = _ref.read(networkStatusProvider);
+      if (!networkState.isOnline || !networkState.isBackendReachable) {
+        final cached =
+            await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
+        if (cached != null) {
+          final list = (cached.value)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          state = AsyncValue.data(list);
+          return;
+        }
+      }
+
+      // Use real API call instead of mock data
+      final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
       // Build query parameters
       final queryParams = <String, String>{'branch_id': branchId.toString()};
 
-      // Add user_id filter only for non-CS users (CS should see all orders in their branch)
-      final userRole = userState.role.toLowerCase();
-      if (userId != null && userRole != 'cs') {
+      // CS page requirement: show only today's orders created by current user
+      if (userId != null) {
         queryParams['user_id'] = userId.toString();
       }
 
@@ -223,6 +271,11 @@ class TodayOrdersNotifier
         if (hasItemDetails) {
           // Response already includes item details, group by order_id
           final ordersWithItems = _groupOrdersWithItems(rawOrders);
+          await OfflineCache.instance.setJson(
+            cacheKey,
+            ordersWithItems,
+            ttl: const Duration(minutes: 5),
+          );
           state = AsyncValue.data(ordersWithItems);
         } else {
           // Legacy behavior: fetch order items separately
@@ -231,12 +284,36 @@ class TodayOrdersNotifier
             baseUrl,
             queryParams,
           );
+          await OfflineCache.instance.setJson(
+            cacheKey,
+            ordersWithItems,
+            ttl: const Duration(minutes: 5),
+          );
           state = AsyncValue.data(ordersWithItems);
         }
       } else {
         throw Exception('Failed to load today orders: ${response.statusCode}');
       }
     } catch (error, stackTrace) {
+      // Fallback to cache if request failed.
+      try {
+        final userState = _ref.read(userStateProvider);
+        final userId = userState.userId;
+        final branchId = int.tryParse(userState.branch) ?? 1;
+        final cacheKey =
+            'todayOrders/v3?branch_id=$branchId&user_id=${userId ?? ''}';
+        final cached =
+            await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
+        if (cached != null) {
+          final list = (cached.value)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          state = AsyncValue.data(list);
+          return;
+        }
+      } catch (_) {
+        // ignore cache errors
+      }
       state = AsyncValue.error(error, stackTrace);
     }
   }
@@ -298,6 +375,17 @@ class TodayOrdersNotifier
       final orderId = row['order_id'].toString();
 
       if (!ordersMap.containsKey(orderId)) {
+        // Prefer `orders.jumlah` (rounded, after discount). Fallback to rounding `orders.total`.
+        final rawJumlah = row['jumlah'];
+        final rawTotal = row['total'];
+        num? fallbackJumlah;
+        if (rawJumlah == null && rawTotal != null) {
+          final t = double.tryParse(rawTotal.toString());
+          if (t != null) {
+            fallbackJumlah = ((t / 5000).ceil() * 5000);
+          }
+        }
+
         // Create order entry (exclude item-specific fields)
         ordersMap[orderId] = {
           'order_id': row['order_id'],
@@ -311,6 +399,7 @@ class TodayOrdersNotifier
           'user_id': row['user_id'],
           'status': row['status'],
           'total': row['total'],
+          'jumlah': rawJumlah ?? fallbackJumlah,
           'diskon': row['diskon'],
           'mode': row['mode'],
           'created_at': row['created_at'],
@@ -321,12 +410,6 @@ class TodayOrdersNotifier
 
       // Add item if it exists (check if nama_item is not null)
       if (row['nama_item'] != null) {
-        final qty = double.tryParse(row['qty'].toString()) ?? 0;
-        final weight = double.tryParse(row['weight'].toString()) ?? 0;
-        final hargaPerGram =
-            double.tryParse(row['harga_per_gram'].toString()) ?? 0;
-        final calculatedTotal = qty * weight * hargaPerGram;
-
         final item = {
           'order_item_id': row['order_item_id'],
           'nama_item': row['nama_item'],
@@ -334,11 +417,8 @@ class TodayOrdersNotifier
           'weight': row['weight'] ?? row['item_weight'],
           'qty': row['qty'],
           'harga_per_gram': row['harga_per_gram'],
-          'total': calculatedTotal > 0
-              ? calculatedTotal
-              : (row['jumlah'] != null
-                    ? double.tryParse(row['jumlah'].toString())
-                    : null),
+          // Source-of-truth from backend (order_items.total)
+          'total': row['item_total'] ?? row['total'],
           'material': row['material'] ?? row['item_material'],
           'purity': row['purity'] ?? row['item_purity'],
           'kategori': row['kategori'] ?? row['item_kategori'],

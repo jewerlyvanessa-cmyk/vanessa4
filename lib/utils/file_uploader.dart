@@ -4,7 +4,7 @@ import 'package:vanessa3/utils/network_config.dart';
 
 class FileUploader {
   // Ganti URL ini dengan endpoint upload backend kamu
-  static String get uploadUrl => '${NetworkConfig.baseUrl.replaceAll('3000', '4000')}/upload';
+  static String get uploadUrl => '${NetworkConfig.storageUrl}/upload';
 
   static Future<String?> uploadImage(File imageFile, {String? token}) async {
     try {

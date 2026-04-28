@@ -2,7 +2,8 @@
 import 'package:flutter/material.dart';
 
 String getMainModuleForRole(String role) {
-  switch (role) {
+  final normalized = role.trim().toLowerCase();
+  switch (normalized) {
     case 'cs':
       return 'cs';
     case 'kasir':
@@ -17,6 +18,8 @@ String getMainModuleForRole(String role) {
       return 'tukang';
     case 'manajer':
       return 'manajer';
+    case 'stockist':
+      return 'stockist';
     default:
       return 'dashboard';
   }
@@ -24,7 +27,8 @@ String getMainModuleForRole(String role) {
 
 void navigateToMainModule(BuildContext context, String mainModule) {
   final navigator = Navigator.of(context);
-  switch (mainModule) {
+  final normalized = mainModule.trim().toLowerCase();
+  switch (normalized) {
     case 'cs':
       navigator.pushReplacementNamed('/cs');
       break;
@@ -44,7 +48,10 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       navigator.pushReplacementNamed('/tukang');
       break;
     case 'manajer':
-      navigator.pushReplacementNamed('/manajer');
+      navigator.pushReplacementNamed('/manager');
+      break;
+    case 'stockist':
+      navigator.pushReplacementNamed('/stockist');
       break;
     default:
       navigator.pushReplacementNamed('/dashboard');

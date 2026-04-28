@@ -182,6 +182,8 @@ String getMainModuleForRole(String role) {
       return 'tukang';
     case 'manajer':
       return 'manajer';
+    case 'stockist':
+      return 'stockist';
     default:
       return 'dashboard';
   }
@@ -209,7 +211,10 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       navigator.pushReplacementNamed('/superadmin');
       break;
     case 'manajer':
-      navigator.pushReplacementNamed('/manajer');
+      navigator.pushReplacementNamed('/manager');
+      break;
+    case 'stockist':
+      navigator.pushReplacementNamed('/stockist');
       break;
     default:
       navigator.pushReplacementNamed('/dashboard');

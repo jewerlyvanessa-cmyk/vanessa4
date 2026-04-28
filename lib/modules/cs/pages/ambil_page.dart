@@ -38,6 +38,8 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   List<dynamic> _readyItems = [];
   bool _isLoadingItems = false;
 
+  static const Set<String> _allowedReadyPickupOrderTypes = {'service', 'custom'};
+
   @override
   void dispose() {
     _orderNumberController.dispose();
@@ -71,7 +73,13 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          _readyItems = data is List ? data : [];
+          final rows = data is List ? data : const [];
+          _readyItems =
+              rows.where((row) {
+                if (row is! Map) return false;
+                final type = (row['order_type'] ?? '').toString().toLowerCase();
+                return _allowedReadyPickupOrderTypes.contains(type);
+              }).toList();
         });
       }
     } catch (e) {
@@ -96,8 +104,8 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
   Future<String?> _uploadFoto(File? foto) async {
     if (foto == null) return null;
-    final baseUrl = NetworkConfig.baseUrl.replaceAll('3000', '4000');
-    final uri = Uri.parse('$baseUrl/upload');
+    final storageUrl = NetworkConfig.storageUrl;
+    final uri = Uri.parse('$storageUrl/upload');
     final request = http.MultipartRequest('POST', uri)
       ..files.add(await http.MultipartFile.fromPath('file', foto.path));
     final response = await request.send();

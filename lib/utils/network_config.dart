@@ -20,11 +20,12 @@ class NetworkConfig {
 
   // Alternative IP addresses to try for different platforms
   static const List<String> _alternativeIPs = [
-    '127.0.0.1', // Localhost IP (try this first to avoid proxy issues)
-    'localhost', // Localhost
-    '10.0.2.2', // Android emulator default
+    '10.0.2.2', // Android emulator host loopback
+    '127.0.0.1', // Localhost (useful with ADB reverse on physical device)
+    'localhost', // Localhost hostname
     '192.168.1.101', // Local network IP (host machine)
     '172.20.10.1', // Common iOS hotspot IP
+    '103.184.181.79', // online server
   ];
 
   /// Get alternative base URLs for fallback connectivity
@@ -42,15 +43,26 @@ class NetworkConfig {
       // For web, use the current host to avoid CORS issues
       return 'http://${Uri.base.host}:3000';
     } else if (Platform.isAndroid) {
-      // For Android emulator, always use 10.0.2.2 to reach host machine
-      return 'http://10.0.2.2:3000';
+      // Android:
+      // - Emulator: use host loopback via 10.0.2.2 -> http://10.0.2.2:3000
+      // - Physical device via USB: use ADB reverse -> http://127.0.0.1:3000
+      // - WiFi/LAN: set useLocalNetwork=true and configure host LAN IP below
+      if (!useLocalNetwork) {
+        // Default to emulator-friendly host mapping.
+        return 'http://10.0.2.2:3000';
+      }
+      // When developing over WiFi/LAN, point to the machine running backend
+      // (replace with your host IP if needed).
+      return 'http://192.168.1.101:3000';
     } else if (Platform.isIOS) {
       // For iOS, try localhost first
       return 'http://localhost:3000'; // iOS simulator
       // Fallbacks handled by getAlternativeBaseUrls()
     } else {
       // For macOS desktop and other platforms
-      return 'http://127.0.0.1:3000'; // Use 127.0.0.1 to avoid proxy issues
+      return useLocalNetwork
+          ? 'http://103.184.181.79:3000' // online server
+          : 'http://127.0.0.1:3000'; // Use 127.0.0.1 to avoid proxy issues
     }
   }
 
@@ -60,8 +72,10 @@ class NetworkConfig {
       final scheme = Uri.base.scheme == 'https' ? 'wss' : 'ws';
       return '$scheme://${Uri.base.host}:3000';
     } else if (Platform.isAndroid) {
-      // For Android emulator, always use 10.0.2.2 to reach host machine
-      return 'ws://10.0.2.2:3000';
+      if (!useLocalNetwork) {
+        return 'ws://10.0.2.2:3000';
+      }
+      return 'ws://192.168.1.101:3000';
     } else if (Platform.isIOS) {
       // For iOS, try localhost first
       return 'ws://localhost:3000'; // iOS simulator
@@ -86,19 +100,20 @@ class NetworkConfig {
       // For web, use the current host to avoid CORS issues
       return 'http://${Uri.base.host}:4000';
     } else if (Platform.isAndroid) {
-      if (useLocalNetwork) {
-        // When useLocalNetwork is true, use 10.0.2.2 for Android emulator
+      if (!useLocalNetwork) {
+        // Emulator-friendly host mapping.
         return 'http://10.0.2.2:4000';
-      } else {
-        // For Android emulator with ADB port forwarding
-        return 'http://localhost:4000'; // Use localhost with port forwarding
       }
+      // WiFi/LAN mode: point to machine running storage service (update if needed)
+      return 'http://192.168.1.101:4000';
     } else if (Platform.isIOS) {
       // For iOS, try localhost first
       return 'http://localhost:4000'; // iOS simulator
     } else {
       // For macOS desktop and other platforms
-      return 'http://localhost:4000';
+      return useLocalNetwork
+          ? 'http://103.184.181.79:4000' // online server
+          : 'http://localhost:4000';
     }
   }
 

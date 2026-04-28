@@ -22,6 +22,12 @@ import '../modules/admin_toko/pages/main_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
 import '../modules/tukang/pages/main_page.dart';
 import '../modules/manajer/pages/main_page.dart';
+import '../modules/manajer/pages/completed_orders_today_page.dart';
+import '../modules/manajer/pages/branch_performance_page.dart';
+import '../modules/manajer/pages/sales_report_today_page.dart';
+import '../modules/manajer/pages/global_stock_page.dart';
+import '../modules/manajer/pages/simple_protected_page.dart';
+import '../modules/stockist/pages/main_page.dart';
 import '../pages/switch_branch_role_page.dart';
 import 'package:vanessa3/main.dart'; // Import global userStateProvider
 import '../providers/websocket_provider.dart';
@@ -36,6 +42,13 @@ class AppRoutes {
   static const String adminToko = '/admin_toko';
   static const String adminWorkshop = '/admin_workshop';
   static const String manajer = '/manager';
+  static const String manajerCompletedOrdersToday = '/manager/completed_orders_today';
+  static const String manajerBranchPerformance = '/manager/branch_performance';
+  static const String manajerSalesToday = '/manager/sales_today';
+  static const String manajerGlobalStock = '/manager/global_stock';
+  static const String manajerEmployees = '/manager/employees';
+  static const String manajerSystemSettings = '/manager/system_settings';
+  static const String stockist = '/stockist';
   static const String switchBranchRole = '/switch_branch_role';
   static const String orderDetail = '/order_detail';
   static Map<String, WidgetBuilder> get routes => {
@@ -48,6 +61,21 @@ class AppRoutes {
     adminWorkshop: (context) => const AdminWorkshopMainPage(),
     tukang: (context) => const TukangMainPage(),
     manajer: (context) => const ManajerMainPage(),
+    manajerCompletedOrdersToday: (context) => const CompletedOrdersTodayPage(),
+    manajerBranchPerformance: (context) => const BranchPerformancePage(),
+    manajerSalesToday: (context) => const SalesReportTodayPage(),
+    manajerGlobalStock: (context) => const GlobalStockPage(),
+    manajerEmployees: (context) => const SimpleProtectedPage(
+          title: 'Manajemen Karyawan',
+          description:
+              'Halaman ini siap digunakan, namun endpoint karyawan saat ini hanya mengizinkan role tertentu.\n\nJika Anda ingin manajer bisa melihat daftar karyawan, kita perlu menambahkan izin role manajer di backend.',
+        ),
+    manajerSystemSettings: (context) => const SimpleProtectedPage(
+          title: 'Pengaturan Sistem',
+          description:
+              'Halaman ini siap digunakan.\n\nJika Anda ingin fitur pengaturan sistem untuk manajer, beritahu pengaturan apa saja yang perlu ditambahkan (mis. target bulanan, batas diskon, dsb).',
+        ),
+    stockist: (context) => const StockistMainPage(),
     switchBranchRole: (context) => const SwitchBranchRolePage(),
     '/jual': (context) => const JualPage(),
     '/buyback': (context) => const BuybackPage(),
@@ -97,7 +125,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           );
 
           // Use primary role and branch from login response
-          final primaryRole = result['role'] ?? '';
+          final primaryRoleRaw = (result['role'] ?? '').toString();
+          final primaryRole = primaryRoleRaw.trim().toLowerCase();
           final primaryBranch = result['branch'] ?? '';
 
           final userStateNotifier = ref.read(userStateProvider.notifier);
@@ -138,10 +167,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             case 'tukang':
               route = AppRoutes.tukang;
               break;
+            case 'stockist':
+              route = AppRoutes.stockist;
+              break;
             default:
               route = AppRoutes.dashboard;
           }
-          debugPrint('Navigating to route: $route for role: $primaryRole');
+          debugPrint('Navigating to route: $route for role: $primaryRoleRaw');
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (context.mounted) {
               Navigator.pushReplacementNamed(context, route);

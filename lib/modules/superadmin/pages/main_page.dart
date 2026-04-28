@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/main.dart'; // Import global userStateProvider
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/providers/system_dashboard_provider.dart';
 import 'user_management_page.dart';
 import './branch_management_page.dart';
@@ -15,7 +16,6 @@ class SuperadminMainPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final userState = ref.watch(userStateProvider);
     // Watch health check status for Live indicator
     final isServerHealthy = ref.watch(healthCheckProvider);
 
@@ -103,36 +103,7 @@ class SuperadminMainPage extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'User: ${userState.username.isNotEmpty ? userState.username : '-'}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 4),
-                Builder(
-                  builder: (context) {
-                    String branchName = userState.branch;
-                    if (userState.branch.isNotEmpty &&
-                        userState.branches.isNotEmpty) {
-                      try {
-                        final found = userState.branches.firstWhere(
-                          (b) => b['branch_id'].toString() == userState.branch,
-                        );
-                        branchName = found['name'] ?? userState.branch;
-                      } catch (e) {
-                        branchName = userState.branch;
-                      }
-                    }
-                    return Text(
-                      'Branch aktif: $branchName',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    );
-                  },
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Role aktif: ${userState.role}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                const UserBranchRoleHeader(),
               ],
             ),
           ),
@@ -141,13 +112,14 @@ class SuperadminMainPage extends ConsumerWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: GridView.count(
-                crossAxisCount: 3,
+                crossAxisCount: 4,
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
+                childAspectRatio: 0.75,
                 children: [
                   _MenuButton(
                     icon: Icons.people,
-                    label: 'MANAJEMEN USER',
+                    label: 'USER',
                     iconColor: Colors.blue,
                     onTap: () => Navigator.push(
                       context,
@@ -158,7 +130,7 @@ class SuperadminMainPage extends ConsumerWidget {
                   ),
                   _MenuButton(
                     icon: Icons.business,
-                    label: 'MANAJEMEN CABANG',
+                    label: 'CABANG',
                     iconColor: Colors.orange,
                     onTap: () => Navigator.push(
                       context,
@@ -169,7 +141,7 @@ class SuperadminMainPage extends ConsumerWidget {
                   ),
                   _MenuButton(
                     icon: Icons.person_search,
-                    label: 'MANAJEMEN CUSTOMER',
+                    label: 'PELANGGAN',
                     iconColor: Colors.green,
                     onTap: () => Navigator.push(
                       context,
@@ -239,6 +211,16 @@ class _MenuButton extends StatelessWidget {
     this.onTap,
   });
 
+  String _twoLineLabel(String text) {
+    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.length <= 1) return text;
+    final mid = (words.length / 2).ceil();
+    final first = words.sublist(0, mid).join(' ');
+    final second = words.sublist(mid).join(' ');
+    if (second.isEmpty) return first;
+    return '$first\n$second';
+  }
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -249,15 +231,17 @@ class _MenuButton extends StatelessWidget {
           color: iconColor.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(12),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 32, color: iconColor),
-            const SizedBox(height: 8),
+            Icon(icon, size: 28, color: iconColor),
+            const SizedBox(height: 6),
             Text(
-              label,
+              _twoLineLabel(label),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,

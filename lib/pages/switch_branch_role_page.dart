@@ -39,6 +39,8 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
       return;
     }
 
+    final normalizedRole = selectedRole!.trim().toLowerCase();
+
     // Update user state with selected branch and role
     final userStateNotifier = ref.read(userStateProvider.notifier);
     final currentAuthToken = ref.read(userStateProvider).authToken;
@@ -47,7 +49,7 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
       userId: int.tryParse(userData!['user_id'].toString()),
       username: userData!['username'] ?? '',
       branch: selectedBranchId!,
-      role: selectedRole!,
+      role: normalizedRole,
       authToken: currentAuthToken,
       roles: List<String>.from(userData!['roles'] ?? []),
       branches: List<Map<String, dynamic>>.from(userData!['branches'] ?? []),
@@ -55,7 +57,7 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
 
     // Navigate to appropriate module based on selected role
     String route = '';
-    switch (selectedRole) {
+    switch (normalizedRole) {
       case 'cs':
         route = AppRoutes.cs;
         break;
@@ -76,6 +78,9 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
         break;
       case 'tukang':
         route = AppRoutes.tukang;
+        break;
+      case 'stockist':
+        route = AppRoutes.stockist;
         break;
       default:
         route = AppRoutes.dashboard;
@@ -248,6 +253,8 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
         return 'Manajer';
       case 'tukang':
         return 'Teknisi';
+      case 'stockist':
+        return 'Stockist';
       default:
         return role;
     }

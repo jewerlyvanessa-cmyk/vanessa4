@@ -2,20 +2,43 @@ const express = require('express');
 const db = require('../db');
 const multer = require('multer');
 const path = require('path');
+const crypto = require('crypto');
 
 const router = express.Router();
 
 // Configure multer for file uploads
+const allowedUploadMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const uploadExtByMime = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+function createSafeUploadFilename(file) {
+  const ext = uploadExtByMime[file.mimetype] || 'bin';
+  return `${Date.now()}-${crypto.randomUUID()}.${ext}`;
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    cb(null, createSafeUploadFilename(file));
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!allowedUploadMimeTypes.has(file.mimetype)) {
+      cb(new Error('Only JPEG, PNG, and WEBP uploads are allowed'));
+      return;
+    }
+    cb(null, true);
+  },
+});
 
 // GET /api/dashboard/order-today
 // Returns today's order statistics for dashboard
@@ -499,7 +522,7 @@ router.get('/customers', async (req, res) => {
 
 // POST /upload
 // Upload file (photo)
-router.post('/upload', upload.single('photo'), (req, res) => {
+router.post('/upload', upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -508,10 +531,27 @@ router.post('/upload', upload.single('photo'), (req, res) => {
     // Return file URL
     const fileUrl = `/uploads/${req.file.filename}`;
 
+    // Persist upload metadata (safe: filename is server-generated)
+    const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
+    const upRes = await db.query(
+      `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING upload_id`,
+      [
+        req.file.filename,
+        req.file.originalname || null,
+        req.file.mimetype || null,
+        typeof req.file.size === 'number' ? req.file.size : null,
+        fileUrl,
+        Number.isFinite(uploaderUserId) ? uploaderUserId : null,
+      ]
+    );
+
     res.json({
       success: true,
       url: fileUrl,
       filename: req.file.filename,
+      upload_id: upRes.rows[0]?.upload_id ?? null,
     });
   } catch (error) {
     console.error('Error uploading file:', error);

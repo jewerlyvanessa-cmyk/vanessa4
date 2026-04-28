@@ -31,7 +31,7 @@ class DashboardPage extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dashboard - Order Today'),
+        title: const Text('Order Today'),
         actions: [
           // Real-time connection indicator
           Container(

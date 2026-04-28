@@ -72,10 +72,8 @@ Future<void> printFakturOrder(
           pw.Text('Status: ${orderData['status'] ?? '-'}'),
           pw.Text('Tanggal: ${dateStr(orderData['created_at'])}'),
           pw.Text('Customer: ${orderData['customer_name'] ?? '-'}'),
-          if (orderData['customer_phone'] != null)
-            pw.Text('No. HP: ${orderData['customer_phone']}'),
-          if (orderData['customer_address'] != null)
-            pw.Text('Alamat: ${orderData['customer_address']}'),
+          pw.Text('No. HP: ${orderData['customer_phone'] ?? '-'}'),
+          pw.Text('Alamat: ${orderData['customer_address'] ?? '-'}'),
           pw.SizedBox(height: 16),
           pw.Text(
             'Detail Item',
@@ -90,18 +88,21 @@ Future<void> printFakturOrder(
           else
             pw.TableHelper.fromTextArray(
               headers: const [
+                'Kode',
                 'Item',
                 'Berat',
-                'Qty',
-                'Total (Rp)',
+                'Harga/g',
+                'Total',
               ],
               data: items.map((raw) {
                 final item = raw as Map<String, dynamic>;
                 return [
+                  (item['kode_produk'] ?? '-').toString(),
                   (item['nama_item'] ?? item['name'] ?? '-').toString(),
                   (item['weight'] ?? '-').toString(),
-                  (item['qty'] ?? item['quantity'] ?? '-').toString(),
-                  fmtMoney(item['total']),
+                  fmtMoney(item['harga_per_gram'] ?? 0),
+                  // Use total from order_items (source-of-truth from backend).
+                  fmtMoney(item['total'] ?? 0),
                 ];
               }).toList(),
               cellAlignment: pw.Alignment.centerLeft,
@@ -122,7 +123,12 @@ Future<void> printFakturOrder(
                 ),
               ),
               pw.Text(
-                'Rp ${fmtMoney(orderData['total'])}',
+                'Rp ${fmtMoney(orderData['jumlah'] ?? ((() {
+                  final t =
+                      double.tryParse(orderData['total']?.toString() ?? '') ?? 0;
+                  final rounded = (t / 5000).ceil() * 5000;
+                  return rounded;
+                })()))}',
                 style: pw.TextStyle(
                   fontSize: 14,
                   fontWeight: pw.FontWeight.bold,

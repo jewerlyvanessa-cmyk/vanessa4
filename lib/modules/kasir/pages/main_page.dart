@@ -7,7 +7,9 @@ import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'payment_queue_page.dart';
 import 'daily_payments_page.dart';
 import 'payment_page.dart';
+import 'reports_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import '../../../utils/network_config.dart';
 
@@ -27,6 +29,8 @@ String getMainModuleForRole(String role) {
       return 'tukang';
     case 'manajer':
       return 'manajer';
+    case 'stockist':
+      return 'stockist';
     default:
       return 'dashboard';
   }
@@ -54,7 +58,10 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       navigator.pushReplacementNamed('/superadmin');
       break;
     case 'manajer':
-      navigator.pushReplacementNamed('/manajer');
+      navigator.pushReplacementNamed('/manager');
+      break;
+    case 'stockist':
+      navigator.pushReplacementNamed('/stockist');
       break;
     default:
       navigator.pushReplacementNamed('/dashboard');
@@ -212,16 +219,6 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
             children: [
               Builder(
                 builder: (context) {
-                  final userState = ref.watch(userStateProvider);
-                  String branchName = '';
-                  if (userState.branch.isNotEmpty &&
-                      userState.branches.isNotEmpty) {
-                    final found = userState.branches.firstWhere(
-                      (b) => b['branch_id'].toString() == userState.branch,
-                      orElse: () => <String, dynamic>{},
-                    );
-                    branchName = found['name'] ?? userState.branch;
-                  }
                   return Padding(
                     padding: const EdgeInsets.only(
                       left: 24.0,
@@ -232,20 +229,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'User: ${userState.username.isNotEmpty ? userState.username : '-'}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Branch aktif: $branchName',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Role aktif: ${userState.role}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+                        const UserBranchRoleHeader(),
                       ],
                     ),
                   );
@@ -255,10 +239,11 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: GridView.count(
-                  crossAxisCount: 3,
+                  crossAxisCount: 4,
                   shrinkWrap: true,
                   mainAxisSpacing: 16,
                   crossAxisSpacing: 16,
+                  childAspectRatio: 0.75,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
                     _MenuButton(
@@ -298,9 +283,10 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                       icon: Icons.analytics,
                       label: 'Laporan',
                       iconColor: Colors.blue,
-                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Fitur ini akan segera hadir'),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const KasirReportsPage(),
                         ),
                       ),
                     ),
@@ -423,6 +409,16 @@ class _MenuButton extends StatelessWidget {
     this.onTap,
   });
 
+  String _twoLineLabel(String text) {
+    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.length <= 1) return text;
+    final mid = (words.length / 2).ceil();
+    final first = words.sublist(0, mid).join(' ');
+    final second = words.sublist(mid).join(' ');
+    if (second.isEmpty) return first;
+    return '$first\n$second';
+  }
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -433,17 +429,19 @@ class _MenuButton extends StatelessWidget {
           color: iconColor.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(12),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 32, color: iconColor),
-            const SizedBox(height: 8),
+            Icon(icon, size: 28, color: iconColor),
+            const SizedBox(height: 6),
             Text(
-              label,
+              _twoLineLabel(label),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 14,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),

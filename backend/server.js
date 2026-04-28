@@ -17,6 +17,7 @@ const path = require('path');
 const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const customersRoute = require('./routes/customers'); // Import customers route
@@ -54,6 +55,70 @@ if (!SECRET_KEY) {
 }
 
 const allowedUploadMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const uploadExtByMime = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+function createSafeUploadFilename(file) {
+  const ext = uploadExtByMime[file.mimetype] || 'bin';
+  return `${Date.now()}-${crypto.randomUUID()}.${ext}`;
+}
+
+/**
+ * Stockist clients send item_name as a display label "KODE - Nama" while
+ * `items.name` in DB is usually just "Nama" (kode is in kode_produk). Extract
+ * the code so we can match the source row when the label !== items.name.
+ */
+function parseKodeProdukFromTransferItemLabel(itemLabel) {
+  const t = String(itemLabel ?? '').trim();
+  if (!t) return null;
+  const m = t.match(/^(.+?)\s*[-\u2013\u2014]\s+(.+)$/u);
+  if (m) return m[1].trim();
+  const idx = t.indexOf(' - ');
+  if (idx > 0) return t.slice(0, idx).trim();
+  return null;
+}
+
+/**
+ * If DB has no `transfers.courier` column, POST may prefix notes with
+ * "Kurir: …" — expose that as `courier` in GET for clients.
+ */
+function extractKurirFromTransferNotes(notes) {
+  if (notes == null) return null;
+  const s = String(notes);
+  const m = s.match(/^\s*Kurir:\s*([^\n\r]+)/m);
+  return m ? m[1].trim() : null;
+}
+
+function roundUpToNearest5000(amount) {
+  const n = typeof amount === 'number' ? amount : parseFloat(amount);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.ceil(n / 5000) * 5000;
+}
+
+async function getOrdersJumlahColumnMode(client) {
+  // Returns: 'generated' | 'plain' | 'missing'
+  try {
+    const r = await client.query(
+      `
+        SELECT is_generated
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'orders'
+          AND column_name = 'jumlah'
+        LIMIT 1
+      `,
+      []
+    );
+    if (r.rows.length === 0) return 'missing';
+    return r.rows[0].is_generated === 'ALWAYS' ? 'generated' : 'plain';
+  } catch (_) {
+    // If introspection fails, assume plain so we keep values consistent.
+    return 'plain';
+  }
+}
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
@@ -103,7 +168,7 @@ const storage = multer.diskStorage({
     cb(null, 'uploads/'); // Folder penyimpanan
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    cb(null, createSafeUploadFilename(file));
   },
 });
 
@@ -122,7 +187,9 @@ const upload = multer({
 app.use('/users', authenticateToken, requireRoles('superadmin'));
 app.use('/employees', authenticateToken, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
 app.use('/user-branch-roles', authenticateToken, requireRoles('superadmin'));
-app.use('/branches', authenticateToken, requireRoles('superadmin'));
+// Branch list needs to be readable by non-superadmin modules (e.g. transfers).
+// Keep writes restricted at the route-handler level.
+app.use('/branches', authenticateToken);
 app.use('/api/branches', authenticateToken, requireRoles('superadmin'));
 app.use('/orders', authenticateToken);
 app.use('/payments', authenticateToken);
@@ -305,6 +372,7 @@ app.get('/orders', async (req, res) => {
         branch_id: order.branch_id.toString(),
         user_id: order.user_id.toString(),
         total: parseFloat(order.total || 0),
+        jumlah: parseFloat(order.jumlah || roundUpToNearest5000(order.total || 0) || 0),
         diskon: parseFloat(order.diskon || 0),
         mode: order.mode,
         created_at: order.created_at,
@@ -352,6 +420,28 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     }
 
     await client.query('BEGIN');
+
+  // Persist upload metadata (safe: filename is server-generated)
+  let uploadId = null;
+  if (req.file) {
+    const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
+    const urlPath = `/uploads/${req.file.filename}`;
+
+    const upRes = await client.query(
+      `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING upload_id`,
+      [
+        req.file.filename,
+        req.file.originalname || null,
+        req.file.mimetype || null,
+        typeof req.file.size === 'number' ? req.file.size : null,
+        urlPath,
+        Number.isFinite(uploaderUserId) ? uploaderUserId : null,
+      ]
+    );
+    uploadId = upRes.rows[0]?.upload_id ?? null;
+  }
 
     const {
       order_type,
@@ -404,6 +494,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     const order = orderResult.rows[0];
 
     // Process order items
+    let computedOrderItemsTotal = 0;
     for (const itemData of order_items) {
       // Assign uploaded photo to item if available
       if (uploadedPhotoPath && !itemData.photo_produk) {
@@ -416,7 +507,9 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       // If item_id exists, this is from stock - get item details from database
       if (final_item_id) {
         const existingItem = await client.query(
-          `SELECT name, kode_produk, weight, material, purity, kategori, jenis, tipe, photo_url
+          `SELECT
+             name, kode_produk, weight, material, purity, kategori, jenis, tipe, photo_url,
+             quantity, status, ownership, stock_type
            FROM items WHERE item_id = $1`,
           [final_item_id]
         );
@@ -433,6 +526,11 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             jenis: dbItem.jenis,
             tipe: dbItem.tipe,
             photo_produk: itemData.photo_produk || dbItem.photo_url,
+            // Stock fields (used for quantity decrement / status decisions)
+            item_quantity: dbItem.quantity,
+            item_status: dbItem.status,
+            item_ownership: dbItem.ownership,
+            item_stock_type: dbItem.stock_type,
           };
         }
       }
@@ -569,6 +667,15 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       }
 
       // Create order item
+      // Catatan: diskon hanya level orders (bukan per item).
+      // order_items.subtotal = qty * weight * harga_per_gram
+      // order_items.total = pembulatan dari subtotal (naik ke kelipatan 5.000)
+      const qtyVal = parseInt(itemDetails.qty) || 1;
+      const weightVal = parseFloat(itemDetails.weight) || 0;
+      const hargaVal = parseFloat(itemDetails.harga_per_gram) || 0;
+      const subtotalVal = qtyVal * weightVal * hargaVal;
+      const totalRoundedVal = Math.ceil(subtotalVal / 5000) * 5000;
+
       await client.query(
         `INSERT INTO order_items (
           order_id, item_id, nama_item, kode_produk, qty, weight, harga_per_gram,
@@ -579,12 +686,14 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           final_item_id,
           itemDetails.nama_item,
           itemDetails.kode_produk,
-          parseInt(itemDetails.qty) || 1,
-          parseFloat(itemDetails.weight) || 0,
-          parseFloat(itemDetails.harga_per_gram) || 0,
-          parseFloat(itemDetails.subtotal) || ((parseInt(itemDetails.qty) || 1) * (parseFloat(itemDetails.weight) || 0) * (parseFloat(itemDetails.harga_per_gram) || 0)),
-          parseFloat(itemDetails.diskon) || parseFloat(diskon) || 0,
-          parseFloat(itemDetails.total) || ((parseInt(itemDetails.qty) || 1) * (parseFloat(itemDetails.weight) || 0) * (parseFloat(itemDetails.harga_per_gram) || 0) * (1 - (parseFloat(itemDetails.diskon) || parseFloat(diskon) || 0) / 100)),
+          qtyVal,
+          weightVal,
+          hargaVal,
+          Number.isFinite(parseFloat(itemDetails.subtotal))
+            ? parseFloat(itemDetails.subtotal)
+            : subtotalVal,
+          0, // diskon tidak disimpan per-item
+          totalRoundedVal, // total item = pembulatan subtotal
           itemDetails.photo_produk,
           itemDetails.kategori,
           itemDetails.jenis,
@@ -594,34 +703,110 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         ]
       );
 
+      // Keep a running total from the authoritative per-item rounded value
+      computedOrderItemsTotal += totalRoundedVal;
+
       // Update existing item status if it's from stock
       if (final_item_id && itemData.item_id) {
-        let newItemStatus = 'sold';
-        let newOwnership = 'pelanggan';
-        let newStockType = 'non_inventory';
+        // Decrease quantity for stock items. If stock remains, keep item as stock.
+        const prevQtyRaw = itemDetails.item_quantity;
+        const prevQty = Number.isFinite(parseInt(prevQtyRaw, 10))
+          ? parseInt(prevQtyRaw, 10)
+          : 0;
 
-        await client.query(
-          `UPDATE items SET
-            status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
-           WHERE item_id = $4`,
-          [newItemStatus, newOwnership, newStockType, final_item_id]
+        const decRes = await client.query(
+          `
+            UPDATE items
+            SET quantity = COALESCE(quantity, 0) - $1,
+                updated_at = NOW()
+            WHERE item_id = $2
+              AND COALESCE(quantity, 0) >= $1
+            RETURNING quantity, status
+          `,
+          [qtyVal, final_item_id]
         );
 
-        // Record in stock_history
+        if (decRes.rows.length === 0) {
+          return res.status(400).json({
+            error: 'Insufficient stock quantity',
+            detail: `Stock ${prevQty} < order quantity ${qtyVal}`,
+          });
+        }
+
+        const nextQty = parseInt(decRes.rows[0].quantity, 10);
+        const prevStatus = (itemDetails.item_status ?? decRes.rows[0].status ?? 'ready').toString();
+
+        // If stock is depleted, mark as sold; otherwise keep as available for stock.
+        if (nextQty <= 0) {
+          const newItemStatus = 'sold';
+          const newOwnership = 'pelanggan';
+          const newStockType = 'non_inventory';
+
+          await client.query(
+            `UPDATE items SET
+              status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
+             WHERE item_id = $4`,
+            [newItemStatus, newOwnership, newStockType, final_item_id]
+          );
+
+          await client.query(
+            `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [final_item_id, prevStatus, newItemStatus, user_id, `Order ${order_type} created (stock depleted)`]
+          );
+        }
+
+        // Always record stock mutation for this sale
         await client.query(
-          `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [final_item_id, 'ready', newItemStatus, user_id, `Order ${order_type} created`]
+          `
+            INSERT INTO stock_mutations (
+              item_id, branch_id, type, quantity, previous_stock, current_stock,
+              notes, reference_id, reference_type, created_by
+            )
+            VALUES ($1, $2, 'sale', $3, $4, $5, $6, $7, 'order', $8)
+          `,
+          [
+            final_item_id,
+            branch_id,
+            -qtyVal,
+            prevQty,
+            nextQty,
+            `Order ${order_type} (${nota_order})`,
+            order.order_id,
+            user_id,
+          ]
         );
       }
     }
 
     // Calculate total order amount
-    const totalResult = await client.query(
-      `SELECT SUM(total) as order_total FROM order_items WHERE order_id = $1`,
-      [order.order_id]
-    );
-    const orderTotal = parseFloat(totalResult.rows[0].order_total) || 0;
+    // Source-of-truth: order_items.total (already rounded per item)
+    // Order total formula: sum(order_items.total) - (sum(order_items.total) * diskon%)
+    const orderItemsTotal = Number.isFinite(computedOrderItemsTotal)
+      ? computedOrderItemsTotal
+      : 0;
+    const diskonOrder = parseFloat(diskon) || 0;
+    const orderTotal = orderItemsTotal * (1 - diskonOrder / 100);
+
+    // Update orders.total and keep orders.jumlah consistent.
+    // We always *try* to set jumlah; if the column is GENERATED ALWAYS (or missing),
+    // the DB will reject the update — then we fallback to updating total only.
+    const jumlahRounded = roundUpToNearest5000(orderTotal);
+    try {
+      await client.query(
+        `UPDATE orders
+         SET total = $1,
+             jumlah = $2,
+             updated_at = NOW()
+         WHERE order_id = $3`,
+        [orderTotal, jumlahRounded, order.order_id]
+      );
+    } catch (_) {
+      await client.query(
+        `UPDATE orders SET total = $1, updated_at = NOW() WHERE order_id = $2`,
+        [orderTotal, order.order_id]
+      );
+    }
 
     // Commit the transaction before sending response
     await client.query('COMMIT');
@@ -629,6 +814,18 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     // Get order items for response (using new client since transaction committed)
     const itemsClient = await db.getClient();
     try {
+      // Fetch the latest order row (including generated `jumlah`)
+      const orderFreshResult = await itemsClient.query(
+        `SELECT o.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+         FROM orders o
+         LEFT JOIN customers c ON o.customer_id = c.customer_id
+         WHERE o.order_id = $1
+         LIMIT 1`,
+        [order.order_id]
+      );
+      const orderFresh = orderFreshResult.rows[0] || order;
+
+      // Fetch customer details for invoice/receipt display
       const orderItemsResult = await itemsClient.query(
         `SELECT oi.*, i.name as item_name, i.kode_produk as item_kode, i.material as item_material, i.purity as item_purity, i.weight as item_weight, i.kategori as item_kategori, i.jenis as item_jenis, i.tipe as item_tipe
          FROM order_items oi
@@ -650,7 +847,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       }));
 
       res.status(201).json({
-        ...order,
+        ...orderFresh,
         total: orderTotal,
         items: orderItems,
         message: 'Order created successfully'
@@ -1123,7 +1320,7 @@ app.get('/branches', async (req, res) => {
   }
 });
 
-app.post('/branches', async (req, res) => {
+app.post('/branches', requireRoles('superadmin'), async (req, res) => {
   try {
     const { name, code, alias, initials, address, phone_number } = req.body;
 
@@ -1163,14 +1360,12 @@ app.get('/items', async (req, res) => {
     }
 
     if (item_code) {
-      conditions.push(`(item_code = $${params.length + 1} OR kode_produk = $${params.length + 1})`);
+      // Backward compatible: DB schema uses kode_produk
+      conditions.push(`(kode_produk = $${params.length + 1})`);
       params.push(item_code);
     }
 
-    if (stock_type) {
-      conditions.push(`stock_type = $${params.length + 1}`);
-      params.push(stock_type);
-    }
+    // stock_type is not available in older schema; ignore when present
 
     if (status) {
       conditions.push(`status = $${params.length + 1}`);
@@ -1237,58 +1432,56 @@ app.post('/items', async (req, res) => {
   try {
     const {
       name,
-      item_code,
-      item_code_source = 'internal',
-      qr_code,
-      weight,
       quantity = 1,
+      weight,
       material,
       purity,
       kategori,
       jenis,
       tipe,
-      ownership = 'unknown',
-      stock_type = 'non_inventory',
       status,
-      is_quick_registered = false,
-      is_estimated = false,
       branch_id,
-      photo_url,
       source = 'manual',
       metadata,
       // Legacy support
       kode_produk,
+      // Accept newer clients sending item_code
+      item_code,
     } = req.body;
 
     // Handle legacy kode_produk field
     const final_item_code = item_code || kode_produk;
 
+    if (!branch_id || !name || !final_item_code || !status || weight == null) {
+      return res.status(400).json({
+        error:
+          'branch_id, name, item_code/kode_produk, status, dan weight wajib diisi',
+      });
+    }
+    if (!material || !purity) {
+      return res.status(400).json({
+        error: 'material dan purity wajib diisi',
+      });
+    }
+
     const result = await db.query(
       `INSERT INTO items (
-        name, item_code, item_code_source, qr_code, weight, quantity, material, purity,
-        kategori, jenis, tipe, ownership, stock_type, status, is_quick_registered,
-        is_estimated, branch_id, photo_url, source, metadata, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+        branch_id, kode_produk, kategori, jenis, tipe, name, material, purity, weight, quantity,
+        status, source, metadata, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
       RETURNING *`,
       [
-        name,
+        branch_id,
         final_item_code,
-        item_code_source,
-        qr_code,
-        weight,
-        quantity,
-        material,
-        purity,
         kategori,
         jenis,
         tipe,
-        ownership,
-        stock_type,
+        name,
+        material,
+        purity,
+        weight,
+        quantity,
         status,
-        is_quick_registered,
-        is_estimated,
-        branch_id,
-        photo_url || null,
         source,
         metadata,
       ]
@@ -1297,7 +1490,38 @@ app.post('/items', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating item:', error);
-    res.status(500).json({ error: 'Internal server error', detail: error.detail });
+    // Provide safer, actionable errors to the client
+    // Common PG codes:
+    // - 23505 unique_violation
+    // - 23502 not_null_violation
+    // - 23503 foreign_key_violation
+    // - 22P02 invalid_text_representation
+    const pgCode = error?.code;
+    const detail = error?.detail || null;
+    const message = error?.message || 'Unknown error';
+
+    if (pgCode === '23505') {
+      return res.status(400).json({
+        error: 'Duplicate item_code/kode_produk',
+        detail,
+        code: pgCode,
+      });
+    }
+
+    if (pgCode === '23502' || pgCode === '23503' || pgCode === '22P02') {
+      return res.status(400).json({
+        error: 'Invalid item payload',
+        detail,
+        code: pgCode,
+      });
+    }
+
+    return res.status(500).json({
+      error: 'Internal server error',
+      detail,
+      code: pgCode || null,
+      message: process.env.NODE_ENV === 'production' ? undefined : message,
+    });
   }
 });
 
@@ -1306,45 +1530,68 @@ app.put('/items/:id', async (req, res) => {
     const id = parseInt(req.params.id);
     const {
       name,
-      item_code,
-      item_code_source,
-      qr_code,
       weight,
-      quantity,
       material,
       purity,
       kategori,
       jenis,
       tipe,
-      ownership,
-      stock_type,
       status,
-      is_quick_registered,
-      is_estimated,
       branch_id,
-      photo_url,
       source,
       metadata,
       // Legacy support
       kode_produk,
+      // Accept newer clients sending item_code
+      item_code,
     } = req.body;
 
     // Handle legacy kode_produk field
     const final_item_code = item_code || kode_produk;
 
+    if (!branch_id || !name || !final_item_code || !status || weight == null) {
+      return res.status(400).json({
+        error:
+          'branch_id, name, item_code/kode_produk, status, dan weight wajib diisi',
+      });
+    }
+    if (!material || !purity) {
+      return res.status(400).json({
+        error: 'material dan purity wajib diisi',
+      });
+    }
+
     const result = await db.query(
       `UPDATE items SET
-        name = $1, item_code = $2, item_code_source = $3, qr_code = $4, weight = $5,
-        quantity = $6, material = $7, purity = $8, kategori = $9, jenis = $10, tipe = $11,
-        ownership = $12, stock_type = $13, status = $14, is_quick_registered = $15,
-        is_estimated = $16, branch_id = $17, photo_url = $18, source = $19, metadata = $20,
+        branch_id = $1,
+        kode_produk = $2,
+        kategori = $3,
+        jenis = $4,
+        tipe = $5,
+        name = $6,
+        material = $7,
+        purity = $8,
+        weight = $9,
+        status = $10,
+        source = $11,
+        metadata = $12,
         updated_at = NOW()
-      WHERE item_id = $21
+      WHERE item_id = $13
       RETURNING *`,
       [
-        name, final_item_code, item_code_source, qr_code, weight, quantity, material, purity,
-        kategori, jenis, tipe, ownership, stock_type, status, is_quick_registered,
-        is_estimated, branch_id, photo_url, source, metadata, id
+        branch_id,
+        final_item_code,
+        kategori,
+        jenis,
+        tipe,
+        name,
+        material,
+        purity,
+        weight,
+        status,
+        source,
+        metadata,
+        id,
       ]
     );
 
@@ -1356,6 +1603,46 @@ app.put('/items/:id', async (req, res) => {
   } catch (error) {
     console.error('Error updating item:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Restock: increment item quantity safely
+app.post('/items/:id/restock', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { delta_quantity, branch_id } = req.body || {};
+
+    const delta = parseInt(delta_quantity);
+    if (!Number.isFinite(delta) || delta <= 0) {
+      return res
+        .status(400)
+        .json({ error: 'delta_quantity wajib diisi dan harus > 0' });
+    }
+
+    const params = [delta, id];
+    let sql = `
+      UPDATE items
+      SET quantity = COALESCE(quantity, 0) + $1,
+          updated_at = NOW()
+      WHERE item_id = $2
+    `;
+
+    if (branch_id) {
+      sql += ` AND branch_id = $3`;
+      params.push(branch_id);
+    }
+
+    sql += ` RETURNING *`;
+
+    const result = await db.query(sql, params);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+
+    return res.status(200).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error restocking item:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -1896,7 +2183,7 @@ app.get('/branches/:id', async (req, res) => {
   }
 });
 
-app.put('/branches/:id', async (req, res) => {
+app.put('/branches/:id', requireRoles('superadmin'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { name, code, alias, initials, address, phone_number } = req.body;
@@ -1928,7 +2215,7 @@ app.put('/branches/:id', async (req, res) => {
   }
 });
 
-app.patch('/branches/:id/status', async (req, res) => {
+app.patch('/branches/:id/status', requireRoles('superadmin'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { status } = req.body;
@@ -1952,7 +2239,7 @@ app.patch('/branches/:id/status', async (req, res) => {
   }
 });
 
-app.delete('/branches/:id', async (req, res) => {
+app.delete('/branches/:id', requireRoles('superadmin'), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
 
@@ -2384,6 +2671,64 @@ app.get('/reports', async (req, res) => {
   }
 });
 
+// Manajer: daftar order completed hari ini dari semua branch
+app.get('/reports/orders-completed-today', async (req, res) => {
+  try {
+    const { limit } = req.query;
+
+    let query = `
+      SELECT
+        o.order_id,
+        o.order_number,
+        o.order_type,
+        o.status,
+        o.total,
+        o.total_akhir,
+        o.diskon,
+        o.mode,
+        o.created_at,
+        o.updated_at,
+        o.branch_id,
+        b.name as branch_name,
+        o.user_id,
+        u.username as created_by_username,
+        o.customer_id,
+        c.name as customer_name,
+        c.phone as customer_phone
+      FROM orders o
+      LEFT JOIN branches b ON o.branch_id = b.branch_id
+      LEFT JOIN users u ON o.user_id = u.user_id
+      LEFT JOIN customers c ON o.customer_id = c.customer_id
+      WHERE DATE(o.created_at) = CURRENT_DATE
+        AND o.status = 'completed'
+      ORDER BY o.created_at DESC
+    `;
+
+    const params = [];
+    if (limit) {
+      query += ` LIMIT $1`;
+      params.push(parseInt(limit, 10));
+    }
+
+    const result = await db.query(query, params);
+    const processed = result.rows.map(r => ({
+      ...r,
+      order_id: r.order_id?.toString?.() ?? r.order_id,
+      branch_id: r.branch_id?.toString?.() ?? r.branch_id,
+      user_id: r.user_id?.toString?.() ?? r.user_id,
+      customer_id: r.customer_id?.toString?.() ?? r.customer_id,
+      total: r.total == null ? null : parseFloat(r.total),
+      total_akhir: r.total_akhir == null ? null : parseFloat(r.total_akhir),
+      diskon: r.diskon == null ? null : parseFloat(r.diskon),
+    }));
+
+    res.status(200).json(processed);
+  } catch (error) {
+    console.error('Error fetching completed orders today:', error);
+    res.status(500).json({ error: 'Internal server error', detail: error.message });
+  }
+});
+
 // Validasi tabel database
 // const validateDatabase = async () => {
 //   try {
@@ -2521,7 +2866,7 @@ app.get('/orders/daily', async (req, res) => {
           oi.weight,
           oi.qty,
           oi.harga_per_gram,
-          CAST(oi.qty AS DECIMAL) * CAST(oi.weight AS DECIMAL) * CAST(oi.harga_per_gram AS DECIMAL) as jumlah,
+          oi.total as item_total,
           i.material,
           i.purity,
           oi.kategori,
@@ -2558,7 +2903,7 @@ app.get('/orders/daily', async (req, res) => {
           oi.weight,
           oi.qty,
           oi.harga_per_gram,
-          CAST(oi.qty AS DECIMAL) * CAST(oi.weight AS DECIMAL) * CAST(oi.harga_per_gram AS DECIMAL) as jumlah,
+          oi.total as item_total,
           i.material,
           i.purity,
           oi.kategori,
@@ -2597,20 +2942,56 @@ app.get('/transfers', async (req, res) => {
   try {
     const { branch_id, status, type } = req.query;
 
+    // Backward-compatible: columns may not exist yet.
+    async function hasTransfersColumn(columnName) {
+      try {
+        const r = await db.query(
+          `
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'transfers'
+              AND column_name = $1
+            LIMIT 1
+          `,
+          [columnName]
+        );
+        return r.rows.length > 0;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
+      hasTransfersColumn('source_type'),
+      hasTransfersColumn('courier'),
+    ]);
+
     let query = `
       SELECT
-        t.*,
+        t.transfer_id,
+        t.from_branch_id,
+        t.to_branch_id,
+        t.item_name,
+        t.quantity,
+        ${hasSourceTypeCol ? 't.source_type' : "'stok'"} as source_type,
+        ${hasCourierCol ? 't.courier' : 'NULL'} as courier,
+        t.notes,
+        t.order_id,
+        t.created_by,
+        t.approved_by,
+        t.status,
+        t.created_at,
+        t.updated_at,
         fb.name as from_branch_name,
         tb.name as to_branch_name,
-        COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
-        o.qty,
-        u.username as created_by_name
+        u.username as created_by_name,
+        uap.username as approved_by_name
       FROM transfers t
       LEFT JOIN branches fb ON t.from_branch_id = fb.branch_id
       LEFT JOIN branches tb ON t.to_branch_id = tb.branch_id
-      LEFT JOIN orders o ON t.order_id = o.order_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN users u ON t.created_by = u.user_id
+      LEFT JOIN users uap ON t.approved_by = uap.user_id
       WHERE 1=1
     `;
 
@@ -2641,10 +3022,31 @@ app.get('/transfers', async (req, res) => {
       }
     }
 
-    query += ` GROUP BY t.transfer_id, t.from_branch_id, t.to_branch_id, t.item_name, t.quantity, t.notes, t.order_id, t.created_by, t.status, t.created_at, t.updated_at, t.approved_by, fb.name, tb.name, o.qty, u.username ORDER BY t.created_at DESC`;
+    query += ` ORDER BY t.created_at DESC`;
 
     const result = await db.query(query, params);
-    res.status(200).json(result.rows);
+    // Prevent "Do not know how to serialize a BigInt" when sending JSON
+    const processedRows = result.rows.map(row => {
+      const rawC = row.courier;
+      let displayCourier = rawC;
+      if (displayCourier == null || (typeof displayCourier === 'string' && displayCourier.trim() === '')) {
+        const fromNotes = extractKurirFromTransferNotes(row.notes);
+        if (fromNotes) displayCourier = fromNotes;
+      }
+      return {
+        ...row,
+        courier: displayCourier,
+        transfer_id: row.transfer_id?.toString?.() ?? row.transfer_id,
+        from_branch_id: row.from_branch_id?.toString?.() ?? row.from_branch_id,
+        to_branch_id: row.to_branch_id?.toString?.() ?? row.to_branch_id,
+        order_id: row.order_id?.toString?.() ?? row.order_id,
+        created_by: row.created_by?.toString?.() ?? row.created_by,
+        approved_by: row.approved_by?.toString?.() ?? row.approved_by,
+        quantity: row.quantity == null ? null : parseInt(row.quantity, 10),
+      };
+    });
+
+    res.status(200).json(processedRows);
   } catch (error) {
     console.error('Error fetching transfers:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2654,19 +3056,141 @@ app.get('/transfers', async (req, res) => {
 // Endpoint untuk membuat transfer barang baru
 app.post('/transfers', async (req, res) => {
   try {
-    const { from_branch_id, to_branch_id, item_name, quantity, notes, order_id, created_by } = req.body;
+    const {
+      from_branch_id,
+      to_branch_id,
+      item_name,
+      quantity,
+      notes: bodyNotes,
+      order_id,
+      created_by,
+      source_type,
+      courier: bodyCourier,
+    } = req.body;
 
     if (!from_branch_id || !to_branch_id || !item_name || !quantity) {
       return res.status(400).json({ error: 'from_branch_id, to_branch_id, item_name, and quantity are required' });
     }
 
-    const insertQuery = `
-      INSERT INTO transfers (from_branch_id, to_branch_id, item_name, quantity, notes, order_id, created_by, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
-      RETURNING *
-    `;
+    const normalizedSourceType = source_type === 'buyback' ? 'buyback' : 'stok';
 
-    const result = await db.query(insertQuery, [from_branch_id, to_branch_id, item_name, quantity, notes, order_id, created_by]);
+    async function hasTransfersColumn(columnName) {
+      try {
+        const r = await db.query(
+          `
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'transfers'
+              AND column_name = $1
+            LIMIT 1
+          `,
+          [columnName]
+        );
+        return r.rows.length > 0;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
+      hasTransfersColumn('source_type'),
+      hasTransfersColumn('courier'),
+    ]);
+
+    const trimmedCourier =
+      bodyCourier == null || String(bodyCourier).trim() === ''
+        ? ''
+        : String(bodyCourier).trim();
+    // No `courier` column yet: persist kurir in notes (common when source_type migration ran but courier did not)
+    let notes = bodyNotes;
+    if (!hasCourierCol && trimmedCourier) {
+      const n = bodyNotes == null || String(bodyNotes).trim() === '' ? '' : String(bodyNotes);
+      notes = n ? `Kurir: ${trimmedCourier}\n${n}` : `Kurir: ${trimmedCourier}`;
+    }
+
+    let insertQuery;
+    let params;
+
+    if (hasSourceTypeCol && hasCourierCol) {
+      insertQuery = `
+        INSERT INTO transfers (
+          from_branch_id, to_branch_id, item_name, quantity,
+          source_type, courier, notes, order_id, created_by, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+        RETURNING *
+      `;
+      params = [
+        from_branch_id,
+        to_branch_id,
+        item_name,
+        quantity,
+        normalizedSourceType,
+        trimmedCourier || null,
+        notes,
+        order_id,
+        created_by,
+      ];
+    } else if (hasSourceTypeCol && !hasCourierCol) {
+      insertQuery = `
+        INSERT INTO transfers (
+          from_branch_id, to_branch_id, item_name, quantity,
+          source_type, notes, order_id, created_by, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+        RETURNING *
+      `;
+      params = [
+        from_branch_id,
+        to_branch_id,
+        item_name,
+        quantity,
+        normalizedSourceType,
+        notes,
+        order_id,
+        created_by,
+      ];
+    } else if (!hasSourceTypeCol && hasCourierCol) {
+      insertQuery = `
+        INSERT INTO transfers (
+          from_branch_id, to_branch_id, item_name, quantity,
+          courier, notes, order_id, created_by, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+        RETURNING *
+      `;
+      params = [
+        from_branch_id,
+        to_branch_id,
+        item_name,
+        quantity,
+        trimmedCourier || null,
+        notes,
+        order_id,
+        created_by,
+      ];
+    } else {
+      insertQuery = `
+        INSERT INTO transfers (
+          from_branch_id, to_branch_id, item_name, quantity,
+          notes, order_id, created_by, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+        RETURNING *
+      `;
+      params = [
+        from_branch_id,
+        to_branch_id,
+        item_name,
+        quantity,
+        notes,
+        order_id,
+        created_by,
+      ];
+    }
+
+    const result = await db.query(insertQuery, params);
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating transfer:', error);
@@ -2684,20 +3208,234 @@ app.put('/transfers/:id', async (req, res) => {
       return res.status(400).json({ error: 'status is required' });
     }
 
-    const updateQuery = `
-      UPDATE transfers
-      SET status = $1, approved_by = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE transfer_id = $3
-      RETURNING *
-    `;
+    const approverUserId =
+      approved_by ??
+      (req.user?.user_id ? parseInt(req.user.user_id, 10) : null);
 
-    const result = await db.query(updateQuery, [status, approved_by, id]);
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Transfer not found' });
+      const transferRes = await client.query(
+        `
+          SELECT *
+          FROM transfers
+          WHERE transfer_id = $1
+          FOR UPDATE
+        `,
+        [id]
+      );
+
+      if (transferRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Transfer not found' });
+      }
+
+      const transfer = transferRes.rows[0];
+      const prevStatus = transfer.status;
+
+      // Update transfer status first (idempotent friendly)
+      const updateRes = await client.query(
+        `
+          UPDATE transfers
+          SET status = $1, approved_by = $2, updated_at = CURRENT_TIMESTAMP
+          WHERE transfer_id = $3
+          RETURNING *
+        `,
+        [status, approverUserId, id]
+      );
+
+      // Apply stock movement only once when transitioning into "completed"
+      if (status === 'completed' && prevStatus !== 'completed') {
+        const fromBranchId = transfer.from_branch_id;
+        const toBranchId = transfer.to_branch_id;
+        const qty = parseInt(transfer.quantity, 10);
+        const itemName = String(transfer.item_name ?? '').trim();
+
+        // Find source item: exact `name` first, then "KODE - label" by kode_produk (see parseKodeProdukFromTransferItemLabel).
+        let sourceItemRes = await client.query(
+          `
+            SELECT *
+            FROM items
+            WHERE branch_id = $1 AND name = $2
+            ORDER BY updated_at DESC
+            LIMIT 1
+            FOR UPDATE
+          `,
+          [fromBranchId, itemName]
+        );
+
+        if (sourceItemRes.rows.length === 0) {
+          const kode = parseKodeProdukFromTransferItemLabel(itemName);
+          if (kode) {
+            sourceItemRes = await client.query(
+              `
+                SELECT *
+                FROM items
+                WHERE branch_id = $1 AND kode_produk = $2
+                ORDER BY updated_at DESC
+                LIMIT 1
+                FOR UPDATE
+              `,
+              [fromBranchId, kode]
+            );
+          }
+        }
+
+        if (sourceItemRes.rows.length === 0) {
+          throw new Error(
+            `Source item not found in branch ${fromBranchId} for name "${itemName}"`
+          );
+        }
+
+        const sourceItem = sourceItemRes.rows[0];
+        const sourcePrevStock = parseInt(sourceItem.quantity, 10);
+        const sourceNextStock = sourcePrevStock - qty;
+
+        if (sourceNextStock < 0) {
+          return res.status(400).json({
+            error: 'Insufficient stock in source branch',
+            detail: `Stock ${sourcePrevStock} < transfer quantity ${qty}`,
+          });
+        }
+
+        // Decrease stock in source branch
+        await client.query(
+          `
+            UPDATE items
+            SET quantity = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE item_id = $2
+          `,
+          [sourceNextStock, sourceItem.item_id]
+        );
+
+        // Upsert destination WITHOUT relying on a unique constraint.
+        // Update by (branch_id, kode_produk) to handle potential duplicates.
+        let destItemId;
+        let destPrevStock;
+        let destCurrentStock;
+
+        const destUpdateRes = await client.query(
+          `
+            UPDATE items
+            SET quantity = quantity + $1,
+                status = 'ready',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE branch_id = $2 AND kode_produk = $3
+            RETURNING item_id, quantity
+          `,
+          [qty, toBranchId, sourceItem.kode_produk]
+        );
+
+        if (destUpdateRes.rows.length > 0) {
+          // If duplicates exist, we just pick the first returned row for mutation logging.
+          // All matching rows already had status forced to 'ready'.
+          destItemId = destUpdateRes.rows[0].item_id;
+          destCurrentStock = parseInt(destUpdateRes.rows[0].quantity, 10);
+          destPrevStock = destCurrentStock - qty;
+        } else {
+          destPrevStock = 0;
+          destCurrentStock = qty;
+
+          const destInsertRes = await client.query(
+            `
+              INSERT INTO items (
+                branch_id,
+                kode_produk,
+                kategori,
+                jenis,
+                tipe,
+                name,
+                material,
+                purity,
+                weight,
+                quantity,
+                status,
+                source,
+                metadata,
+                created_at,
+                updated_at
+              )
+              VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9,
+                $10, $11, $12, $13,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+              )
+              RETURNING item_id
+            `,
+            [
+              toBranchId,
+              sourceItem.kode_produk,
+              sourceItem.kategori,
+              sourceItem.jenis,
+              sourceItem.tipe,
+              sourceItem.name,
+              sourceItem.material,
+              sourceItem.purity,
+              sourceItem.weight,
+              qty,
+              'ready',
+              'transfer',
+              sourceItem.metadata,
+            ]
+          );
+
+          destItemId = destInsertRes.rows[0].item_id;
+        }
+
+        // Record stock mutation for source (out)
+        await client.query(
+          `
+            INSERT INTO stock_mutations (
+              item_id, branch_id, type, quantity, previous_stock, current_stock,
+              notes, reference_id, reference_type, created_by
+            )
+            VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'transfer', $8)
+          `,
+          [
+            sourceItem.item_id,
+            fromBranchId,
+            -qty,
+            sourcePrevStock,
+            sourceNextStock,
+            `Transfer keluar ke branch ${toBranchId}`,
+            transfer.transfer_id,
+            approverUserId,
+          ]
+        );
+
+        // Record stock mutation for destination (in)
+        await client.query(
+          `
+            INSERT INTO stock_mutations (
+              item_id, branch_id, type, quantity, previous_stock, current_stock,
+              notes, reference_id, reference_type, created_by
+            )
+            VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'transfer', $8)
+          `,
+          [
+            destItemId,
+            toBranchId,
+            qty,
+            destPrevStock,
+            destCurrentStock,
+            `Transfer masuk dari branch ${fromBranchId}`,
+            transfer.transfer_id,
+            approverUserId,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.status(200).json(updateRes.rows[0]);
+    } catch (txError) {
+      await client.query('ROLLBACK');
+      console.error('Error updating transfer (tx):', txError);
+      res.status(500).json({ error: 'Internal server error', detail: txError.message });
+    } finally {
+      client.release();
     }
-
-    res.status(200).json(result.rows[0]);
   } catch (error) {
     console.error('Error updating transfer:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2953,8 +3691,8 @@ app.get('/payments/daily', async (req, res) => {
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
       WHERE o.branch_id = $1
-        AND p.timestamp >= $2
-        AND p.timestamp < $3
+        AND p.payment_date >= $2
+        AND p.payment_date < $3
         AND p.status = 'completed'
       GROUP BY method
       ORDER BY total_amount DESC
@@ -2969,7 +3707,7 @@ app.get('/payments/daily', async (req, res) => {
         p.order_id,
         p.amount,
         p.method,
-        p.timestamp,
+        p.payment_date,
         COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
         c.name as customer_name
       FROM payments p
@@ -2977,11 +3715,11 @@ app.get('/payments/daily', async (req, res) => {
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       WHERE o.branch_id = $1
-        AND p.timestamp >= $2
-        AND p.timestamp < $3
+        AND p.payment_date >= $2
+        AND p.payment_date < $3
         AND p.status = 'completed'
-      GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.timestamp, c.name
-      ORDER BY p.timestamp DESC
+      GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.payment_date, c.name
+      ORDER BY p.payment_date DESC
     `;
 
     const detailResult = await db.query(detailQuery, [branch_id, startDate.toISOString(), endDate.toISOString()]);
@@ -3000,9 +3738,17 @@ app.get('/payments/daily', async (req, res) => {
       summary: {
         total_amount: totalAmount,
         total_transactions: totalTransactions,
-        payment_methods: paymentMethods
+        payment_methods: paymentMethods,
+        by_method: summaryResult.rows.map(row => ({
+          method: row.method,
+          total_amount: parseFloat(row.total_amount || 0),
+          method_count: parseInt(row.method_count || 0),
+        })),
       },
-      transactions: detailResult.rows
+      transactions: detailResult.rows.map(row => ({
+        ...row,
+        timestamp: row.payment_date, // backward compatibility for clients expecting `timestamp`
+      })),
     });
   } catch (error) {
     console.error('Error fetching daily payments:', error);

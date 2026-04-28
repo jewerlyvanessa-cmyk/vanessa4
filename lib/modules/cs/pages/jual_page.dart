@@ -65,16 +65,13 @@ class _JualPageState extends ConsumerState<JualPage> {
   bool _isSubmitting = false; // Loading state for submit
   Timer? _itemSearchTimer; // Timer for debouncing item search
 
-  final List<String> _materialSuggestions = [
-    'Emas',
-    'Perak',
-    'Berlian',
-    'Platinum',
-    'Ruby',
-    'Safir',
-    'Zamrud',
-    'Mutiara',
-  ];
+  // Material choice UI for UNREGISTERED/QSR mode.
+  // Value will be mirrored into _materialController for payload consistency.
+  String _materialChoice = 'EMAS'; // EMAS, PERAK, LAINNYA
+
+  // Controller yang dipakai field Autocomplete "Kode Produk"
+  // (berbeda dengan _itemCodeController yang menyimpan nilai untuk payload).
+  TextEditingController? _itemAutocompleteFieldController;
 
   List<String> _getJenisOptions(String kategori) {
     switch (kategori) {
@@ -175,6 +172,9 @@ class _JualPageState extends ConsumerState<JualPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(customersProvider.notifier).fetchCustomers();
     });
+
+    // Default material for new/unregistered sales
+    _materialController.text = _materialChoice;
   }
 
   void _generateOrderNumber() {
@@ -298,7 +298,10 @@ class _JualPageState extends ConsumerState<JualPage> {
     return file;
   }
 
-  Future<void> _scanAndFill(TextEditingController controller) async {
+  Future<void> _scanAndFill(
+    TextEditingController controller, {
+    VoidCallback? onFilled,
+  }) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
@@ -308,6 +311,7 @@ class _JualPageState extends ConsumerState<JualPage> {
               final List<Barcode> barcodes = capture.barcodes;
               if (barcodes.isNotEmpty) {
                 controller.text = barcodes.first.rawValue ?? '';
+                onFilled?.call();
                 Navigator.of(context).pop();
               }
             },
@@ -315,6 +319,81 @@ class _JualPageState extends ConsumerState<JualPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _tryAutoSelectItemByCode(String code) async {
+    final query = code.trim();
+    if (query.isEmpty) return;
+
+    try {
+      // Try to resolve an item from stock by code.
+      // If found, we switch to from_stock and auto-fill fields.
+      final baseUrl = NetworkConfig.baseUrl;
+      final userState = ref.read(userStateProvider);
+      final branchId = userState.branch;
+
+      Future<List<Map<String, dynamic>>> fetchExact({
+        String? status,
+      }) async {
+        final uri = Uri.parse(
+          '$baseUrl/items?item_code=$query&limit=5'
+          '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
+          '${status != null ? '&status=$status' : ''}',
+        );
+        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+        if (resp.statusCode != 200) return [];
+        final List<dynamic> data = jsonDecode(resp.body);
+        return data.map((e) => e as Map<String, dynamic>).toList();
+      }
+
+      List<Map<String, dynamic>> suggestions = [];
+      // Some DBs use status 'ready', others use 'available'. Try both, then no status filter.
+      suggestions = await fetchExact(status: 'ready');
+      if (suggestions.isEmpty) suggestions = await fetchExact(status: 'available');
+      if (suggestions.isEmpty) suggestions = await fetchExact(status: null);
+      // If still empty, fallback to search (best effort).
+      if (suggestions.isEmpty) suggestions = await _fetchItemSuggestions(query);
+      if (!mounted) return;
+
+      final normalized = query.toLowerCase();
+      Map<String, dynamic>? exact;
+
+      for (final item in suggestions) {
+        final itemCode = (item['kode_produk'] ?? item['item_code'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (itemCode == normalized) {
+          exact = item;
+          break;
+        }
+      }
+
+      if (exact == null) return;
+      final Map<String, dynamic> selected = exact;
+
+      _applySelectedStockItem(selected);
+    } catch (_) {
+      // best-effort: jangan ganggu flow user kalau gagal
+    }
+  }
+
+  void _applySelectedStockItem(Map<String, dynamic> item) {
+    setState(() {
+      _saleType = 'from_stock';
+      _selectedItem = item;
+      _itemCodeController.text = item['kode_produk'] ?? item['item_code'] ?? '';
+      _namaItemController.text = item['name'] ?? '';
+      _beratController.text = item['weight']?.toString() ?? '';
+      _materialController.text = (item['material'] ?? '').toString();
+      _kadarController.text = (item['purity'] ?? '').toString();
+      _kategoriController.text = item['kategori'] ?? '';
+      _jenisController.text = item['jenis'] ?? '';
+      _tipeController.text = item['tipe'] ?? '';
+      _qtyController.text = '1';
+    });
+
+    _calculateJumlah();
   }
 
   Future<void> _showAddCustomerDialog(
@@ -515,8 +594,6 @@ class _JualPageState extends ConsumerState<JualPage> {
       Map<String, dynamic> itemData = {
         'name': _namaItemController.text,
         'weight': double.tryParse(_beratController.text),
-        'material': _materialController.text,
-        'purity': _kadarController.text,
         'kategori': _kategoriController.text,
         'jenis': _jenisController.text,
         'tipe': _tipeController.text,
@@ -524,6 +601,11 @@ class _JualPageState extends ConsumerState<JualPage> {
         'branch_id': branchId,
         'source': 'manual',
       };
+
+      final material = _materialController.text.trim();
+      final kadar = _kadarController.text.trim();
+      if (material.isNotEmpty) itemData['material'] = material;
+      if (kadar.isNotEmpty) itemData['purity'] = kadar;
 
       if (_saleType == 'qsr') {
         // QSR: Daftarkan & jual sekarang
@@ -566,6 +648,11 @@ class _JualPageState extends ConsumerState<JualPage> {
         'jenis': _selectedItem!['jenis'] ?? _jenisController.text,
         'tipe': _selectedItem!['tipe'] ?? _tipeController.text,
       });
+
+      final material = _materialController.text.trim();
+      final kadar = _kadarController.text.trim();
+      if (material.isNotEmpty) orderItems.last['material'] = material;
+      if (kadar.isNotEmpty) orderItems.last['purity'] = kadar;
     } else {
       // For new/unregistered items
       debugPrint('Order item photo_produk (new item): $fotoUrl');
@@ -584,9 +671,12 @@ class _JualPageState extends ConsumerState<JualPage> {
         'kategori': _kategoriController.text,
         'jenis': _jenisController.text,
         'tipe': _tipeController.text,
-        'material': _materialController.text,
-        'purity': _kadarController.text,
       });
+
+      final material = _materialController.text.trim();
+      final kadar = _kadarController.text.trim();
+      if (material.isNotEmpty) orderItems.last['material'] = material;
+      if (kadar.isNotEmpty) orderItems.last['purity'] = kadar;
     }
 
     orderData['order_items'] = orderItems;
@@ -605,6 +695,23 @@ class _JualPageState extends ConsumerState<JualPage> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final fakturData = <String, dynamic>{
+          ...(data is Map<String, dynamic> ? data : <String, dynamic>{}),
+          // Ensure customer fields are present for immediate Faktur display
+          'customer_name': (data is Map<String, dynamic> &&
+                  (data['customer_name']?.toString().trim().isNotEmpty ?? false))
+              ? data['customer_name']
+              : _customerController.text,
+          'customer_phone': (data is Map<String, dynamic> &&
+                  (data['customer_phone']?.toString().trim().isNotEmpty ?? false))
+              ? data['customer_phone']
+              : _customerPhoneController.text,
+          'customer_address': (data is Map<String, dynamic> &&
+                  (data['customer_address']?.toString().trim().isNotEmpty ??
+                      false))
+              ? data['customer_address']
+              : _customerAddressController.text,
+        };
 
         // Refresh today orders provider to show new order
         if (mounted) {
@@ -614,7 +721,7 @@ class _JualPageState extends ConsumerState<JualPage> {
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (context) => FakturPage(orderData: data),
+              builder: (context) => FakturPage(orderData: fakturData),
             ),
           );
         }
@@ -645,8 +752,18 @@ class _JualPageState extends ConsumerState<JualPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
+      final userState = ref.read(userStateProvider);
+      final branchId = userState.branch;
+      final isFromStock = _saleType == 'from_stock';
+
+      final uri = Uri.parse(
+        '$baseUrl/items?search=$query&limit=10'
+        '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
+        '${isFromStock ? '&status=ready' : ''}',
+      );
       final response = await http.get(
-        Uri.parse('$baseUrl/items?search=$query&limit=10'),
+        uri,
+        headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -688,6 +805,21 @@ class _JualPageState extends ConsumerState<JualPage> {
             ); // Create new list
             _isLoadingSuggestions = false;
           });
+
+          // Autofill when user typed an exact code (no need to tap a suggestion).
+          final normalized = query.trim().toLowerCase();
+          if (normalized.isNotEmpty) {
+            for (final item in suggestions) {
+              final code = (item['kode_produk'] ?? item['item_code'] ?? '')
+                  .toString()
+                  .trim()
+                  .toLowerCase();
+              if (code == normalized) {
+                _applySelectedStockItem(item);
+                break;
+              }
+            }
+          }
         }
       } catch (e) {
         if (mounted) {
@@ -1099,8 +1231,10 @@ class _JualPageState extends ConsumerState<JualPage> {
                             _namaItemController.clear();
                             _beratController.clear();
                             _materialController.clear();
+                            _materialChoice = 'EMAS';
                             _kadarController.clear();
                             _itemCodeController.clear();
+                            _itemAutocompleteFieldController?.clear();
                             _kategoriController.clear();
                             _jenisController.clear();
                             _tipeController.clear();
@@ -1123,6 +1257,9 @@ class _JualPageState extends ConsumerState<JualPage> {
                             if (_tipeController.text.isEmpty) {
                               _tipeController.text = 'PERHIASAN';
                             }
+                            // Default material selection for unregistered
+                            _materialChoice = 'EMAS';
+                            _materialController.text = _materialChoice;
                             _qtyController.text = '1'; // Keep qty as 1
                           });
                         },
@@ -1142,6 +1279,9 @@ class _JualPageState extends ConsumerState<JualPage> {
                             if (_tipeController.text.isEmpty) {
                               _tipeController.text = 'PERHIASAN';
                             }
+                            // Default material selection for QSR
+                            _materialChoice = 'EMAS';
+                            _materialController.text = _materialChoice;
                             _qtyController.text = '1'; // Keep qty as 1
                           });
                         },
@@ -1219,9 +1359,10 @@ class _JualPageState extends ConsumerState<JualPage> {
                                 _namaItemController.text = item['name'] ?? '';
                                 _beratController.text =
                                     item['weight']?.toString() ?? '';
-                                _materialController.text =
-                                    item['material'] ?? '';
-                                _kadarController.text = item['purity'] ?? '';
+                            _materialController.text =
+                                (item['material'] ?? '').toString();
+                            _kadarController.text =
+                                (item['purity'] ?? '').toString();
                                 _kategoriController.text =
                                     item['kategori'] ?? '';
                                 _jenisController.text = item['jenis'] ?? '';
@@ -1257,6 +1398,7 @@ class _JualPageState extends ConsumerState<JualPage> {
                                   focusNode,
                                   onFieldSubmitted,
                                 ) {
+                                  _itemAutocompleteFieldController = controller;
                                   return TextFormField(
                                     controller: controller,
                                     focusNode: focusNode,
@@ -1279,8 +1421,14 @@ class _JualPageState extends ConsumerState<JualPage> {
                                       // Trigger search
                                       _updateItemSuggestions(value);
                                     },
-                                    onFieldSubmitted: (value) =>
-                                        onFieldSubmitted(),
+                                    onFieldSubmitted: (value) async {
+                                      onFieldSubmitted();
+                                      await _tryAutoSelectItemByCode(value);
+                                    },
+                                    onEditingComplete: () async {
+                                      final code = controller.text;
+                                      await _tryAutoSelectItemByCode(code);
+                                    },
                                   );
                                 },
                           ),
@@ -1288,40 +1436,21 @@ class _JualPageState extends ConsumerState<JualPage> {
                         IconButton(
                           icon: const Icon(Icons.qr_code_scanner),
                           tooltip: 'Scan QR Kode Produk',
-                          onPressed: () => _scanAndFill(_itemCodeController),
+                          onPressed: () => _scanAndFill(
+                            _itemAutocompleteFieldController ??
+                                _itemCodeController,
+                            onFilled: () async {
+                              final code = (_itemAutocompleteFieldController ??
+                                      _itemCodeController)
+                                  .text;
+                              _itemCodeController.text = code;
+                              _updateItemSuggestions(code);
+                              await _tryAutoSelectItemByCode(code);
+                              if (mounted) setState(() {});
+                            },
+                          ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Nama Item
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Nama Item'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _namaItemController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: Gelang Emas',
-                      ),
-                      readOnly: _saleType == 'from_stock',
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Nama item wajib diisi';
-                        }
-                        return null;
-                      },
                     ),
                   ),
                 ],
@@ -1569,7 +1698,38 @@ class _JualPageState extends ConsumerState<JualPage> {
               ),
               const SizedBox(height: 12.0),
 
-              // Material
+              // Nama Item
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 100,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Nama Item'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _namaItemController,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Contoh: Gelang Emas',
+                      ),
+                      readOnly: _saleType == 'from_stock',
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Nama item wajib diisi';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12.0),
+
+              // Material (opsional)
               Row(
                 children: [
                   const SizedBox(
@@ -1581,67 +1741,75 @@ class _JualPageState extends ConsumerState<JualPage> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: StatefulBuilder(
-                      builder: (context, setMaterialState) {
-                        return Autocomplete<String>(
-                          initialValue: _materialController.text.isNotEmpty
-                              ? TextEditingValue(text: _materialController.text)
-                              : null,
-                          optionsBuilder: (textEditingValue) {
-                            if (textEditingValue.text.isEmpty) {
-                              return const Iterable<String>.empty();
-                            }
-                            return _materialSuggestions.where((material) {
-                              return material.toLowerCase().contains(
-                                textEditingValue.text.toLowerCase(),
-                              );
-                            });
-                          },
-                          onSelected: (option) {
-                            setMaterialState(() {
-                              _materialController.text = option;
-                            });
-                          },
-                          fieldViewBuilder:
-                              (
-                                context,
-                                controller,
-                                focusNode,
-                                onFieldSubmitted,
-                              ) {
-                                // Sync controller with _materialController
-                                if (controller.text !=
-                                    _materialController.text) {
-                                  controller.text = _materialController.text;
-                                }
-                                return TextFormField(
-                                  controller: controller,
-                                  focusNode: focusNode,
+                    child: _saleType == 'from_stock'
+                        ? TextFormField(
+                            controller: _materialController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              hintText: 'Otomatis dari item (opsional)',
+                            ),
+                            readOnly: true,
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ChoiceChip(
+                                    label: const Text('EMAS'),
+                                    selected: _materialChoice == 'EMAS',
+                                    onSelected: (selected) {
+                                      if (!selected) return;
+                                      setState(() {
+                                        _materialChoice = 'EMAS';
+                                        _materialController.text = 'EMAS';
+                                      });
+                                    },
+                                  ),
+                                  ChoiceChip(
+                                    label: const Text('PERAK'),
+                                    selected: _materialChoice == 'PERAK',
+                                    onSelected: (selected) {
+                                      if (!selected) return;
+                                      setState(() {
+                                        _materialChoice = 'PERAK';
+                                        _materialController.text = 'PERAK';
+                                      });
+                                    },
+                                  ),
+                                  ChoiceChip(
+                                    label: const Text('Lainnya'),
+                                    selected: _materialChoice == 'LAINNYA',
+                                    onSelected: (selected) {
+                                      if (!selected) return;
+                                      setState(() {
+                                        _materialChoice = 'LAINNYA';
+                                        _materialController.clear();
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                              if (_materialChoice == 'LAINNYA') ...[
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  controller: _materialController,
                                   decoration: const InputDecoration(
                                     border: OutlineInputBorder(),
-                                    hintText: 'Contoh: Emas, Perak',
+                                    hintText: 'Tulis material (contoh: PLATINA)',
                                   ),
-                                  readOnly: _saleType == 'from_stock',
-                                  onChanged: (value) {
-                                    _materialController.text = value;
-                                  },
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return 'Material wajib diisi';
-                                    }
-                                    return null;
-                                  },
-                                );
-                              },
-                        );
-                      },
-                    ),
+                                ),
+                              ],
+                            ],
+                          ),
                   ),
                 ],
               ),
               const SizedBox(height: 12.0),
 
-              // Kadar
+              // Kadar (opsional)
               Row(
                 children: [
                   const SizedBox(
@@ -1657,7 +1825,7 @@ class _JualPageState extends ConsumerState<JualPage> {
                       controller: _kadarController,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        hintText: 'Contoh: 70%, 22K',
+                        hintText: 'Contoh: 70%, 22K (opsional)',
                       ),
                       readOnly: _saleType == 'from_stock',
                     ),

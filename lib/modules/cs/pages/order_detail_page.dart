@@ -32,14 +32,38 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
         _error = null;
       });
 
-      // For now, use the order data passed from the list
-      // In the future, this could fetch detailed order data from API
-      await Future.delayed(
-        const Duration(milliseconds: 500),
-      ); // Simulate API call
+      // Fetch detailed order data from API so Faktur is consistent
+      final baseUrl = NetworkConfig.baseUrl;
+      final orderNumber = (widget.order['order_number'] ?? '').toString().trim();
 
+      if (orderNumber.isEmpty) {
+        // Fallback: use the order data passed from the list
+        setState(() {
+          _orderDetails = widget.order;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final uri = Uri.parse('$baseUrl/orders').replace(
+        queryParameters: {
+          'order_number': orderNumber,
+        },
+      );
+
+      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      if (resp.statusCode != 200) {
+        throw Exception('Gagal memuat detail order: ${resp.statusCode}');
+      }
+
+      final decoded = jsonDecode(resp.body);
+      if (decoded == null || decoded is! Map<String, dynamic>) {
+        throw Exception('Detail order tidak ditemukan');
+      }
+
+      if (!mounted) return;
       setState(() {
-        _orderDetails = widget.order;
+        _orderDetails = decoded;
         _isLoading = false;
       });
     } catch (e) {
@@ -337,8 +361,8 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
                                   ),
                                 ),
                                 Text(
-                                  item['total'] != null
-                                      ? 'Rp ${item['total'].toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}'
+                                  (item['jumlah'] ?? item['total']) != null
+                                      ? 'Rp ${(item['jumlah'] ?? item['total']).toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}'
                                       : 'Rp 0',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,

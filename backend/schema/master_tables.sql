@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS items (
     material TEXT NOT NULL,
     purity TEXT NOT NULL,
     weight NUMERIC NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL,
     source TEXT DEFAULT 'manual',
     metadata JSONB,

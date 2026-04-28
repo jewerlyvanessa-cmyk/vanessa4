@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/main.dart'; // Import global userStateProvider
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
-import 'customers_page.dart';
 import 'order_detail_page.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -23,6 +23,8 @@ String getMainModuleForRole(String role) {
       return 'tukang';
     case 'manajer':
       return 'manajer';
+    case 'stockist':
+      return 'stockist';
     default:
       return 'dashboard';
   }
@@ -50,7 +52,10 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       navigator.pushReplacementNamed('/superadmin');
       break;
     case 'manajer':
-      navigator.pushReplacementNamed('/manajer');
+      navigator.pushReplacementNamed('/manager');
+      break;
+    case 'stockist':
+      navigator.pushReplacementNamed('/stockist');
       break;
     default:
       navigator.pushReplacementNamed('/dashboard');
@@ -65,6 +70,16 @@ class CSMainPage extends ConsumerStatefulWidget {
 }
 
 class _CSMainPageState extends ConsumerState<CSMainPage> {
+  String _fmtRp(dynamic v) {
+    final n = double.tryParse(v?.toString() ?? '');
+    if (n == null) return '0';
+    final s = n.toStringAsFixed(0);
+    return s.replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]}.',
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -231,17 +246,6 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
             children: [
               Builder(
                 builder: (context) {
-                  final userState = ref.watch(userStateProvider);
-                  // Cari nama branch aktif
-                  String branchName = '';
-                  if (userState.branch.isNotEmpty &&
-                      userState.branches.isNotEmpty) {
-                    final found = userState.branches.firstWhere(
-                      (b) => b['branch_id'].toString() == userState.branch,
-                      orElse: () => <String, dynamic>{},
-                    );
-                    branchName = found['name'] ?? userState.branch;
-                  }
                   return Padding(
                     padding: const EdgeInsets.only(
                       left: 24.0,
@@ -252,20 +256,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'User: ${userState.username.isNotEmpty ? userState.username : '-'}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Branch aktif: $branchName',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Role aktif: ${userState.role}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+                        const UserBranchRoleHeader(),
                       ],
                     ),
                   );
@@ -276,10 +267,11 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: GridView.count(
                   crossAxisCount:
-                      3, // Changed back to 3 columns for better vertical fit
+                      4,
                   shrinkWrap: true,
                   mainAxisSpacing: 12, // Reduced from 16
                   crossAxisSpacing: 12, // Reduced from 16
+                  childAspectRatio: 0.75,
                   physics: const NeverScrollableScrollPhysics(),
                   children: [
                     _MenuButton(
@@ -317,19 +309,6 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                       label: 'ORDER TODAY',
                       iconColor: Colors.amber,
                       onTap: () => Navigator.pushNamed(context, '/dashboard'),
-                    ),
-                    _MenuButton(
-                      icon: Icons.people,
-                      label: 'PELANGGAN',
-                      iconColor: Colors.teal,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => CustomersPage(),
-                          ),
-                        );
-                      },
                     ),
                   ],
                 ),
@@ -537,14 +516,29 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                             ),
                                         ],
                                       ),
-                                      trailing: Text(
-                                        order['total'] != null
-                                            ? 'Rp ${order['total'].toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}'
-                                            : 'Rp 0',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12,
-                                        ),
+                                      trailing: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            order['jumlah'] != null
+                                                ? 'Rp ${_fmtRp(order['jumlah'])}'
+                                                : 'Rp 0',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Jumlah (Order)',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                       children: [
                                         // Order Details
@@ -657,7 +651,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                                       ),
                                                     if (order['jumlah'] != null)
                                                       Text(
-                                                        'Jumlah: Rp ${order['jumlah']}',
+                                                        'Jumlah: Rp ${_fmtRp(order['jumlah'])}',
                                                         style: const TextStyle(
                                                           fontSize: 12,
                                                         ),
@@ -672,13 +666,8 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                                           fontSize: 12,
                                                         ),
                                                       ),
-                                                    if (order['total'] != null)
-                                                      Text(
-                                                        'Total: Rp ${order['total']}',
-                                                        style: const TextStyle(
-                                                          fontSize: 12,
-                                                        ),
-                                                      ),
+                                                    // Total order should follow `orders.jumlah` (rounded, after discount).
+                                                    // Keep `total` (raw) hidden here to avoid confusion.
                                                   ],
                                                 ),
                                               ),
@@ -750,7 +739,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                                                             item['total'].toString(),
                                                                           ) >
                                                                           0
-                                                                  ? 'Rp ${item['total'].toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}'
+                                                                  ? 'Rp ${_fmtRp(item['total'])}'
                                                                   : 'Belum dihitung',
                                                               style: TextStyle(
                                                                 fontWeight:
@@ -772,6 +761,17 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                                                           .black
                                                                     : Colors
                                                                           .orange,
+                                                              ),
+                                                            ),
+                                                            const SizedBox(
+                                                              width: 8,
+                                                            ),
+                                                            Text(
+                                                              'Total (Item)',
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                color: Colors
+                                                                    .grey[600],
                                                               ),
                                                             ),
                                                           ],
@@ -907,27 +907,27 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                                                     ) >
                                                                     0)
                                                               Text(
-                                                                'Harga/g: Rp ${item['harga_per_gram'].toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
+                                                                'Harga/g: Rp ${_fmtRp(item['harga_per_gram'])}',
                                                                 style: TextStyle(
                                                                   fontSize: 11,
                                                                   color: Colors
                                                                       .grey[700],
                                                                 ),
                                                               ),
-                                                            if (item['jumlah'] !=
+                                                            if (item['total'] !=
                                                                     null &&
                                                                 double.tryParse(
-                                                                      item['jumlah']
+                                                                      item['total']
                                                                           .toString(),
                                                                     ) !=
                                                                     null &&
                                                                 double.parse(
-                                                                      item['jumlah']
+                                                                      item['total']
                                                                           .toString(),
                                                                     ) >
                                                                     0)
                                                               Text(
-                                                                'Jumlah: Rp ${item['jumlah'].toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}',
+                                                                'Total: Rp ${_fmtRp(item['total'])}',
                                                                 style: TextStyle(
                                                                   fontSize: 11,
                                                                   color: Colors
@@ -1049,6 +1049,16 @@ class _MenuButton extends StatelessWidget {
     this.onTap,
   });
 
+  String _twoLineLabel(String text) {
+    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.length <= 1) return text;
+    final mid = (words.length / 2).ceil();
+    final first = words.sublist(0, mid).join(' ');
+    final second = words.sublist(mid).join(' ');
+    if (second.isEmpty) return first;
+    return '$first\n$second';
+  }
+
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -1059,17 +1069,19 @@ class _MenuButton extends StatelessWidget {
           color: iconColor.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(12),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 32, color: iconColor),
-            const SizedBox(height: 8),
+            Icon(icon, size: 28, color: iconColor),
+            const SizedBox(height: 6),
             Text(
-              label,
+              _twoLineLabel(label),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 14,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),

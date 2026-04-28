@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/main.dart'; // Import for userStateProvider
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
+import 'package:vanessa3/providers/network_provider.dart';
+import 'package:vanessa3/data/offline_cache.dart';
 
 // Model untuk System Dashboard Data
 class SystemDashboardData {
@@ -86,6 +88,17 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
 
+      final cacheKey = 'systemDashboard/v1?user_id=${userId ?? ''}';
+      final networkState = _ref.read(networkStatusProvider);
+      if (!networkState.isOnline || !networkState.isBackendReachable) {
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(SystemDashboardData.fromJson(cached.value));
+          return;
+        }
+      }
+
       final queryParams = <String, String>{
         'user_id': userId.toString(),
       };
@@ -98,7 +111,12 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await OfflineCache.instance.setJson(
+          cacheKey,
+          data,
+          ttl: const Duration(minutes: 15),
+        );
         final dashboardData = SystemDashboardData.fromJson(data);
         state = AsyncValue.data(dashboardData);
       } else if (response.statusCode == 401 || response.statusCode == 403) {
@@ -124,18 +142,32 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
         state = AsyncValue.data(mockData);
       }
     } catch (error) {
-      // Fallback to mock data on error
-      final mockData = SystemDashboardData(
-        totalUsers: 0,
-        activeUsers: 0,
-        totalBranches: 0,
-        activeBranches: 0,
-        totalOrders: 0,
-        totalRevenue: 0.0,
-        recentActivities: [],
-        lastUpdated: DateTime.now(),
+      // Fallback to cache if available, otherwise minimal empty data.
+      try {
+        final userState = _ref.read(userStateProvider);
+        final userId = userState.userId;
+        final cacheKey = 'systemDashboard/v1?user_id=${userId ?? ''}';
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(SystemDashboardData.fromJson(cached.value));
+          return;
+        }
+      } catch (_) {
+        // ignore cache errors
+      }
+      state = AsyncValue.data(
+        SystemDashboardData(
+          totalUsers: 0,
+          activeUsers: 0,
+          totalBranches: 0,
+          activeBranches: 0,
+          totalOrders: 0,
+          totalRevenue: 0.0,
+          recentActivities: const [],
+          lastUpdated: DateTime.now(),
+        ),
       );
-      state = AsyncValue.data(mockData);
     }
   }
 

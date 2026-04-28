@@ -65,8 +65,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
   Future<String?> _uploadFoto(File? foto) async {
     if (foto == null) return null;
-    final baseUrl = NetworkConfig.baseUrl.replaceAll('3000', '4000');
-    final uri = Uri.parse('$baseUrl/upload');
+    final storageUrl = NetworkConfig.storageUrl;
+    final uri = Uri.parse('$storageUrl/upload');
     final request = http.MultipartRequest('POST', uri)
       ..files.add(await http.MultipartFile.fromPath('file', foto.path));
     final response = await request.send();

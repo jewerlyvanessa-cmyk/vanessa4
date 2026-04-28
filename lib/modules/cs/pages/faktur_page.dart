@@ -5,6 +5,15 @@ class FakturPage extends StatelessWidget {
   final Map<String, dynamic> orderData;
   const FakturPage({super.key, required this.orderData});
 
+  String _fmtMoney(dynamic v) {
+    final n = double.tryParse(v?.toString() ?? '');
+    if (n == null) return v?.toString() ?? '0';
+    return n.toStringAsFixed(0).replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]}.',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (orderData.isEmpty || !orderData.containsKey('order_id')) {
@@ -18,6 +27,13 @@ class FakturPage extends StatelessWidget {
 
     // Get order items
     final List<dynamic> items = orderData['items'] ?? [];
+    final customerName =
+        orderData['customer_name'] ?? orderData['name'] ?? orderData['customer'];
+    final customerPhone =
+        orderData['customer_phone'] ?? orderData['phone'] ?? orderData['no_hp'];
+    final customerAddress = orderData['customer_address'] ??
+        orderData['address'] ??
+        orderData['alamat'];
 
     return Scaffold(
       appBar: AppBar(
@@ -78,11 +94,9 @@ class FakturPage extends StatelessWidget {
                     Text(
                       'Tanggal: ${orderData['created_at'] != null ? DateTime.parse(orderData['created_at']).toLocal().toString().split('.')[0] : '-'}',
                     ),
-                    Text('Customer: ${orderData['customer_name'] ?? '-'}'),
-                    if (orderData['customer_phone'] != null)
-                      Text('No. HP: ${orderData['customer_phone']}'),
-                    if (orderData['customer_address'] != null)
-                      Text('Alamat: ${orderData['customer_address']}'),
+                    Text('Customer: ${customerName ?? '-'}'),
+                    Text('No. HP: ${customerPhone ?? '-'}'),
+                    Text('Alamat: ${customerAddress ?? '-'}'),
                   ],
                 ),
               ),
@@ -116,56 +130,31 @@ class FakturPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                item['nama_item'] ?? 'Unknown Item',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              item['total'] != null
-                                  ? 'Rp ${double.tryParse(item['total'].toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.') ?? item['total']}'
-                                  : 'Rp 0',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
+                        // 1) Kode
+                        Text('Kode: ${item['kode_produk'] ?? '-'}'),
+                        const SizedBox(height: 4),
+
+                        // 2) Nama item
+                        Text(
+                          item['nama_item'] ?? 'Unknown Item',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
                         ),
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 16,
-                          runSpacing: 4,
-                          children: [
-                            if (item['weight'] != null)
-                              Text('Berat: ${item['weight']}g'),
-                            if (item['harga_per_gram'] != null)
-                              Text(
-                                'Harga/g: Rp ${double.tryParse(item['harga_per_gram'].toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.') ?? item['harga_per_gram']}',
-                              ),
-                            if (item['jumlah'] != null)
-                              Text(
-                                'Jumlah: Rp ${double.tryParse(item['jumlah'].toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.') ?? item['jumlah']}',
-                              ),
-                            if (item['qty'] != null)
-                              Text('Qty: ${item['qty']}'),
-                            if (item['kategori'] != null)
-                              Text('Kategori: ${item['kategori']}'),
-                            if (item['jenis'] != null)
-                              Text('Jenis: ${item['jenis']}'),
-                            if (item['tipe'] != null)
-                              Text('Tipe: ${item['tipe']}'),
-                            if (item['kode_produk'] != null)
-                              Text('Kode: ${item['kode_produk']}'),
-                          ],
+
+                        // 3) Berat
+                        Text('Berat: ${item['weight'] ?? '-'}g'),
+
+                        // 4) Harga/gram
+                        Text(
+                          'Harga/g: Rp ${double.tryParse((item['harga_per_gram'] ?? 0).toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\\d{1,3})(?=(\\d{3})+(?!\\d))'), (Match m) => '${m[1]}.') ?? (item['harga_per_gram'] ?? 0)}',
+                        ),
+
+                        // 5) Total (source-of-truth dari backend)
+                        Text(
+                          'Total: Rp ${_fmtMoney(item['total'] ?? 0)}',
                         ),
                       ],
                     ),
@@ -191,6 +180,26 @@ class FakturPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
+                    if (orderData['diskon'] != null &&
+                        orderData['diskon'] != '0.00')
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Diskon:'),
+                          Text(
+                            (() {
+                              final d =
+                                  double.tryParse(orderData['diskon'].toString());
+                              if (d == null) return '${orderData['diskon']}%';
+                              final s = (d % 1 == 0)
+                                  ? d.toStringAsFixed(0)
+                                  : d.toStringAsFixed(2);
+                              return '$s%';
+                            })(),
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ],
+                      ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -202,8 +211,15 @@ class FakturPage extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          orderData['total'] != null
-                              ? 'Rp ${double.tryParse(orderData['total'].toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.') ?? orderData['total']}'
+                          (orderData['jumlah'] ?? orderData['total']) != null
+                              ? 'Rp ${_fmtMoney(orderData['jumlah'] ?? ((() {
+                                  final t = double.tryParse(
+                                        orderData['total']?.toString() ?? '',
+                                      ) ??
+                                      0;
+                                  final rounded = (t / 5000).ceil() * 5000;
+                                  return rounded;
+                                })()))}'
                               : 'Rp 0',
                           style: const TextStyle(
                             fontSize: 18,
@@ -213,18 +229,6 @@ class FakturPage extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (orderData['diskon'] != null &&
-                        orderData['diskon'] != '0.00')
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Diskon:'),
-                          Text(
-                            'Rp ${double.tryParse(orderData['diskon'].toString())?.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.') ?? orderData['diskon']}',
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        ],
-                      ),
                   ],
                 ),
               ),

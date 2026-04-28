@@ -20,6 +20,73 @@ class _EmployeeManagementPageState
   bool _isLoading = true;
   String _error = '';
 
+  List<Map<String, dynamic>> _asEmployeeMaps(List<dynamic> list) {
+    return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  String _userKeyForRow(Map<String, dynamic> row) {
+    final userId = (row['user_id'] ?? row['id'] ?? row['userId'] ?? '').toString().trim();
+    if (userId.isNotEmpty) return 'id:$userId';
+    final username = (row['username'] ?? row['name'] ?? '').toString().trim().toLowerCase();
+    return 'u:$username';
+  }
+
+  List<_EmployeeGroup> _groupByUser(List<Map<String, dynamic>> rows) {
+    final Map<String, List<Map<String, dynamic>>> byUser = {};
+    for (final row in rows) {
+      final key = _userKeyForRow(row);
+      byUser.putIfAbsent(key, () => []);
+      byUser[key]!.add(row);
+    }
+
+    final groups = byUser.entries.map((e) {
+      // Use the most complete row as "user" row.
+      final items = e.value;
+      items.sort((a, b) {
+        final au = (a['username'] ?? '').toString().length;
+        final bu = (b['username'] ?? '').toString().length;
+        return bu.compareTo(au);
+      });
+      return _EmployeeGroup(user: items.first, assignments: items);
+    }).toList();
+
+    groups.sort((a, b) {
+      final an = (a.user['username'] ?? '').toString().toLowerCase();
+      final bn = (b.user['username'] ?? '').toString().toLowerCase();
+      return an.compareTo(bn);
+    });
+    return groups;
+  }
+
+  int _countUniqueUsers(Iterable<Map<String, dynamic>> rows) {
+    final keys = rows.map(_userKeyForRow).where((k) => k != 'u:').toSet();
+    return keys.length;
+  }
+
+  int _countUniqueUsersByStatus(List<Map<String, dynamic>> rows, String status) {
+    final keys = <String>{};
+    for (final row in rows) {
+      final rowStatus = (row['status'] ?? '').toString();
+      if (rowStatus == status) {
+        keys.add(_userKeyForRow(row));
+      }
+    }
+    keys.remove('u:');
+    return keys.length;
+  }
+
+  int _countUniqueUsersWithRole(List<Map<String, dynamic>> rows, String role) {
+    final keys = <String>{};
+    for (final row in rows) {
+      final rowRole = (row['role'] ?? '').toString();
+      if (rowRole == role) {
+        keys.add(_userKeyForRow(row));
+      }
+    }
+    keys.remove('u:');
+    return keys.length;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -98,140 +165,213 @@ class _EmployeeManagementPageState
                 ],
               ),
             )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Summary Cards
-                  Row(
+          : Builder(
+              builder: (context) {
+                final allRows = _asEmployeeMaps(_allEmployees);
+                final activeRows = allRows
+                    .where((e) => (e['status'] ?? '').toString() == 'active')
+                    .toList();
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Total Karyawan',
-                          _allEmployees.length,
-                          Icons.people,
-                          Colors.blue,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Aktif',
-                          _allEmployees
-                              .where((e) => e['status'] == 'active')
-                              .length,
-                          Icons.check_circle,
-                          Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Tidak Aktif',
-                          _allEmployees
-                              .where((e) => e['status'] == 'inactive')
-                              .length,
-                          Icons.cancel,
-                          Colors.red,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'CS',
-                          _employees.where((e) => e['role'] == 'cs').length,
-                          Icons.support_agent,
-                          Colors.purple,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Employees List
-                  Text(
-                    'Daftar Karyawan Aktif (${_employees.length})',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-
-                  if (_employees.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: Text('Belum ada data karyawan'),
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _employees.length,
-                      itemBuilder: (context, index) {
-                        final employee = _employees[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: _getRoleColor(employee['role']),
-                              child: Text(
-                                employee['username']
-                                        ?.substring(0, 1)
-                                        .toUpperCase() ??
-                                    '?',
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            title: Text(employee['username'] ?? 'N/A'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Role: ${_getRoleLabel(employee['role'])}',
-                                ),
-                                Text(
-                                  'Status: ${employee['status'] == 'active' ? 'Aktif' : 'Tidak Aktif'}',
-                                  style: TextStyle(
-                                    color: employee['status'] == 'active'
-                                        ? Colors.green
-                                        : Colors.red,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (action) =>
-                                  _handleEmployeeAction(employee, action),
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'edit',
-                                  child: Text('Edit'),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'toggle_status',
-                                  child: Text('Ubah Status'),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('Hapus'),
-                                ),
-                              ],
+                      // Summary Cards
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSummaryCard(
+                              'Total Karyawan',
+                              _countUniqueUsers(allRows),
+                              Icons.people,
+                              Colors.blue,
                             ),
                           ),
-                        );
-                      },
-                    ),
-                ],
-              ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _buildSummaryCard(
+                              'Aktif',
+                              _countUniqueUsersByStatus(allRows, 'active'),
+                              Icons.check_circle,
+                              Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSummaryCard(
+                              'Tidak Aktif',
+                              _countUniqueUsersByStatus(allRows, 'inactive'),
+                              Icons.cancel,
+                              Colors.red,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _buildSummaryCard(
+                              'CS',
+                              _countUniqueUsersWithRole(activeRows, 'cs'),
+                              Icons.support_agent,
+                              Colors.purple,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Employees List
+                      Text(
+                        'Daftar Karyawan Aktif (${_countUniqueUsers(activeRows)})',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 16),
+
+                      if (_employees.isEmpty)
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(32),
+                            child: Text('Belum ada data karyawan'),
+                          ),
+                        )
+                      else
+                        Builder(
+                          builder: (context) {
+                            final groups = _groupByUser(activeRows);
+
+                            return ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: groups.length,
+                              itemBuilder: (context, index) {
+                                final group = groups[index];
+                                final user = group.user;
+                                final username =
+                                    (user['username'] ?? 'N/A').toString();
+                                final status =
+                                    (user['status'] ?? 'active').toString();
+                                final assignments = group.assignments;
+
+                                final roles = assignments
+                                    .map(
+                                      (a) =>
+                                          (a['role'] ?? '').toString().trim(),
+                                    )
+                                    .where((r) => r.isNotEmpty)
+                                    .toSet()
+                                    .toList()
+                                  ..sort();
+
+                                final primaryRole = roles.isNotEmpty
+                                    ? roles.first
+                                    : (user['role'] ?? '');
+                                final actionTarget = <String, dynamic>{
+                                  ...user,
+                                  if (primaryRole.toString().isNotEmpty)
+                                    'role': primaryRole,
+                                };
+
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  child: ExpansionTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: _getRoleColor(
+                                        primaryRole.toString(),
+                                      ),
+                                      child: Text(
+                                        username.isNotEmpty
+                                            ? username
+                                                .substring(0, 1)
+                                                .toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(username),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Status: ${status == 'active' ? 'Aktif' : 'Tidak Aktif'}',
+                                        ),
+                                        Text(
+                                          'Role: ${roles.isEmpty ? _getRoleLabel(primaryRole.toString()) : roles.map(_getRoleLabel).join(', ')}',
+                                        ),
+                                      ],
+                                    ),
+                                    trailing: PopupMenuButton<String>(
+                                      onSelected: (action) =>
+                                          _handleEmployeeAction(
+                                            actionTarget,
+                                            action,
+                                          ),
+                                      itemBuilder: (context) => const [
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Edit'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'toggle_status',
+                                          child: Text('Ubah Status'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text('Hapus'),
+                                        ),
+                                      ],
+                                    ),
+                                    children: [
+                                      const Divider(height: 1),
+                                      ...assignments.map((a) {
+                                        final role =
+                                            (a['role'] ?? '').toString();
+                                        final roleLabel = _getRoleLabel(role);
+                                        final rowStatus =
+                                            (a['status'] ?? status).toString();
+                                        final userId = (a['user_id'] ??
+                                                user['user_id'] ??
+                                                '')
+                                            .toString();
+                                        return ListTile(
+                                          leading: Icon(
+                                            Icons.badge,
+                                            color: _getRoleColor(role),
+                                          ),
+                                          title: Text(roleLabel),
+                                          subtitle: Text('User ID: $userId'),
+                                          trailing: Text(
+                                            rowStatus == 'active'
+                                                ? 'aktif'
+                                                : 'nonaktif',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              color: rowStatus == 'active'
+                                                  ? Colors.green
+                                                  : Colors.red,
+                                            ),
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
     );
   }
@@ -426,6 +566,12 @@ class _EmployeeManagementPageState
       }
     }
   }
+}
+
+class _EmployeeGroup {
+  final Map<String, dynamic> user;
+  final List<Map<String, dynamic>> assignments;
+  const _EmployeeGroup({required this.user, required this.assignments});
 }
 
 class AddEmployeeDialog extends StatefulWidget {

@@ -39,7 +39,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
       final response = await http.get(
         Uri.parse(
-          '${NetworkConfig.baseUrl}/payments/daily?branch_id=${userState.branch}&date=$dateStr',
+          '${NetworkConfig.baseUrl}/payments/daily-summary?branch_id=${userState.branch}&date=$dateStr',
         ),
         headers: NetworkConfig.defaultHeaders,
       );

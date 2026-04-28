@@ -64,15 +64,16 @@ class SwitchBranchRoleWidget extends ConsumerWidget {
             icon: const Icon(Icons.switch_account),
             tooltip: 'Ganti Role',
             onSelected: (role) {
-              ref.read(userStateProvider.notifier).setRole(role);
+              final normalizedRole = role.trim().toLowerCase();
+              ref.read(userStateProvider.notifier).setRole(normalizedRole);
               // Navigasi ke halaman sesuai role
-              final mainModule = getMainModuleForRole(role);
+              final mainModule = getMainModuleForRole(normalizedRole);
               navigateToMainModule(context, mainModule);
               if (onSwitched != null) {
-                onSwitched!(currentBranch, role);
+                onSwitched!(currentBranch, normalizedRole);
               }
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Role diganti ke: $role')),
+                SnackBar(content: Text('Role diganti ke: $normalizedRole')),
               );
             },
             itemBuilder: (context) => rolesInBranch.map((role) => PopupMenuItem(

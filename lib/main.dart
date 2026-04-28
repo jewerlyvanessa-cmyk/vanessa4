@@ -56,27 +56,6 @@ void main() async {
 class VanessaApp extends ConsumerWidget {
   const VanessaApp({super.key});
 
-  String _getMainModuleRoute(String role) {
-    switch (role) {
-      case 'cs':
-        return AppRoutes.cs;
-      case 'kasir':
-        return AppRoutes.kasir;
-      case 'superadmin':
-        return AppRoutes.superadmin;
-      case 'admin_toko':
-        return AppRoutes.adminToko;
-      case 'admin_workshop':
-        return AppRoutes.adminWorkshop;
-      case 'tukang':
-        return AppRoutes.tukang;
-      case 'manajer':
-        return AppRoutes.manajer;
-      default:
-        return AppRoutes.dashboard;
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Check user state for auto-login
@@ -85,19 +64,14 @@ class VanessaApp extends ConsumerWidget {
       userState.authToken.isEmpty ? null : userState.authToken,
     );
 
-    // Determine initial route based on user state
-    final initialRoute = (userState.userId != null && userState.role.isNotEmpty)
-        ? _getMainModuleRoute(userState.role)
-        : AppRoutes.login;
-
     // Watch network status for global awareness
     final networkState = ref.watch(networkStatusProvider);
 
     return MaterialApp(
       title: 'Vanessa App',
       theme: AppTheme.lightTheme,
-      initialRoute: initialRoute,
       routes: AppRoutes.routes,
+      home: const _AppHomeGate(),
       builder: (context, child) {
         // Add network status indicator overlay
         return Stack(
@@ -163,6 +137,49 @@ class VanessaApp extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _AppHomeGate extends ConsumerWidget {
+  const _AppHomeGate();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userState = ref.watch(userStateProvider);
+    final hasSession = userState.userId != null && userState.role.isNotEmpty;
+    if (!hasSession) {
+      // LoginPage is registered in AppRoutes.routes, but returning it directly
+      // avoids relying on initialRoute during async state hydration.
+      return const LoginPage();
+    }
+
+    // Route to the correct main page based on current role.
+    // We intentionally build via AppRoutes.routes to avoid importing every module here.
+    final role = userState.role.trim();
+    final route = switch (role) {
+      'cs' => AppRoutes.cs,
+      'kasir' => AppRoutes.kasir,
+      'superadmin' => AppRoutes.superadmin,
+      'admin_toko' => AppRoutes.adminToko,
+      'admin_workshop' => AppRoutes.adminWorkshop,
+      'tukang' => AppRoutes.tukang,
+      'manajer' => AppRoutes.manajer,
+      'stockist' => AppRoutes.stockist,
+      _ => AppRoutes.dashboard,
+    };
+
+    // Use Navigator to *redirect* so we never stay on the wrong home widget.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final current = ModalRoute.of(context)?.settings.name;
+      if (current != route) {
+        Navigator.of(context).pushNamedAndRemoveUntil(route, (r) => false);
+      }
+    });
+
+    // While redirecting, show a lightweight placeholder to avoid flashing dashboard content.
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
