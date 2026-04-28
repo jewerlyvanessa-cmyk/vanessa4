@@ -6,7 +6,9 @@ import '../utils/network_config.dart';
 
 class UnauthorizedApiException implements Exception {
   final String message;
-  UnauthorizedApiException([this.message = 'Session expired. Please login again.']);
+  UnauthorizedApiException([
+    this.message = 'Session expired. Please login again.',
+  ]);
 
   @override
   String toString() => message;
@@ -70,68 +72,56 @@ class ApiService {
     String username,
     String password,
   ) async {
-    final urlsToTry = [baseUrl, ...NetworkConfig.getAlternativeBaseUrls()];
+    final url = Uri.parse('$baseUrl/login');
 
-    for (final currentBaseUrl in urlsToTry) {
-      final url = Uri.parse('$currentBaseUrl/login');
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: NetworkConfig.defaultHeaders,
+            body: jsonEncode({'username': username, 'password': password}),
+          )
+          .timeout(NetworkConfig.connectionTimeout);
 
-      try {
-        debugPrint('Trying login with URL: $currentBaseUrl');
-
-        final response = await http
-            .post(
-              url,
-              headers: NetworkConfig.defaultHeaders,
-              body: jsonEncode({'username': username, 'password': password}),
-            )
-            .timeout(NetworkConfig.connectionTimeout);
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final token = data['token']?.toString();
-          if (token != null && token.isNotEmpty) {
-            NetworkConfig.setAuthToken(token);
-          }
-          // Kirim semua field yang relevan dari backend
-          return {
-            'success': data['success'] ?? true,
-            'user_id': data['user_id'],
-            'username': data['username'] ?? '',
-            'role': data['role'] ?? '',
-            'mainModule': data['mainModule'] ?? '',
-            'branch': data['branch'] ?? '',
-            'roles': data['roles'] ?? [],
-            'branches': data['branches'] ?? [],
-            'token': token ?? '',
-          };
-        } else {
-          NetworkConfig.setAuthToken(null);
-          final data = jsonDecode(response.body);
-          return {
-            'success': false,
-            'error': data['error'] ?? 'Login failed',
-            'role': '',
-            'mainModule': '',
-            'branch': '',
-          };
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final token = data['token']?.toString();
+        if (token != null && token.isNotEmpty) {
+          NetworkConfig.setAuthToken(token);
         }
-      } catch (e) {
-        debugPrint('Login failed with URL $currentBaseUrl: $e');
-        // Continue to next URL if this one fails
-        continue;
+        // Kirim semua field yang relevan dari backend
+        return {
+          'success': data['success'] ?? true,
+          'user_id': data['user_id'],
+          'username': data['username'] ?? '',
+          'role': data['role'] ?? '',
+          'mainModule': data['mainModule'] ?? '',
+          'branch': data['branch'] ?? '',
+          'roles': data['roles'] ?? [],
+          'branches': data['branches'] ?? [],
+          'token': token ?? '',
+        };
+      } else {
+        NetworkConfig.setAuthToken(null);
+        final data = jsonDecode(response.body);
+        return {
+          'success': false,
+          'error': data['error'] ?? 'Login failed',
+          'role': '',
+          'mainModule': '',
+          'branch': '',
+        };
       }
+    } catch (e) {
+      NetworkConfig.setAuthToken(null);
+      return {
+        'success': false,
+        'error': 'Network error: Unable to connect to server',
+        'role': '',
+        'mainModule': '',
+        'branch': '',
+      };
     }
-
-    // If all URLs failed
-    debugPrint('Login failed with all URLs');
-    NetworkConfig.setAuthToken(null);
-    return {
-      'success': false,
-      'error': 'Network error: Unable to connect to server',
-      'role': '',
-      'mainModule': '',
-      'branch': '',
-    };
   }
 
   /// Fetch all customers
@@ -246,38 +236,23 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getMaterialStock(
     String branchId,
   ) async {
-    final urlsToTry = [baseUrl, ...NetworkConfig.getAlternativeBaseUrls()];
+    final url = Uri.parse('$baseUrl/api/workshop/material-stock?branch_id=$branchId');
 
-    for (final currentBaseUrl in urlsToTry) {
-      final url = Uri.parse(
-        '$currentBaseUrl/api/workshop/material-stock?branch_id=$branchId',
+    try {
+      final response = await _makeRequest(
+        () => http.get(url, headers: NetworkConfig.defaultHeaders),
       );
 
-      try {
-        debugPrint('Trying getMaterialStock with URL: $currentBaseUrl');
-
-        final response = await _makeRequest(
-          () => http.get(url, headers: NetworkConfig.defaultHeaders),
-        );
-
-        if (response.statusCode == 200) {
-          final List<dynamic> data = jsonDecode(response.body);
-          return data.map((item) => item as Map<String, dynamic>).toList();
-        } else {
-          throw Exception(
-            'Failed to fetch material stock: ${response.statusCode}',
-          );
-        }
-      } catch (e) {
-        debugPrint('getMaterialStock failed with URL $currentBaseUrl: $e');
-        // Continue to next URL if this one fails
-        continue;
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((item) => item as Map<String, dynamic>).toList();
+      } else {
+        throw Exception('Failed to fetch material stock: ${response.statusCode}');
       }
+    } catch (e) {
+      debugPrint('getMaterialStock failed: $e');
+      throw Exception('Failed to fetch material stock: $e');
     }
-
-    // If all URLs failed
-    debugPrint('getMaterialStock failed with all URLs');
-    throw Exception('Failed to fetch material stock: Network error');
   }
 
   /// Get workshop reports

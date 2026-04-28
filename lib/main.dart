@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'dart:io' show Platform;
 import 'core/state/user_state.dart' as core_state;
 import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
@@ -30,25 +29,9 @@ void main() async {
   // Initialize date formatting for Indonesian locale
   await initializeDateFormatting('id_ID', null);
 
-  // Configure network mode for development
-  // Set to true for wireless development (no USB cable) - physical devices
-  // Set to false for USB development (ADB reverse) - emulators/simulators
-  // Auto-detect: use local network for physical devices, emulator mode for emulators
-  NetworkConfig.useLocalNetwork = false; // Default to USB mode for development
-  // Override for Android emulators (detected by checking if running on Android but not physical device)
-  if (Platform.isAndroid) {
-    // For Android emulator with ADB port forwarding, use localhost
-    // Port forwarding allows emulator to access host's localhost:3000
-    NetworkConfig.useLocalNetwork =
-        false; // Use localhost with ADB port forwarding for Android emulator
-  }
-
   // Debug: Print network configuration
   debugPrint('Network Config - Base URL: ${NetworkConfig.baseUrl}');
   debugPrint('Network Config - WebSocket URL: ${NetworkConfig.wsUrl}');
-  debugPrint(
-    'Network Config - Use Local Network: ${NetworkConfig.useLocalNetwork}',
-  );
 
   runApp(ProviderScope(child: const VanessaApp()));
 }

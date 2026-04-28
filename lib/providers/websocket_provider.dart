@@ -47,63 +47,47 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   void connect() {
     if (_isReconnecting) return;
 
-    final wsUrlsToTry = [
-      NetworkConfig.wsUrl,
-      ...NetworkConfig.getAlternativeWsUrls(),
-    ];
+    final wsUrl = NetworkConfig.wsUrl;
 
-    debugPrint(
-      '🔌 WebSocket: Attempting to connect. URLs to try: $wsUrlsToTry',
-    );
+    debugPrint('🔌 WebSocket: Attempting to connect to $wsUrl');
 
-    for (final wsUrl in wsUrlsToTry) {
-      try {
-        debugPrint('🔌 WebSocket: Trying to connect to $wsUrl');
-        _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-        state = _channel;
-        debugPrint('🔌 WebSocket: Connection initiated to $wsUrl');
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      state = _channel;
+      debugPrint('🔌 WebSocket: Connection initiated to $wsUrl');
 
-        // Listen for messages
-        _channel!.stream.listen(
-          (message) {
-            debugPrint('🔌 WebSocket: Received message: $message');
-            try {
-              final data = jsonDecode(message);
-              if (data['type'] == 'notification') {
-                _notificationController.add(data['message']);
-              }
-            } catch (e) {
-              debugPrint('🔌 WebSocket: Failed to parse message: $e');
+      // Listen for messages
+      _channel!.stream.listen(
+        (message) {
+          debugPrint('🔌 WebSocket: Received message: $message');
+          try {
+            final data = jsonDecode(message);
+            if (data['type'] == 'notification') {
+              _notificationController.add(data['message']);
             }
-            // Handle incoming messages
-            // Parse message and update providers accordingly
-            _reconnectAttempts =
-                0; // Reset reconnect attempts on successful message
-          },
-          onError: (error) {
-            debugPrint('🔌 WebSocket: Error on $wsUrl: $error');
-            _handleConnectionError('WebSocket error on $wsUrl: $error');
-          },
-          onDone: () {
-            debugPrint('🔌 WebSocket: Connection closed for $wsUrl');
-            _handleConnectionClosed();
-          },
-        );
+          } catch (e) {
+            debugPrint('🔌 WebSocket: Failed to parse message: $e');
+          }
+          // Reset reconnect attempts on successful message
+          _reconnectAttempts = 0;
+        },
+        onError: (error) {
+          debugPrint('🔌 WebSocket: Error on $wsUrl: $error');
+          _handleConnectionError('WebSocket error on $wsUrl: $error');
+        },
+        onDone: () {
+          debugPrint('🔌 WebSocket: Connection closed for $wsUrl');
+          _handleConnectionClosed();
+        },
+      );
 
-        _isReconnecting = false;
-        debugPrint('🔌 WebSocket: Successfully connected to $wsUrl');
-        // Successfully connected, break out of loop
-        return;
-      } catch (e) {
-        debugPrint('🔌 WebSocket: Failed to connect to $wsUrl: $e');
-        _handleConnectionError('Failed to connect to WebSocket $wsUrl: $e');
-        // Continue to next URL
-      }
+      _isReconnecting = false;
+      debugPrint('🔌 WebSocket: Successfully connected to $wsUrl');
+      return;
+    } catch (e) {
+      debugPrint('🔌 WebSocket: Failed to connect to $wsUrl: $e');
+      _handleConnectionError('Failed to connect to WebSocket $wsUrl: $e');
     }
-
-    // If all URLs failed
-    debugPrint('🔌 WebSocket: All URLs failed');
-    _handleConnectionError('Failed to connect to any WebSocket URL');
   }
 
   void _handleConnectionError(String error) {
@@ -235,41 +219,26 @@ class HealthCheckNotifier extends StateNotifier<bool> {
   Future<void> _performHealthCheck() async {
     try {
       bool isHealthy = false;
-      final urlsToTry = [
-        NetworkConfig.baseUrl,
-        ...NetworkConfig.getAlternativeBaseUrls(),
-      ];
+      final base = NetworkConfig.baseUrl;
 
-      for (final base in urlsToTry) {
-        // Try /health first
-        try {
-          final healthUrl = base.endsWith('/')
-              ? '${base}health'
-              : '$base/health';
-          final response = await http
-              .get(Uri.parse(healthUrl))
-              .timeout(const Duration(seconds: 10));
-          if (response.statusCode == 200) {
-            isHealthy = true;
-            break;
-          }
-        } catch (e) {
-          // If /health fails, try /orders?limit=1 as fallback
-          try {
-            final ordersUrl = base.endsWith('/')
-                ? '${base}orders?limit=1'
-                : '$base/orders?limit=1';
-            final response = await http
-                .get(Uri.parse(ordersUrl))
-                .timeout(const Duration(seconds: 10));
-            if (response.statusCode == 200) {
-              isHealthy = true;
-              break;
-            }
-          } catch (e2) {
-            // try next base URL
-            continue;
-          }
+      // Try /health first
+      try {
+        final healthUrl = base.endsWith('/') ? '${base}health' : '$base/health';
+        final response = await http
+            .get(Uri.parse(healthUrl))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode == 200) {
+          isHealthy = true;
+        }
+      } catch (e) {
+        // If /health fails, try /orders?limit=1 as fallback
+        final ordersUrl =
+            base.endsWith('/') ? '${base}orders?limit=1' : '$base/orders?limit=1';
+        final response = await http
+            .get(Uri.parse(ordersUrl))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode == 200) {
+          isHealthy = true;
         }
       }
 
