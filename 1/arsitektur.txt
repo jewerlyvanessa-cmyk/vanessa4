@@ -107,7 +107,8 @@ Upload file → REST API ke backend storage
 Layered Architecture
 
 Backend API
-├─ routes/controllers   # REST API endpoint
+├─ routes/    # REST API endpoint
+|- controllers          #database controLL (CRUD)
 ├─ services            # Business logic (orders, stock, payments)
 ├─ repositories        # DB CRUD abstraction
 ├─ models              # ORM / DB mapping
@@ -115,6 +116,7 @@ Backend API
 ├─ middleware          # Auth, role & branch guard
 ├─ workers             # Edge Functions / cron jobs
 └─ websocket           # Realtime notification
+|_ migrations            # create/update database files
 
 
 Fitur Backend:
