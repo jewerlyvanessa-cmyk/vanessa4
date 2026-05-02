@@ -45,13 +45,21 @@ class _DailyOrdersPaymentsPageState
 
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
 
-      // Load orders data - menggunakan endpoint yang sama dengan CS tapi tanpa user_id filter
-      final ordersResponse = await http.get(
+      // Load orders data - sama dengan CS; fallback jika /api/orders/daily 404.
+      var ordersResponse = await http.get(
         Uri.parse(
-          '$baseUrl/orders/daily?branch_id=${userState.branch}&date=$dateStr',
+          '$baseUrl/api/orders/daily?branch_id=${userState.branch}&date=$dateStr',
         ),
         headers: NetworkConfig.defaultHeaders,
       );
+      if (ordersResponse.statusCode == 404) {
+        ordersResponse = await http.get(
+          Uri.parse(
+            '$baseUrl/orders/daily?branch_id=${userState.branch}&date=$dateStr',
+          ),
+          headers: NetworkConfig.defaultHeaders,
+        );
+      }
 
       // Load payments data
       final paymentsResponse = await http.get(

@@ -1,10 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:intl/intl.dart';
 import 'package:vanessa3/main.dart'; // Import for userStateProvider
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
+
+/// Tanggal kalender lokal perangkat (sama dengan filter "hari ini" di backend WIB).
+String _localCalendarDateKey() =>
+    DateFormat('yyyy-MM-dd').format(DateTime.now());
 
 // Model untuk Order Today
 class OrderTodayStats {
@@ -60,10 +65,9 @@ class OrderTodayStatsNotifier
 
   void _checkAndFetch() {
     final userState = _ref.read(userStateProvider);
-    if (userState.userId != null && userState.branch.isNotEmpty) {
+    if (userState.branch.isNotEmpty) {
       fetchOrderTodayStats();
     } else {
-      // User not logged in yet, stay in loading state
       state = const AsyncValue.loading();
     }
   }
@@ -85,7 +89,7 @@ class OrderTodayStatsNotifier
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
       final branchId = int.tryParse(userState.branch) ?? 1;
-      final dateKey = DateTime.now().toIso8601String().split('T')[0];
+      final dateKey = _localCalendarDateKey();
 
       final cacheKey = 'orderTodayStats/v1'
           '?branch_id=$branchId'
@@ -144,7 +148,7 @@ class OrderTodayStatsNotifier
         final userState = _ref.read(userStateProvider);
         final userId = userState.userId;
         final branchId = int.tryParse(userState.branch) ?? 1;
-        final dateKey = DateTime.now().toIso8601String().split('T')[0];
+        final dateKey = _localCalendarDateKey();
         final cacheKey = 'orderTodayStats/v1'
             '?branch_id=$branchId'
             '&user_id=${userId ?? ''}'
@@ -195,10 +199,9 @@ class TodayOrdersNotifier
 
   void _checkAndFetch() {
     final userState = _ref.read(userStateProvider);
-    if (userState.userId != null && userState.branch.isNotEmpty) {
+    if (userState.branch.isNotEmpty) {
       fetchTodayOrders();
     } else {
-      // User not logged in yet, stay in loading state
       state = const AsyncValue.loading();
     }
   }
@@ -220,9 +223,11 @@ class TodayOrdersNotifier
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
       final branchId = int.tryParse(userState.branch) ?? 1;
+      final todayKey = _localCalendarDateKey();
 
-      // v3: include orders.jumlah + item_total consistency
-      final cacheKey = 'todayOrders/v3?branch_id=$branchId&user_id=${userId ?? ''}';
+      // v4: /api/orders/daily (proxy-friendly) + date di cache key.
+      final cacheKey =
+          'todayOrders/v4?branch_id=$branchId&user_id=${userId ?? ''}&date=$todayKey';
 
       final networkState = _ref.read(networkStatusProvider);
       if (!networkState.isOnline || !networkState.isBackendReachable) {
@@ -241,7 +246,6 @@ class TodayOrdersNotifier
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
       // Build query parameters
-      final todayKey = DateTime.now().toIso8601String().split('T')[0];
       final queryParams = <String, String>{
         'branch_id': branchId.toString(),
         'date': todayKey, // ensure server uses the same "today" boundary
@@ -252,20 +256,35 @@ class TodayOrdersNotifier
         queryParams['user_id'] = userId.toString();
       }
 
-      final uri = Uri.parse(
-        '$baseUrl/orders/daily',
-      ).replace(queryParameters: queryParams);
-
       final client = http.Client();
-      final response = await client
-          .get(uri, headers: NetworkConfig.defaultHeaders)
-          .timeout(NetworkConfig.connectionTimeout);
-      client.close();
+      http.Response response;
+      try {
+        var uri = Uri.parse('$baseUrl/api/orders/daily')
+            .replace(queryParameters: queryParams);
+        response = await client
+            .get(uri, headers: NetworkConfig.defaultHeaders)
+            .timeout(NetworkConfig.connectionTimeout);
+        // Backend lama / proxy: coba path tanpa prefix /api.
+        if (response.statusCode == 404) {
+          uri = Uri.parse('$baseUrl/orders/daily')
+              .replace(queryParameters: queryParams);
+          response = await client
+              .get(uri, headers: NetworkConfig.defaultHeaders)
+              .timeout(NetworkConfig.connectionTimeout);
+        }
+      } finally {
+        client.close();
+      }
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        final rawOrders = data
-            .map((order) => Map<String, dynamic>.from(order))
+        final decoded = jsonDecode(response.body);
+        if (decoded is! List) {
+          throw Exception(
+            'orders/daily: expected JSON array, got ${decoded.runtimeType}',
+          );
+        }
+        final rawOrders = decoded
+            .map((dynamic order) => Map<String, dynamic>.from(order as Map))
             .toList();
 
         // Check if response already includes item details (from updated /orders/daily endpoint)
@@ -304,8 +323,9 @@ class TodayOrdersNotifier
         final userState = _ref.read(userStateProvider);
         final userId = userState.userId;
         final branchId = int.tryParse(userState.branch) ?? 1;
+        final fallbackDate = _localCalendarDateKey();
         final cacheKey =
-            'todayOrders/v3?branch_id=$branchId&user_id=${userId ?? ''}';
+            'todayOrders/v4?branch_id=$branchId&user_id=${userId ?? ''}&date=$fallbackDate';
         final cached =
             await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
         if (cached != null) {

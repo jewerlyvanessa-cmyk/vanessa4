@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -29,7 +30,15 @@ void main() async {
   // Initialize date formatting for Indonesian locale
   await initializeDateFormatting('id_ID', null);
 
-  // Debug: Print network configuration
+  // Debug: Print network configuration (dart-define harus dari `flutter run`, bukan hot restart saja)
+  if (kDebugMode) {
+    debugPrint(
+      'Network Config - USE_LOCAL_API=${const bool.fromEnvironment('USE_LOCAL_API', defaultValue: false)} '
+      'API_HOST="${const String.fromEnvironment('API_HOST', defaultValue: '')}" '
+      'API_PORT="${const String.fromEnvironment('API_PORT', defaultValue: '')}" '
+      'API_SCHEME="${const String.fromEnvironment('API_SCHEME', defaultValue: '')}"',
+    );
+  }
   debugPrint('Network Config - Base URL: ${NetworkConfig.baseUrl}');
   debugPrint('Network Config - WebSocket URL: ${NetworkConfig.wsUrl}');
 

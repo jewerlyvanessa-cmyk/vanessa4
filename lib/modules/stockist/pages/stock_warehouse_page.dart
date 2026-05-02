@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:vanessa3/main.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
@@ -686,12 +687,40 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                                         onSelected: (value) async {
                                           if (value == 'restock') {
                                             await _showRestockDialog(item);
+                                          } else if (value == 'history') {
+                                            await showModalBottomSheet<void>(
+                                              context: context,
+                                              isScrollControlled: true,
+                                              useSafeArea: true,
+                                              showDragHandle: true,
+                                              builder: (ctx) => SizedBox(
+                                                height:
+                                                    MediaQuery.sizeOf(ctx)
+                                                            .height *
+                                                        0.68,
+                                                child: _StockHistoryBottomSheet(
+                                                  item: item,
+                                                ),
+                                              ),
+                                            );
                                           }
                                         },
                                         itemBuilder: (_) => const [
                                           PopupMenuItem(
+                                            value: 'history',
+                                            child: ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(Icons.history),
+                                              title: Text('Riwayat stok'),
+                                            ),
+                                          ),
+                                          PopupMenuItem(
                                             value: 'restock',
-                                            child: Text('Restock'),
+                                            child: ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(Icons.add_box),
+                                              title: Text('Restock'),
+                                            ),
                                           ),
                                         ],
                                       ),
@@ -703,6 +732,223 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                     ),
                   ],
                 ),
+    );
+  }
+}
+
+class _StockHistoryBottomSheet extends ConsumerStatefulWidget {
+  const _StockHistoryBottomSheet({required this.item});
+
+  final Map<String, dynamic> item;
+
+  @override
+  ConsumerState<_StockHistoryBottomSheet> createState() =>
+      _StockHistoryBottomSheetState();
+}
+
+class _StockHistoryBottomSheetState
+    extends ConsumerState<_StockHistoryBottomSheet> {
+  late Future<List<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<Map<String, dynamic>>> _load() async {
+    final userState = ref.read(userStateProvider);
+    final id = widget.item['item_id'];
+    if (id == null) return [];
+    final uri = Uri.parse(
+      '${NetworkConfig.baseUrl}/stock-mutations?branch_id=${userState.branch}&item_id=$id&limit=100',
+    );
+    final r = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (r.statusCode != 200) {
+      throw Exception('Gagal memuat riwayat (${r.statusCode})');
+    }
+    final decoded = jsonDecode(r.body);
+    if (decoded is! List) return [];
+    return decoded
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  static String _typeLabel(String? t) {
+    switch ((t ?? '').toLowerCase()) {
+      case 'in':
+        return 'Masuk';
+      case 'out':
+        return 'Keluar';
+      case 'transfer':
+        return 'Transfer';
+      case 'adjustment':
+        return 'Koreksi';
+      default:
+        return t?.isNotEmpty == true ? t! : '-';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final kode =
+        (widget.item['kode_produk'] ?? widget.item['item_code'] ?? '')
+            .toString();
+    final name = (widget.item['name'] ?? '-').toString();
+    final subtitle = kode.isNotEmpty ? '$kode · $name' : name;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Riwayat stok',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        fontSize: 13,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Tutup',
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      '${snapshot.error}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+                );
+              }
+              final rows = snapshot.data ?? [];
+              if (rows.isEmpty) {
+                return const Center(
+                  child: Text('Belum ada riwayat mutasi untuk item ini'),
+                );
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                itemCount: rows.length,
+                separatorBuilder: (context, index) =>
+                    const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final row = rows[i];
+                  final ts = row['created_at'];
+                  String dateStr = '-';
+                  if (ts != null) {
+                    try {
+                      dateStr = DateFormat('dd MMM yyyy, HH:mm').format(
+                        DateTime.parse(ts.toString()).toLocal(),
+                      );
+                    } catch (_) {
+                      dateStr = ts.toString();
+                    }
+                  }
+                  final type = _typeLabel(row['type']?.toString());
+                  final qty = row['quantity'];
+                  final prev = row['previous_stock'];
+                  final cur = row['current_stock'];
+                  final notes = (row['notes'] ?? '').toString().trim();
+                  final by = (row['created_by_name'] ?? '').toString().trim();
+                  final refType =
+                      (row['reference_type'] ?? '').toString().trim();
+                  final refId = row['reference_id'];
+
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      '$type · qty ${qty ?? '-'}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          dateStr,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                        if (prev != null || cur != null)
+                          Text(
+                            'Stok: ${prev ?? '?'} → ${cur ?? '?'}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        if (refType.isNotEmpty || refId != null)
+                          Text(
+                            [
+                              if (refType.isNotEmpty) 'Ref: $refType',
+                              if (refId != null) '#$refId',
+                            ].join(' '),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        if (notes.isNotEmpty)
+                          Text(
+                            notes,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        if (by.isNotEmpty)
+                          Text(
+                            'Oleh: $by',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

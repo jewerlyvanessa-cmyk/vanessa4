@@ -1,5 +1,10 @@
 const express = require('express');
 const db = require('../db');
+
+const ORDER_CALENDAR_TIMEZONE =
+  /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
+    ? String(process.env.BUSINESS_TIMEZONE).trim()
+    : 'Asia/Jakarta';
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
@@ -47,15 +52,22 @@ router.get('/dashboard/order-today', async (req, res) => {
     const branchId = req.query.branch_id || 1; // Default branch_id for now
     const userId = req.query.user_id; // Optional user_id filter
 
-    // Get today's date in YYYY-MM-DD format (local date)
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const localToday = `${year}-${month}-${day}`;
+    const dateFromClient =
+      req.query.date && String(req.query.date).trim().length > 0
+        ? String(req.query.date).trim()
+        : '';
+    const localToday =
+      dateFromClient && /^\d{4}-\d{2}-\d{2}$/.test(dateFromClient)
+        ? dateFromClient
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: ORDER_CALENDAR_TIMEZONE,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
 
-    // Build WHERE clause for filtering
-    let whereClause = `WHERE DATE(o.created_at) = $1 AND o.branch_id = $2`;
+    // Align "hari ini" with BUSINESS_TIMEZONE (default Asia/Jakarta), not DB session UTC.
+    let whereClause = `WHERE (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date AND o.branch_id = $2`;
     let queryParams = [localToday, branchId];
     let paramIndex = 3;
 
@@ -133,12 +145,12 @@ router.get('/dashboard/order-today', async (req, res) => {
 router.get('/orders/today', async (req, res) => {
   try {
     const branchId = req.query.branch_id || 1;
-    // Use local date instead of UTC date
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const localToday = `${year}-${month}-${day}`;
+    const localToday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: ORDER_CALENDAR_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
 
     const query = `
       SELECT
@@ -170,7 +182,7 @@ router.get('/orders/today', async (req, res) => {
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN items i ON o.item_id = i.item_id
-      WHERE DATE(o.created_at) = $1
+      WHERE (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date
       AND o.branch_id = $2
       ORDER BY o.created_at DESC, o.order_id DESC, oi.id ASC
     `;
@@ -558,5 +570,8 @@ router.post('/upload', upload.single('photo'), async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+const getOrdersDaily = require('./orders_daily_handler');
+router.get('/orders/daily', getOrdersDaily);
 
 module.exports = router;

@@ -11,11 +11,19 @@ class NetworkConfig {
   // Production server (default untuk semua mode build)
   static const String _prodHost = 'kumpulandoa.my.id';
 
-  /// Default: **false** → `https://kumpulandoa.my.id`.
+  // Default: **false** → `https://kumpulandoa.my.id`.
   /// Untuk backend lokal (`http://localhost:3000` / `http://10.0.2.2:3000` di emulator):
   /// `flutter run --dart-define=USE_LOCAL_API=true`
   static bool get _useLocal =>
       const bool.fromEnvironment('USE_LOCAL_API', defaultValue: false);
+
+  /// `API_PORT` / `API_SCHEME` hanya dipakai jika backend target jelas (host override
+  /// atau `USE_LOCAL_API`). Tanpa ini, `API_PORT=3000` saja membuat URL seperti
+  /// `http://kumpulandoa.my.id:3000` yang tidak ada — timeout & login gagal.
+  static bool get _apiOverridesApply {
+    if (_useLocal) return true;
+    return String.fromEnvironment('API_HOST', defaultValue: '').trim().isNotEmpty;
+  }
 
   // Timeout configurations for different platforms
   static Duration get connectionTimeout {
@@ -25,8 +33,17 @@ class NetworkConfig {
   static const Duration receiveTimeout = Duration(seconds: 30);
 
   static String get _host {
-    const overrideHost = String.fromEnvironment('API_HOST', defaultValue: '');
-    if (overrideHost.isNotEmpty) return overrideHost;
+    var overrideHost =
+        String.fromEnvironment('API_HOST', defaultValue: '').trim();
+    if (overrideHost.isNotEmpty) {
+      // Emulator Android: 127.0.0.1 / localhost = loopback di dalam VM, bukan PC dev.
+      // Pakai alias host → 10.0.2.2:3000. (HP fisik: set API_HOST=IP_LAN_PC, mis. 192.168.1.10)
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          (overrideHost == '127.0.0.1' || overrideHost == 'localhost')) {
+        overrideHost = _localHostAndroidEmulator;
+      }
+      return overrideHost;
+    }
     if (!_useLocal) return _prodHost;
     // Android emulator cannot reach host machine via "localhost".
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -41,7 +58,7 @@ class NetworkConfig {
       defaultValue: '',
     );
     final overridePort = int.tryParse(overridePortStr);
-    if (overridePort != null) return overridePort;
+    if (overridePort != null && _apiOverridesApply) return overridePort;
     if (!_useLocal) return null; // prod assumes default 443/https
     return _localPort;
   }
@@ -52,7 +69,8 @@ class NetworkConfig {
       'API_SCHEME',
       defaultValue: '',
     );
-    if (overrideScheme == 'http' || overrideScheme == 'https') {
+    if (_apiOverridesApply &&
+        (overrideScheme == 'http' || overrideScheme == 'https')) {
       return overrideScheme;
     }
     return _useLocal ? 'http' : 'https';

@@ -65,13 +65,26 @@ class UserStateNotifier extends StateNotifier<UserState> {
         final savedBaseUrl = prefs.getString(_apiBaseUrlKey) ?? '';
         final currentBaseUrl = NetworkConfig.baseUrl;
 
-        final userData = jsonDecode(userDataJson);
+        final userData = Map<String, dynamic>.from(
+          jsonDecode(userDataJson) as Map,
+        );
         String authToken = '';
         try {
           authToken = await _secureStorage.read(key: _authTokenKey) ?? '';
         } catch (e) {
-          // Backward compatibility: fallback token stored in shared preferences.
-          authToken = userData['authToken'] ?? '';
+          authToken = '';
+        }
+        // Migrasi sekali: token lama di prefs (tidak aman) → secure storage, lalu hapus dari prefs.
+        final legacy = userData['authToken'];
+        if (authToken.isEmpty &&
+            legacy != null &&
+            legacy.toString().trim().isNotEmpty) {
+          authToken = legacy.toString();
+          try {
+            await _secureStorage.write(key: _authTokenKey, value: authToken);
+          } catch (_) {}
+          userData.remove('authToken');
+          await prefs.setString(_userDataKey, jsonEncode(userData));
         }
 
         if (savedBaseUrl.isNotEmpty && savedBaseUrl != currentBaseUrl) {
@@ -108,12 +121,12 @@ class UserStateNotifier extends StateNotifier<UserState> {
   Future<void> _saveUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // JWT hanya di FlutterSecureStorage — jangan simpan di SharedPreferences (plaintext).
       final userData = {
         'userId': state.userId,
         'username': state.username,
         'branch': state.branch,
         'role': state.role,
-        'authToken': state.authToken,
         'roles': state.roles,
         'branches': state.branches,
       };

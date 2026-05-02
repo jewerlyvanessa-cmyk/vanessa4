@@ -21,13 +21,25 @@ class NetworkConnectivity {
 
   // Cek apakah backend dapat diakses
   static Future<bool> isBackendReachable(String baseUrl) async {
+    final root = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+
+    // 1) /health/live — tidak menyentuh DB; cegah timeout palsu saat Postgres belum siap.
     try {
-      // Try health endpoint first
-      final healthUrl = baseUrl.endsWith('/') ? '${baseUrl}health' : '$baseUrl/health';
-      final response = await http.get(
-        Uri.parse(healthUrl),
-        headers: {'Cache-Control': 'no-cache'},
-      ).timeout(const Duration(seconds: 10));
+      final liveUrl = '$root/health/live';
+      final live = await http
+          .get(Uri.parse(liveUrl), headers: {'Cache-Control': 'no-cache'})
+          .timeout(const Duration(seconds: 5));
+      if (live.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('Backend /health/live: $e');
+    }
+
+    // 2) /health — termasuk cek database
+    try {
+      final healthUrl = '$root/health';
+      final response = await http
+          .get(Uri.parse(healthUrl), headers: {'Cache-Control': 'no-cache'})
+          .timeout(const Duration(seconds: 10));
 
       return response.statusCode == 200;
     } catch (e) {

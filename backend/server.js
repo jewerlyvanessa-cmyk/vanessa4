@@ -24,6 +24,7 @@ const apiRoutes = require('./api'); // Import new API routes
 const dashboardOrdersRoute = require('./routes/dashboard_orders'); // Import dashboard orders route
 const branchesRoute = require('./routes/branches'); // Import branches route
 const userInfoRoute = require('./routes/userInfo');
+const getOrdersDaily = require('./routes/orders_daily_handler');
 
 /**
  * Stockist clients send item_name as a display label "KODE - Nama" while
@@ -384,6 +385,11 @@ app.delete('/orders/:id', (req, res) => {
   const id = parseInt(req.params.id);
   orders = orders.filter(order => order.id !== id);
   res.status(204).send();
+});
+
+// Liveness: tanpa DB — untuk cek koneksi TCP dari emulator/device (hindari timeout saat Postgres down/lambat).
+app.get('/health/live', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Health check endpoint
@@ -924,19 +930,19 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           );
         }
 
-        // Always record stock mutation for this sale
+        // Always record stock mutation for this sale (type must satisfy stock_mutations_type_check: in|out|transfer|adjustment)
         await client.query(
           `
             INSERT INTO stock_mutations (
               item_id, branch_id, type, quantity, previous_stock, current_stock,
               notes, reference_id, reference_type, created_by
             )
-            VALUES ($1, $2, 'sale', $3, $4, $5, $6, $7, 'order', $8)
+            VALUES ($1, $2, 'out', $3, $4, $5, $6, $7, 'order', $8)
           `,
           [
             final_item_id,
             branch_id,
-            -qtyVal,
+            qtyVal,
             prevQty,
             nextQty,
             `Order ${order_type} (${nota_order})`,
@@ -3241,139 +3247,8 @@ app.get('/payments', async (req, res) => {
   }
 });
 
-// Endpoint untuk mendapatkan data order harian (admin_toko)
-app.get('/orders/daily', async (req, res) => {
-  try {
-    const { branch_id, user_id, date } = req.query;
-
-    if (!branch_id) {
-      return res.status(400).json({ error: 'branch_id is required' });
-    }
-
-    // Use provided date (YYYY-MM-DD) or fallback to CURRENT_DATE.
-    const targetDate = (date && String(date).trim().length > 0)
-      ? String(date).trim()
-      : null;
-
-    // Params: branch_id, (optional) user_id, (optional) date
-    const params = [parseInt(branch_id)];
-
-    // For admin_toko and CS (no user_id filter), return orders with item details
-    // For other roles (with user_id filter), return orders with item details
-    let query;
-    if (user_id) {
-      // Filtered view - include item details
-      query = `
-        SELECT
-          o.*,
-          c.name as customer_name,
-          c.phone as customer_phone,
-          c.address as customer_address,
-          oi.nama_item,
-          oi.kode_produk,
-          oi.weight,
-          oi.qty,
-          oi.harga_per_gram,
-          oi.total as item_total,
-          i.material,
-          i.purity,
-          oi.kategori,
-          oi.jenis,
-          oi.tipe,
-          i.item_id,
-          i.name as item_name,
-          i.kode_produk as item_kode,
-          i.material as item_material,
-          i.purity as item_purity,
-          i.weight as item_weight,
-          i.kategori as item_kategori,
-          i.jenis as item_jenis,
-          i.tipe as item_tipe
-        FROM orders o
-        LEFT JOIN customers c ON o.customer_id = c.customer_id
-        LEFT JOIN order_items oi ON o.order_id = oi.order_id
-        LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE o.branch_id = $1
-          AND o.user_id = $2
-      `;
-      params.push(parseInt(user_id));
-    } else {
-      // Admin toko / CS view - orders with item details, no user filter
-      query = `
-        SELECT
-          o.*,
-          c.name as customer_name,
-          c.phone as customer_phone,
-          c.address as customer_address,
-          oi.nama_item,
-          oi.kode_produk,
-          oi.weight,
-          oi.qty,
-          oi.harga_per_gram,
-          oi.total as item_total,
-          i.material,
-          i.purity,
-          oi.kategori,
-          oi.jenis,
-          oi.tipe,
-          i.item_id,
-          i.name as item_name,
-          i.kode_produk as item_kode,
-          i.material as item_material,
-          i.purity as item_purity,
-          i.weight as item_weight,
-          i.kategori as item_kategori,
-          i.jenis as item_jenis,
-          i.tipe as item_tipe
-        FROM orders o
-        LEFT JOIN customers c ON o.customer_id = c.customer_id
-        LEFT JOIN order_items oi ON o.order_id = oi.order_id
-        LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE o.branch_id = $1
-      `;
-    }
-
-    // Date filter:
-    // - include orders created on target date
-    // - PLUS orders that have a completed payment on target date (paid today)
-    if (targetDate) {
-      query += `
-        AND (
-          DATE(o.created_at) = $${params.length + 1}
-          OR EXISTS (
-            SELECT 1
-            FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
-              AND DATE(p.created_at) = $${params.length + 1}
-          )
-        )
-      `;
-      params.push(targetDate);
-    } else {
-      query += `
-        AND (
-          DATE(o.created_at) = CURRENT_DATE
-          OR EXISTS (
-            SELECT 1
-            FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
-              AND DATE(p.created_at) = CURRENT_DATE
-          )
-        )
-      `;
-    }
-
-    query += ' ORDER BY o.created_at DESC';
-
-    const result = await db.query(query, params);
-    res.status(200).json(result.rows);
-  } catch (error) {
-    console.error('Error fetching daily orders:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// Order harian: juga lewat router /api (dashboard_orders) → GET /api/orders/daily.
+app.get('/orders/daily', getOrdersDaily);
 
 // Endpoint untuk mendapatkan data transfer barang (admin_toko)
 app.get('/transfers', async (req, res) => {
@@ -3883,7 +3758,7 @@ app.put('/transfers/:id', async (req, res) => {
 // Endpoint untuk mendapatkan data mutasi stok (admin_toko)
 app.get('/stock-mutations', async (req, res) => {
   try {
-    const { branch_id, type, limit = 50, offset = 0 } = req.query;
+    const { branch_id, type, item_id, limit = 50, offset = 0 } = req.query;
 
     let query = `
       SELECT
@@ -3915,8 +3790,19 @@ app.get('/stock-mutations', async (req, res) => {
       paramIndex++;
     }
 
+    if (item_id != null && String(item_id).trim() !== '') {
+      const iid = parseInt(String(item_id).trim(), 10);
+      if (Number.isFinite(iid)) {
+        query += ` AND sm.item_id = $${paramIndex}`;
+        params.push(iid);
+        paramIndex++;
+      }
+    }
+
+    const lim = Math.min(Math.max(parseInt(String(limit), 10) || 50, 1), 200);
+    const off = Math.max(parseInt(String(offset), 10) || 0, 0);
     query += ` ORDER BY sm.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(limit, offset);
+    params.push(lim, off);
 
     const result = await db.query(query, params);
     res.status(200).json(result.rows);
