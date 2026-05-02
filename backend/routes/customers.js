@@ -2,6 +2,55 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
+let _cachedPaymentsProofUrlColumnExists = null;
+async function paymentsHasProofUrlColumn() {
+  if (_cachedPaymentsProofUrlColumnExists !== null) {
+    return _cachedPaymentsProofUrlColumnExists;
+  }
+  try {
+    const result = await db.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'proof_url'
+        LIMIT 1
+      `,
+    );
+    _cachedPaymentsProofUrlColumnExists = result.rowCount > 0;
+  } catch (_) {
+    _cachedPaymentsProofUrlColumnExists = false;
+  }
+  return _cachedPaymentsProofUrlColumnExists;
+}
+
+const _cachedCustomersColumnExists = new Map();
+async function customersHasColumn(columnName) {
+  if (_cachedCustomersColumnExists.has(columnName)) {
+    return _cachedCustomersColumnExists.get(columnName);
+  }
+  let exists = false;
+  try {
+    const result = await db.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'customers'
+          AND column_name = $1
+        LIMIT 1
+      `,
+      [columnName],
+    );
+    exists = result.rowCount > 0;
+  } catch (_) {
+    exists = false;
+  }
+  _cachedCustomersColumnExists.set(columnName, exists);
+  return exists;
+}
+
 // Endpoint: GET /api/customers
 router.get('/customers', async (req, res) => {
   try {
@@ -22,6 +71,68 @@ router.get('/customers', async (req, res) => {
   }
 });
 
+// Endpoint: GET /api/customers/:id/transactions
+// Riwayat transaksi per pelanggan (order + pembayaran terakhir jika ada)
+router.get('/customers/:id/transactions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { branch_id, limit, offset } = req.query;
+
+    const lim = Math.max(1, Math.min(parseInt(limit || '50', 10) || 50, 200));
+    const off = Math.max(0, parseInt(offset || '0', 10) || 0);
+
+    const hasProofUrl = await paymentsHasProofUrlColumn();
+    const proofUrlSelect = hasProofUrl ? 'p.proof_url' : 'NULL';
+
+    let query = `
+      SELECT
+        o.order_id,
+        o.created_at,
+        o.order_type,
+        o.status AS order_status,
+        o.jumlah,
+        o.total,
+        o.diskon,
+        o.branch_id,
+        b.name AS branch_name,
+        p.payment_id,
+        p.status AS payment_status,
+        p.method AS payment_method,
+        p.amount AS payment_amount,
+        p.payment_date,
+        ${proofUrlSelect} AS proof_url,
+        p.notes
+      FROM orders o
+      LEFT JOIN branches b ON o.branch_id = b.branch_id
+      LEFT JOIN LATERAL (
+        SELECT p.*
+        FROM payments p
+        WHERE p.order_id = o.order_id
+        ORDER BY p.payment_date DESC NULLS LAST, p.payment_id DESC
+        LIMIT 1
+      ) p ON TRUE
+      WHERE o.customer_id = $1
+    `;
+
+    const params = [id];
+    let idx = 2;
+
+    if (branch_id) {
+      query += ` AND o.branch_id = $${idx++}`;
+      params.push(branch_id);
+    }
+
+    query += ` ORDER BY o.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    params.push(lim, off);
+
+    const result = await db.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching customer transactions:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // Endpoint: POST /api/customers
 router.post('/customers', async (req, res) => {
   try {
@@ -36,13 +147,25 @@ router.post('/customers', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Name and phone are required.' });
     }
 
-    // Insert ke tabel customers
+    // Insert ke tabel customers (backward-compatible: only include columns that exist)
+    const cols = ['name', 'phone', 'address'];
+    const values = [name, phone, address || null];
+
+    if (email !== undefined && (await customersHasColumn('email'))) {
+      cols.push('email');
+      values.push((email || null));
+    }
+    if (branch_id !== undefined && (await customersHasColumn('branch_id'))) {
+      cols.push('branch_id');
+      values.push((branch_id || null));
+    }
+
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
     const query = `
-      INSERT INTO customers (name, phone, address)
-      VALUES ($1, $2, $3)
+      INSERT INTO customers (${cols.join(', ')})
+      VALUES (${placeholders})
       RETURNING *;
     `;
-    const values = [name, phone, address || null];
     const result = await db.query(query, values);
 
     res.status(201).json({ success: true, data: result.rows[0] });

@@ -151,7 +151,7 @@ class ManajerMainPage extends ConsumerWidget {
                   ),
                   _MenuButton(
                     icon: Icons.people,
-                    label: 'MANAJEMEN KARYAWAN',
+                    label: 'USER',
                     iconColor: Colors.purple,
                     onTap: () {
                       Navigator.pushNamed(
@@ -173,12 +173,12 @@ class ManajerMainPage extends ConsumerWidget {
                   ),
                   _MenuButton(
                     icon: Icons.settings,
-                    label: 'PENGATURAN SISTEM',
-                    iconColor: Colors.grey,
+                    label: 'PELANGGAN',
+                    iconColor: Colors.cyan,
                     onTap: () {
                       Navigator.pushNamed(
                         context,
-                        routes.AppRoutes.manajerSystemSettings,
+                        routes.AppRoutes.customers,
                       );
                     },
                   ),

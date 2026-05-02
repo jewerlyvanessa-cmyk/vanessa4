@@ -229,8 +229,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         // Compress image
         final compressedXFile = await FlutterImageCompress.compressAndGetFile(
           file.absolute.path,
-          '${file.parent.path}/compressed_${file.uri.pathSegments.last}',
+          '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg',
           quality: 70,
+          format: CompressFormat.jpeg,
         );
 
         setState(() {
@@ -499,6 +500,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     TextEditingController controller,
   ) async {
     final nameController = TextEditingController(text: initialName);
+    final emailController = TextEditingController();
     final phoneController = TextEditingController();
     final addressController = TextEditingController();
 
@@ -512,6 +514,11 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
             TextField(
               controller: nameController,
               decoration: const InputDecoration(labelText: 'Nama'),
+            ),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+              keyboardType: TextInputType.emailAddress,
             ),
             TextField(
               controller: phoneController,
@@ -540,10 +547,13 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       try {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
-          Uri.parse('$baseUrl/customers'),
+          Uri.parse('$baseUrl/api/customers'),
           headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
+            'email': emailController.text.trim().isEmpty
+                ? null
+                : emailController.text.trim(),
             'phone': phoneController.text,
             'address': addressController.text,
           }),
@@ -688,7 +698,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                   double.tryParse(_hargaBeliController.text.trim()) ?? 0,
               'untung_rugi': _untungRugi,
               'catatan_kondisi': _catatanKondisiController.text.trim(),
-              'foto_kondisi': _fotoFile != null ? [_fotoFile!.path] : [],
             },
           },
         ],

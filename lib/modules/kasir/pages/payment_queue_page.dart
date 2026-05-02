@@ -57,8 +57,30 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         Logger.logInfo('Parsed data: $data');
+        final List<dynamic> rawList = (data is List) ? data : [];
+        final normalized = rawList.map((e) {
+          if (e is! Map) return e;
+          final m = Map<String, dynamic>.from(e);
+          // Normalize backend keys -> keys used by UI/PaymentPage
+          if (!m.containsKey('nama_item') || (m['nama_item']?.toString().isEmpty ?? true)) {
+            m['nama_item'] = m['item_name'] ?? m['name'];
+          }
+          if (!m.containsKey('berat') || (m['berat']?.toString().isEmpty ?? true)) {
+            m['berat'] = m['weight'];
+          }
+          if (!m.containsKey('qty') || (m['qty']?.toString().isEmpty ?? true)) {
+            m['qty'] = m['quantity'];
+          }
+          if (!m.containsKey('customer_phone') || (m['customer_phone']?.toString().isEmpty ?? true)) {
+            m['customer_phone'] = m['phone'];
+          }
+          if (!m.containsKey('customer_address') || (m['customer_address']?.toString().isEmpty ?? true)) {
+            m['customer_address'] = m['address'];
+          }
+          return m;
+        }).toList();
         setState(() {
-          _pendingOrders = data;
+          _pendingOrders = normalized;
           _isLoading = false;
         });
       } else {

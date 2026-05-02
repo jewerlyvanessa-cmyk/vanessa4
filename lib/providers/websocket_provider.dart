@@ -22,44 +22,102 @@ final notificationProvider = StreamProvider<String>((ref) {
 class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
+  Timer? _presenceRetryTimer;
   bool _isReconnecting = false;
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 5;
   static const Duration reconnectDelay = Duration(seconds: 3);
+  static const int _maxPresenceAttempts = 12;
   bool _isLoggedIn = false;
   final StreamController<String> _notificationController =
       StreamController<String>.broadcast();
+  final StreamController<dynamic> _rawMessageController =
+      StreamController<dynamic>.broadcast();
 
   Stream<String> get notificationStream => _notificationController.stream;
+  Stream<dynamic> get rawMessageStream => _rawMessageController.stream;
 
   WebSocketNotifier() : super(null) {
     // Don't connect immediately - wait for login
   }
 
-  // Call this after successful login
-  void initializeAfterLogin() {
+  /// Pastikan WebSocket terhubung dan server mencatat presence (JWT).
+  /// [authToken] jika diisi, diset ke [NetworkConfig] sebelum connect/handshake.
+  void ensureConnected({String? authToken}) {
+    if (authToken != null && authToken.isNotEmpty) {
+      NetworkConfig.setAuthToken(authToken);
+    }
     if (!_isLoggedIn) {
       _isLoggedIn = true;
-      connect();
     }
+    if (_channel == null && !_isReconnecting) {
+      connect();
+    } else {
+      _schedulePresenceHandshake();
+    }
+  }
+
+  // Call this after successful login
+  void initializeAfterLogin() {
+    ensureConnected();
+  }
+
+  void _schedulePresenceHandshake() {
+    _presenceRetryTimer?.cancel();
+    var attempt = 0;
+    void tick() {
+      attempt++;
+      final t = NetworkConfig.authToken;
+      if (t != null && t.isNotEmpty && _channel != null) {
+        try {
+          _channel!.sink.add(
+            jsonEncode(<String, dynamic>{'type': 'presence', 'token': t}),
+          );
+          debugPrint('🔌 WebSocket: presence handshake sent');
+        } catch (e) {
+          debugPrint('🔌 WebSocket: presence send failed: $e');
+        }
+        return;
+      }
+      if (attempt < _maxPresenceAttempts) {
+        _presenceRetryTimer = Timer(
+          Duration(milliseconds: 60 * attempt),
+          tick,
+        );
+      }
+    }
+
+    _presenceRetryTimer = Timer(Duration.zero, tick);
   }
 
   void connect() {
     if (_isReconnecting) return;
 
-    final wsUrl = NetworkConfig.wsUrl;
+    var wsUri = Uri.parse(NetworkConfig.wsUrl);
+    final token = NetworkConfig.authToken;
+    if (token != null && token.isNotEmpty) {
+      final q = Map<String, String>.from(wsUri.queryParameters);
+      q['token'] = token;
+      wsUri = wsUri.replace(queryParameters: q);
+    }
 
-    debugPrint('🔌 WebSocket: Attempting to connect to $wsUrl');
+    final wsEndpoint =
+        '${wsUri.scheme}://${wsUri.host}${wsUri.hasPort ? ':${wsUri.port}' : ''}${wsUri.path}';
+    debugPrint(
+      '🔌 WebSocket: connect $wsEndpoint auth=${token != null && token.isNotEmpty}',
+    );
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      _channel = WebSocketChannel.connect(wsUri);
       state = _channel;
-      debugPrint('🔌 WebSocket: Connection initiated to $wsUrl');
+      debugPrint('🔌 WebSocket: Connection initiated to $wsEndpoint');
 
       // Listen for messages
       _channel!.stream.listen(
         (message) {
           debugPrint('🔌 WebSocket: Received message: $message');
+          // Fan-out raw messages so multiple consumers can listen safely.
+          _rawMessageController.add(message);
           try {
             final data = jsonDecode(message);
             if (data['type'] == 'notification') {
@@ -72,21 +130,22 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
           _reconnectAttempts = 0;
         },
         onError: (error) {
-          debugPrint('🔌 WebSocket: Error on $wsUrl: $error');
-          _handleConnectionError('WebSocket error on $wsUrl: $error');
+          debugPrint('🔌 WebSocket: Error on $wsEndpoint: $error');
+          _handleConnectionError('WebSocket error on $wsEndpoint: $error');
         },
         onDone: () {
-          debugPrint('🔌 WebSocket: Connection closed for $wsUrl');
+          debugPrint('🔌 WebSocket: Connection closed for $wsEndpoint');
           _handleConnectionClosed();
         },
       );
 
       _isReconnecting = false;
-      debugPrint('🔌 WebSocket: Successfully connected to $wsUrl');
+      debugPrint('🔌 WebSocket: Successfully connected to $wsEndpoint');
+      _schedulePresenceHandshake();
       return;
     } catch (e) {
-      debugPrint('🔌 WebSocket: Failed to connect to $wsUrl: $e');
-      _handleConnectionError('Failed to connect to WebSocket $wsUrl: $e');
+      debugPrint('🔌 WebSocket: Failed to connect to $wsEndpoint: $e');
+      _handleConnectionError('Failed to connect to WebSocket $wsEndpoint: $e');
     }
   }
 
@@ -122,10 +181,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     // Dalam production, ini akan digantikan dengan WebSocket messages
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      // Simulate order updates every 30 seconds
-      if (mounted) {
-        // Mock update logic here
-      }
+      // Simulate order updates every 30 seconds (placeholder)
     });
   }
 
@@ -141,6 +197,8 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   }
 
   void disconnect() {
+    _presenceRetryTimer?.cancel();
+    _presenceRetryTimer = null;
     _reconnectTimer?.cancel();
     _channel?.sink.close(status.goingAway);
     _channel = null;
@@ -153,6 +211,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   void dispose() {
     disconnect();
     _notificationController.close();
+    _rawMessageController.close();
     super.dispose();
   }
 
@@ -165,9 +224,10 @@ final realTimeOrderUpdatesProvider = StreamProvider<Map<String, dynamic>>((
   ref,
 ) {
   final webSocketChannel = ref.watch(webSocketProvider);
+  final webSocketNotifier = ref.watch(webSocketProvider.notifier);
 
   if (webSocketChannel != null) {
-    return webSocketChannel.stream.map((message) {
+    return webSocketNotifier.rawMessageStream.map((message) {
       try {
         if (message is String) {
           final data = jsonDecode(message) as Map<String, dynamic>;

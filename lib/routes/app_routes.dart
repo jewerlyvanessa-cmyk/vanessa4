@@ -3,8 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:io';
-
-import '../data/api_service.dart';
+import '../features/auth/domain/auth_repository.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -15,6 +14,7 @@ import '../modules/cs/pages/buyback_page.dart';
 import '../modules/cs/pages/service_page.dart';
 import '../modules/cs/pages/ambil_page.dart';
 import '../modules/cs/pages/custom_page.dart';
+import '../modules/cs/pages/customers_page.dart';
 import '../modules/kasir/pages/main_page.dart';
 import '../modules/superadmin/pages/main_page.dart';
 import '../modules/dashboard/pages/main_page.dart';
@@ -27,6 +27,7 @@ import '../modules/manajer/pages/branch_performance_page.dart';
 import '../modules/manajer/pages/sales_report_today_page.dart';
 import '../modules/manajer/pages/global_stock_page.dart';
 import '../modules/manajer/pages/simple_protected_page.dart';
+import '../modules/manajer/pages/users_page.dart';
 import '../modules/stockist/pages/main_page.dart';
 import '../pages/switch_branch_role_page.dart';
 import 'package:vanessa3/main.dart'; // Import global userStateProvider
@@ -42,6 +43,7 @@ class AppRoutes {
   static const String adminToko = '/admin_toko';
   static const String adminWorkshop = '/admin_workshop';
   static const String manajer = '/manager';
+  static const String customers = '/customers';
   static const String manajerCompletedOrdersToday = '/manager/completed_orders_today';
   static const String manajerBranchPerformance = '/manager/branch_performance';
   static const String manajerSalesToday = '/manager/sales_today';
@@ -65,11 +67,7 @@ class AppRoutes {
     manajerBranchPerformance: (context) => const BranchPerformancePage(),
     manajerSalesToday: (context) => const SalesReportTodayPage(),
     manajerGlobalStock: (context) => const GlobalStockPage(),
-    manajerEmployees: (context) => const SimpleProtectedPage(
-          title: 'Manajemen Karyawan',
-          description:
-              'Halaman ini siap digunakan, namun endpoint karyawan saat ini hanya mengizinkan role tertentu.\n\nJika Anda ingin manajer bisa melihat daftar karyawan, kita perlu menambahkan izin role manajer di backend.',
-        ),
+    manajerEmployees: (context) => const ManagerUsersPage(),
     manajerSystemSettings: (context) => const SimpleProtectedPage(
           title: 'Pengaturan Sistem',
           description:
@@ -77,6 +75,7 @@ class AppRoutes {
         ),
     stockist: (context) => const StockistMainPage(),
     switchBranchRole: (context) => const SwitchBranchRolePage(),
+    customers: (context) => const CustomersPage(),
     '/jual': (context) => const JualPage(),
     '/buyback': (context) => const BuybackPage(),
     '/service': (context) => const ServicePage(),
@@ -115,7 +114,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       final password = passwordController.text;
 
       try {
-        final result = await ApiService.login(username, password);
+        final result = await const AuthRepository().login(username, password);
 
         if (result['success'] == true) {
           // Handle navigation based on user's primary role and branch

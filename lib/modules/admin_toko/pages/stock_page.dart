@@ -18,6 +18,14 @@ class _StockPageState extends ConsumerState<StockPage> {
   String _error = '';
   String _selectedStatus = 'all'; // all, ready, reserved, sold, buyback
 
+  String? _normalizePhotoUrl(dynamic raw) {
+    final s = raw?.toString().trim();
+    if (s == null || s.isEmpty) return null;
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    if (s.startsWith('/')) return '${NetworkConfig.baseUrl}$s';
+    return '${NetworkConfig.baseUrl}/uploads/$s';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -612,20 +620,21 @@ class _StockPageState extends ConsumerState<StockPage> {
                           vertical: 4,
                         ),
                         child: ListTile(
-                          leading:
-                              item['photo_url'] != null &&
-                                  item['photo_url'].isNotEmpty
-                              ? CircleAvatar(
-                                  backgroundImage: NetworkImage(
-                                    item['photo_url'],
-                                  ),
-                                  onBackgroundImageError:
-                                      (exception, stackTrace) =>
-                                          const Icon(Icons.inventory),
-                                )
-                              : const CircleAvatar(
-                                  child: Icon(Icons.inventory),
-                                ),
+                          leading: (() {
+                            final url = _normalizePhotoUrl(
+                              item['photo_produk'] ?? item['photo_url'],
+                            );
+                            if (url == null) {
+                              return const CircleAvatar(
+                                child: Icon(Icons.inventory),
+                              );
+                            }
+                            return CircleAvatar(
+                              backgroundImage: NetworkImage(url),
+                              onBackgroundImageError: (exception, stackTrace) =>
+                                  const Icon(Icons.inventory),
+                            );
+                          })(),
                           title: Text(item['name'] ?? 'Unknown'),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -734,12 +743,12 @@ class _StockPageState extends ConsumerState<StockPage> {
               _buildDetailRow('Kategori', item['kategori'] ?? '-'),
               _buildDetailRow('Jenis', item['jenis'] ?? '-'),
               _buildDetailRow('Tipe', item['tipe'] ?? '-'),
-              if (item['photo_url'] != null && item['photo_url'].isNotEmpty)
+              if (_normalizePhotoUrl(item['photo_produk'] ?? item['photo_url']) != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: Center(
                     child: Image.network(
-                      item['photo_url'],
+                      _normalizePhotoUrl(item['photo_produk'] ?? item['photo_url'])!,
                       height: 150,
                       width: 150,
                       fit: BoxFit.cover,

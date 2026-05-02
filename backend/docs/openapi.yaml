@@ -1,0 +1,820 @@
+openapi: 3.0.3
+info:
+  title: Vanessa API
+  description: |
+    OpenAPI contract untuk backend Vanessa.
+
+    Fokus awal: endpoint yang sudah dipakai oleh Flutter app (login, kasir/payments, health, workshop).
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev (default backend/server.js)
+  - url: https://{host}:{port}
+    description: Production / reverse-proxy
+    variables:
+      host:
+        default: kumpulandoa.my.id
+      port:
+        default: "4000"
+
+tags:
+  - name: Auth
+  - name: Health
+  - name: Orders
+  - name: Payments
+  - name: Workshop
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+        detail:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          example: secret
+
+    LoginBranch:
+      type: object
+      properties:
+        branch_id:
+          oneOf:
+            - type: integer
+            - type: string
+        name:
+          type: string
+        initials:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+
+    LoginResponse:
+      type: object
+      required: [success, user_id, username, role, branch, roles, branches, token]
+      properties:
+        success:
+          type: boolean
+          example: true
+        user_id:
+          oneOf:
+            - type: integer
+            - type: string
+          example: 1
+        username:
+          type: string
+          example: admin
+        role:
+          type: string
+          example: kasir
+        branch:
+          oneOf:
+            - type: integer
+            - type: string
+          example: 1
+        mainModule:
+          type: string
+          nullable: true
+          example: kasir
+        roles:
+          type: array
+          items:
+            type: string
+        branches:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoginBranch'
+        token:
+          type: string
+          description: JWT access token
+
+    HealthResponse:
+      type: object
+      required: [status, timestamp, services]
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        services:
+          type: object
+          additionalProperties: true
+          properties:
+            database:
+              type: string
+              example: connected
+            websocket:
+              type: string
+              example: running
+        error:
+          type: string
+
+    PendingPaymentOrder:
+      type: object
+      required:
+        - order_id
+        - order_type
+        - total
+        - diskon
+        - created_at
+        - updated_at
+        - customer_name
+      properties:
+        order_id:
+          type: string
+          example: "123"
+        order_number:
+          type: string
+          nullable: true
+        order_type:
+          type: string
+          example: jual
+        total:
+          type: number
+          format: float
+          example: 1500000
+        diskon:
+          type: number
+          format: float
+          example: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        customer_name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        item_name:
+          type: string
+          nullable: true
+        quantity:
+          type: integer
+          example: 1
+        weight:
+          type: number
+          format: float
+          example: 0
+        material:
+          type: string
+          nullable: true
+
+    PaymentCreateRequest:
+      type: object
+      required: [order_id, amount, method, user_id, branch_id]
+      properties:
+        order_id:
+          oneOf:
+            - type: integer
+            - type: string
+          example: 123
+        amount:
+          type: number
+          format: float
+          example: 1500000
+        method:
+          type: string
+          description: payment method
+          example: cash
+        notes:
+          type: string
+          nullable: true
+        user_id:
+          oneOf:
+            - type: integer
+            - type: string
+          example: 1
+        branch_id:
+          oneOf:
+            - type: integer
+            - type: string
+          example: 1
+
+    PaymentRecord:
+      type: object
+      additionalProperties: true
+      properties:
+        payment_id:
+          oneOf:
+            - type: integer
+            - type: string
+        order_id:
+          oneOf:
+            - type: integer
+            - type: string
+        amount:
+          type: number
+          format: float
+        method:
+          type: string
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PaymentCreateResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Pembayaran berhasil dicatat
+        payment:
+          $ref: '#/components/schemas/PaymentRecord'
+
+    DailyPaymentTransaction:
+      type: object
+      required: [payment_id, order_id, amount, payment_method, status, created_at, updated_at]
+      properties:
+        payment_id:
+          type: string
+        order_id:
+          type: string
+        amount:
+          type: number
+          format: float
+        payment_method:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        order_number:
+          type: string
+          nullable: true
+        order_type:
+          type: string
+          nullable: true
+        customer_name:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+
+    DailyPaymentsSummary:
+      type: object
+      required: [total_payments, total_amount, cash_payments, transfer_payments, qris_payments]
+      properties:
+        total_payments:
+          type: integer
+        total_amount:
+          type: number
+          format: float
+        cash_payments:
+          type: integer
+        transfer_payments:
+          type: integer
+        qris_payments:
+          type: integer
+
+    DailyPaymentsResponse:
+      type: object
+      required: [transactions, summary]
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyPaymentTransaction'
+        summary:
+          $ref: '#/components/schemas/DailyPaymentsSummary'
+
+    WorkshopWorkQueueItem:
+      type: object
+      description: Raw row dari tabel orders (sesuai query work-queue)
+      additionalProperties: true
+
+    WorkshopMaterialStockItem:
+      type: object
+      required: [item_id, name, material, purity, kategori, weight, quantity, status, updated_at]
+      properties:
+        item_id:
+          type: string
+        name:
+          type: string
+        material:
+          type: string
+        purity:
+          type: string
+          nullable: true
+        kategori:
+          type: string
+          nullable: true
+        weight:
+          type: number
+          format: float
+        quantity:
+          type: integer
+        status:
+          type: string
+        location:
+          type: string
+          nullable: true
+        min_stock:
+          type: integer
+        supplier:
+          type: string
+          nullable: true
+        price_per_unit:
+          type: number
+          format: float
+        updated_at:
+          type: string
+          format: date-time
+
+paths:
+  /login:
+    post:
+      tags: [Auth]
+      summary: Login dan ambil session awal (role/branch utama + token)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Username/password salah
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check (DB + websocket status)
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '500':
+          description: Unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /orders/pending-payment:
+    get:
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      summary: Ambil daftar order yang belum dibayar (kasir)
+      parameters:
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+          description: Branch ID aktif
+      responses:
+        '200':
+          description: Daftar order pending payment
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PendingPaymentOrder'
+        '400':
+          description: branch_id tidak ada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized (token invalid/expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments:
+    post:
+      tags: [Payments]
+      security:
+        - bearerAuth: []
+      summary: Catat pembayaran untuk order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreateRequest'
+      responses:
+        '201':
+          description: Pembayaran tercatat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentCreateResponse'
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized (token invalid/expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/daily-summary:
+    get:
+      tags: [Payments]
+      security:
+        - bearerAuth: []
+      summary: Ringkasan pembayaran harian per branch (dan dapat difilter tanggal)
+      parameters:
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: date
+          required: false
+          schema:
+            type: string
+            example: '2026-04-29'
+          description: Default hari ini (server time) bila tidak diisi
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+          description: |
+            Opsional untuk filter transaksi milik user tertentu.
+            (Catatan: implementasi backend saat ini mungkin belum memfilter user_id.)
+      responses:
+        '200':
+          description: Ringkasan harian
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyPaymentsResponse'
+        '400':
+          description: branch_id tidak ada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized (token invalid/expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/work-queue:
+    get:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Antrian pekerjaan workshop (order status in_workshop/custom_work)
+      parameters:
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List order untuk work queue
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkshopWorkQueueItem'
+        '400':
+          description: branch_id tidak ada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/material-stock:
+    get:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Stock material non-inventory untuk workshop
+      parameters:
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List items material stock
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkshopMaterialStockItem'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/reports:
+    get:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Laporan workshop per periode (month/week/year)
+      parameters:
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: period
+          required: false
+          schema:
+            type: string
+            enum: [week, month, year]
+            default: month
+      responses:
+        '200':
+          description: Laporan workshop
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/update-progress:
+    post:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Update progress pekerjaan workshop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/update-stock:
+    post:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Update stock material workshop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/work-history:
+    get:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Riwayat pekerjaan workshop
+      parameters:
+        - in: query
+          name: technician_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: period
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Work history list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/workshop/technician-reports:
+    get:
+      tags: [Workshop]
+      security:
+        - bearerAuth: []
+      summary: Laporan per teknisi
+      parameters:
+        - in: query
+          name: technician_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: branch_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: period
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Technician report
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error internal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

@@ -212,6 +212,243 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
 class CustomersPage extends ConsumerWidget {
   const CustomersPage({super.key});
 
+  bool _canSeeGlobalTransactions(String roleRaw) {
+    final role = roleRaw.trim().toLowerCase();
+    return role == 'manajer' || role == 'admin_toko';
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchCustomerTransactions({
+    required String customerId,
+    String? branchId,
+  }) async {
+    final uri = Uri.parse(
+      '${NetworkConfig.baseUrl}/api/customers/$customerId/transactions',
+    ).replace(
+      queryParameters: (branchId == null || branchId.toString().trim().isEmpty)
+          ? null
+          : {'branch_id': branchId},
+    );
+
+    final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (response.statusCode != 200) {
+      throw Exception('Gagal memuat riwayat transaksi (${response.statusCode})');
+    }
+    final data = json.decode(response.body);
+    if (data is! List) return <Map<String, dynamic>>[];
+    return List<Map<String, dynamic>>.from(
+      data.map((e) => Map<String, dynamic>.from(e as Map)),
+    );
+  }
+
+  String _fmtRp(dynamic v) {
+    final n = double.tryParse(v?.toString() ?? '');
+    if (n == null) return '0';
+    final s = n.toStringAsFixed(0);
+    return s.replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (Match m) => '${m[1]}.',
+    );
+  }
+
+  String _fmtDateTime(dynamic v) {
+    try {
+      final dt = DateTime.tryParse(v?.toString() ?? '');
+      if (dt == null) return '-';
+      final y = dt.year.toString().padLeft(4, '0');
+      final m = dt.month.toString().padLeft(2, '0');
+      final d = dt.day.toString().padLeft(2, '0');
+      final hh = dt.hour.toString().padLeft(2, '0');
+      final mm = dt.minute.toString().padLeft(2, '0');
+      return '$y-$m-$d $hh:$mm';
+    } catch (_) {
+      return '-';
+    }
+  }
+
+  void _showCustomerTransactions(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> customer,
+  ) {
+    final userState = ref.read(userStateProvider);
+    if (!_canSeeGlobalTransactions(userState.role)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Riwayat transaksi hanya untuk Manajer & Admin Toko'),
+        ),
+      );
+      return;
+    }
+
+    final customerId = (customer['customer_id'] ?? '').toString();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: SizedBox(
+              height: MediaQuery.of(context).size.height * 0.8,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    customer['name'] ?? 'Pelanggan',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '📞 ${customer['phone'] ?? 'N/A'}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Riwayat Transaksi (Global)',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Refresh',
+                        onPressed: () {
+                          // Rebuild by popping and reopening (simple & reliable)
+                          Navigator.of(context).pop();
+                          _showCustomerTransactions(context, ref, customer);
+                        },
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 1),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: FutureBuilder<List<Map<String, dynamic>>>(
+                      future: _fetchCustomerTransactions(
+                        customerId: customerId,
+                        // Global lintas cabang: tanpa filter branch_id
+                        branchId: null,
+                      ),
+                      builder: (context, snap) {
+                        if (snap.connectionState == ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        if (snap.hasError) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.error_outline,
+                                  size: 56,
+                                  color: Colors.red,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  snap.error.toString(),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        final rows = snap.data ?? const [];
+                        if (rows.isEmpty) {
+                          return const Center(
+                            child: Text('Belum ada transaksi untuk pelanggan ini'),
+                          );
+                        }
+
+                        return ListView.separated(
+                          itemCount: rows.length,
+                          separatorBuilder: (context, index) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, i) {
+                            final r = rows[i];
+                            final orderId = (r['order_id'] ?? 'N/A').toString();
+                            final orderType = (r['order_type'] ?? '').toString();
+                            final orderStatus =
+                                (r['order_status'] ?? '').toString();
+                            final paymentStatus =
+                                (r['payment_status'] ?? '').toString();
+                            final method =
+                                (r['payment_method'] ?? '').toString();
+                            final amount = r['jumlah'] ?? r['total'] ?? 0;
+
+                            final paidLabel = paymentStatus.isEmpty
+                                ? 'Belum bayar'
+                                : paymentStatus;
+
+                            return Card(
+                              child: ListTile(
+                                title: Text(
+                                  'Order #$orderId'
+                                  '${orderType.isNotEmpty ? ' • $orderType' : ''}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const SizedBox(height: 4),
+                                    Text('Tanggal: ${_fmtDateTime(r['created_at'])}'),
+                                    Text('Status order: ${orderStatus.isEmpty ? '-' : orderStatus}'),
+                                    Text(
+                                      'Pembayaran: $paidLabel'
+                                      '${method.isNotEmpty ? ' • $method' : ''}',
+                                    ),
+                                    if ((r['payment_date'] ?? '').toString().isNotEmpty)
+                                      Text(
+                                        'Tgl bayar: ${_fmtDateTime(r['payment_date'])}',
+                                      ),
+                                  ],
+                                ),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      'Rp ${_fmtRp(amount)}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Total',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   String? _validateName(String? value) {
     if (value == null || value.trim().isEmpty) {
       return 'Nama tidak boleh kosong';
@@ -551,6 +788,15 @@ class CustomersPage extends ConsumerWidget {
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
+                          onTap: _canSeeGlobalTransactions(
+                            (ref.read(userStateProvider).role),
+                          )
+                              ? () => _showCustomerTransactions(
+                                    context,
+                                    ref,
+                                    customer,
+                                  )
+                              : null,
                           leading: CircleAvatar(
                             backgroundColor: Colors.blue,
                             child: Text(

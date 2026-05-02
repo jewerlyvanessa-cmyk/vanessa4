@@ -20,6 +20,54 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
   String _searchQuery = '';
   String? _statusFilter;
 
+  Future<void> _confirmDeleteBranch(Map<String, dynamic> branch) async {
+    final branchId = branch['branch_id']?.toString() ?? '';
+    final branchName = branch['name']?.toString() ?? 'Cabang';
+    if (branchId.isEmpty) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Cabang'),
+        content: Text(
+          'Yakin ingin menghapus cabang "$branchName"?\n\n'
+          'Aksi ini tidak bisa dibatalkan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      await _apiService.deleteBranch(branchId);
+      if (!mounted) return;
+      await _loadBranches();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cabang berhasil dihapus')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal hapus cabang: $e')),
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -425,6 +473,14 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                                       IconButton(
                                         icon: const Icon(Icons.edit),
                                         onPressed: () => _showBranchForm(branch: branch),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Hapus',
+                                        icon: Icon(
+                                          Icons.delete,
+                                          color: Theme.of(context).colorScheme.error,
+                                        ),
+                                        onPressed: () => _confirmDeleteBranch(branch),
                                       ),
                                     ],
                                   ),

@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "migrate:create": "node-pg-migrate create --migrations-dir backend/migrations_js",
+    "migrate:up": "node-pg-migrate up --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
+    "migrate:down": "node-pg-migrate down --config backend/migrate.config.cjs --migrations-dir backend/migrations_js"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.1",
@@ -13,5 +18,8 @@
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^8.0.4"
   }
 }

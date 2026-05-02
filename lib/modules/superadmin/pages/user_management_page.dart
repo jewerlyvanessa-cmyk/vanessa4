@@ -19,12 +19,40 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   bool isLoading = true;
   String? error;
 
+  bool get _isSuperadmin {
+    final role = ref.read(userStateProvider).role.toString().trim().toLowerCase();
+    return role == 'superadmin';
+  }
+
+  bool get _canSuperadminOrManajer {
+    final role = ref.read(userStateProvider).role.toString().trim().toLowerCase();
+    return role == 'superadmin' || role == 'manajer';
+  }
+
+  Future<void> _runGuarded(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     apiService = UserApiService(baseUrl: NetworkConfig.baseUrl);
     fetchUsers();
     fetchBranches();
+  }
+
+  String _branchLabel(Map<String, dynamic> branch) {
+    final name = (branch['name'] ?? 'Unknown Branch').toString();
+    final code = (branch['code'] ?? '').toString().trim();
+    if (code.isEmpty) return name;
+    return '$name ($code)';
   }
 
   Future<void> fetchUsers() async {
@@ -51,42 +79,98 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   Future<void> addUser(Map<String, dynamic> user) async {
-    final success = await apiService.addUser(user);
-    if (success) fetchUsers();
+    await _runGuarded(() async {
+      if (!_isSuperadmin) {
+        throw Exception('Akses ditolak: hanya superadmin yang bisa menambah user.');
+      }
+      final success = await apiService.addUser(user);
+      if (success) fetchUsers();
+    });
   }
 
   Future<void> updateUser(String id, Map<String, dynamic> user) async {
-    final success = await apiService.updateUser(id, user);
-    if (success) fetchUsers();
+    await _runGuarded(() async {
+      if (!_isSuperadmin) {
+        throw Exception('Akses ditolak: hanya superadmin yang bisa mengedit user.');
+      }
+      final success = await apiService.updateUser(id, user);
+      if (success) fetchUsers();
+    });
   }
 
   Future<void> deleteUser(String id) async {
-    final success = await apiService.deleteUser(id);
-    if (success) fetchUsers();
+    await _runGuarded(() async {
+      if (!_isSuperadmin) {
+        throw Exception('Akses ditolak: hanya superadmin yang bisa menghapus user.');
+      }
+      final success = await apiService.deleteUser(id);
+      if (success) fetchUsers();
+    });
+  }
+
+  Future<void> updateUserPassword(String id, String newPassword) async {
+    await _runGuarded(() async {
+      if (!_canSuperadminOrManajer) {
+        throw Exception('Akses ditolak: hanya superadmin dan manajer yang bisa mengedit password.');
+      }
+      final success = await apiService.updateUserPassword(id, newPassword);
+      if (success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password berhasil diperbarui.')),
+        );
+      }
+    });
+  }
+
+  Future<void> updateUserStatus(String id, String status) async {
+    await _runGuarded(() async {
+      if (!_canSuperadminOrManajer) {
+        throw Exception('Akses ditolak: hanya superadmin dan manajer yang bisa mengubah status user.');
+      }
+      final success = await apiService.updateUserStatus(id, status);
+      if (success) {
+        fetchUsers();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Status user berhasil diperbarui.')),
+          );
+        }
+      }
+    });
   }
 
   Future<void> addUserBranchRole(String userId, Map<String, dynamic> branchRole) async {
-    final success = await apiService.addUserBranchRole(userId, branchRole);
-    if (success) {
-      fetchUsers();
-      // If the user being modified is the current logged-in user, refresh their data
-      final currentUserId = ref.read(userStateProvider).userId?.toString();
-      if (currentUserId == userId) {
-        await _refreshCurrentUserData();
+    await _runGuarded(() async {
+      if (!_isSuperadmin) {
+        throw Exception('Akses ditolak: hanya superadmin yang bisa mengubah branch/role user.');
       }
-    }
+      final success = await apiService.addUserBranchRole(userId, branchRole);
+      if (success) {
+        fetchUsers();
+        // If the user being modified is the current logged-in user, refresh their data
+        final currentUserId = ref.read(userStateProvider).userId?.toString();
+        if (currentUserId == userId) {
+          await _refreshCurrentUserData();
+        }
+      }
+    });
   }
 
   Future<void> removeUserBranchRole(String userId, String branchId, String role) async {
-    final success = await apiService.removeUserBranchRole(userId, branchId, role);
-    if (success) {
-      fetchUsers();
-      // If the user being modified is the current logged-in user, refresh their data
-      final currentUserId = ref.read(userStateProvider).userId?.toString();
-      if (currentUserId == userId) {
-        await _refreshCurrentUserData();
+    await _runGuarded(() async {
+      if (!_isSuperadmin) {
+        throw Exception('Akses ditolak: hanya superadmin yang bisa mengubah branch/role user.');
       }
-    }
+      final success = await apiService.removeUserBranchRole(userId, branchId, role);
+      if (success) {
+        fetchUsers();
+        // If the user being modified is the current logged-in user, refresh their data
+        final currentUserId = ref.read(userStateProvider).userId?.toString();
+        if (currentUserId == userId) {
+          await _refreshCurrentUserData();
+        }
+      }
+    });
   }
 
   Future<void> _refreshCurrentUserData() async {
@@ -111,6 +195,15 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   Future<void> showUserForm({Map<String, dynamic>? user}) async {
+    if (!_isSuperadmin) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Akses ditolak: hanya superadmin yang bisa mengubah data user.'),
+        ),
+      );
+      return;
+    }
     final formKey = GlobalKey<FormState>();
     String username = user?['username'] ?? '';
     String password = '';
@@ -150,7 +243,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                     items: branches.map((branch) {
                       return DropdownMenuItem(
                         value: branch['branch_id'].toString(),
-                        child: Text(branch['name'] ?? 'Unknown Branch'),
+                        child: Text(_branchLabel(branch)),
                       );
                     }).toList(),
                     validator: (v) => v == null || v.isEmpty ? 'Branch wajib dipilih' : null,
@@ -237,7 +330,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                   items: branches.map((branch) {
                     return DropdownMenuItem(
                       value: branch['branch_id'].toString(),
-                      child: Text(branch['name'] ?? 'Unknown Branch'),
+                      child: Text(_branchLabel(branch)),
                     );
                   }).toList(),
                   validator: (v) => v == null || v.isEmpty ? 'Branch wajib dipilih' : null,
@@ -294,6 +387,9 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isSuperadmin = ref.watch(userStateProvider).role.toString().trim().toLowerCase() == 'superadmin';
+    final canSuperadminOrManajer = ref.watch(userStateProvider).role.toString().trim().toLowerCase() == 'superadmin' ||
+        ref.watch(userStateProvider).role.toString().trim().toLowerCase() == 'manajer';
     return Scaffold(
       appBar: AppBar(
         title: const Text('Manajemen User'),
@@ -320,7 +416,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                           ElevatedButton.icon(
                             icon: const Icon(Icons.add),
                             label: const Text('Tambah User'),
-                            onPressed: () => showUserForm(),
+                            onPressed: isSuperadmin ? () => showUserForm() : null,
                           ),
                         ],
                       ),
@@ -360,11 +456,13 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                                     subtitle: Text('Role: ${branch['role'] ?? 'Unknown'}'),
                                     trailing: IconButton(
                                       icon: const Icon(Icons.delete, color: Colors.red),
-                                      onPressed: () => removeUserBranchRole(
-                                        user['user_id'].toString(),
-                                        branch['branch_id'].toString(),
-                                        branch['role'],
-                                      ),
+                                      onPressed: isSuperadmin
+                                          ? () => removeUserBranchRole(
+                                                user['user_id'].toString(),
+                                                branch['branch_id'].toString(),
+                                                branch['role'],
+                                              )
+                                          : null,
                                     ),
                                   )),
                                 ],
@@ -378,19 +476,147 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                                         child: ElevatedButton.icon(
                                           icon: const Icon(Icons.add),
                                           label: const Text('Tambah Branch & Role'),
-                                          onPressed: () => showAddBranchRoleDialog(user['user_id'].toString()),
+                                          onPressed: isSuperadmin
+                                              ? () => showAddBranchRoleDialog(user['user_id'].toString())
+                                              : null,
                                         ),
                                       ),
                                       const SizedBox(width: 8),
                                       IconButton(
                                         icon: const Icon(Icons.edit),
                                         tooltip: 'Edit User',
-                                        onPressed: () => showUserForm(user: user),
+                                        onPressed: isSuperadmin ? () => showUserForm(user: user) : null,
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.toggle_on_outlined),
+                                        tooltip: 'Ubah Status',
+                                        onPressed: canSuperadminOrManajer
+                                            ? () async {
+                                                final current = (user['status'] ?? 'active').toString().trim().toLowerCase();
+                                                String selected = current == 'inactive' ? 'inactive' : 'active';
+
+                                                final ok = await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (context) => StatefulBuilder(
+                                                    builder: (context, setLocal) {
+                                                      return AlertDialog(
+                                                        title: const Text('Ubah Status'),
+                                                        content: Column(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                                          children: [
+                                                            Text('User: ${user['username'] ?? ''}'),
+                                                            const SizedBox(height: 12),
+                                                            DropdownButtonFormField<String>(
+                                                              value: selected,
+                                                              decoration: const InputDecoration(labelText: 'Status'),
+                                                              items: const [
+                                                                DropdownMenuItem(value: 'active', child: Text('Aktif')),
+                                                                DropdownMenuItem(value: 'inactive', child: Text('Nonaktif')),
+                                                              ],
+                                                              onChanged: (v) {
+                                                                if (v != null) setLocal(() => selected = v);
+                                                              },
+                                                            ),
+                                                          ],
+                                                        ),
+                                                        actions: [
+                                                          TextButton(
+                                                            onPressed: () => Navigator.pop(context, false),
+                                                            child: const Text('Batal'),
+                                                          ),
+                                                          ElevatedButton(
+                                                            onPressed: () => Navigator.pop(context, true),
+                                                            child: const Text('Simpan'),
+                                                          ),
+                                                        ],
+                                                      );
+                                                    },
+                                                  ),
+                                                );
+
+                                                if (ok == true) {
+                                                  await updateUserStatus(user['user_id'].toString(), selected);
+                                                }
+                                              }
+                                            : null,
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.lock_reset),
+                                        tooltip: 'Ubah Password',
+                                        onPressed: canSuperadminOrManajer
+                                            ? () async {
+                                                final passKey = GlobalKey<FormState>();
+                                                String p1 = '';
+                                                String p2 = '';
+
+                                                final ok = await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (context) => AlertDialog(
+                                                    title: const Text('Ubah Password'),
+                                                    content: Form(
+                                                      key: passKey,
+                                                      child: Column(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                          Text('User: ${user['username'] ?? ''}'),
+                                                          const SizedBox(height: 12),
+                                                          TextFormField(
+                                                            decoration: const InputDecoration(labelText: 'Password baru'),
+                                                            obscureText: true,
+                                                            validator: (v) {
+                                                              final s = (v ?? '').trim();
+                                                              if (s.isEmpty) return 'Password wajib diisi';
+                                                              if (s.length < 4) return 'Minimal 4 karakter';
+                                                              return null;
+                                                            },
+                                                            onChanged: (v) => p1 = v,
+                                                          ),
+                                                          TextFormField(
+                                                            decoration: const InputDecoration(labelText: 'Ulangi password baru'),
+                                                            obscureText: true,
+                                                            validator: (v) {
+                                                              final s = (v ?? '').trim();
+                                                              if (s.isEmpty) return 'Konfirmasi password wajib diisi';
+                                                              if (s != p1) return 'Password tidak sama';
+                                                              return null;
+                                                            },
+                                                            onChanged: (v) => p2 = v,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () => Navigator.pop(context, false),
+                                                        child: const Text('Batal'),
+                                                      ),
+                                                      ElevatedButton(
+                                                        onPressed: () {
+                                                          if (passKey.currentState?.validate() ?? false) {
+                                                            Navigator.pop(context, true);
+                                                          }
+                                                        },
+                                                        child: const Text('Simpan'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+
+                                                if (ok == true) {
+                                                  await updateUserPassword(
+                                                    user['user_id'].toString(),
+                                                    p2.trim(),
+                                                  );
+                                                }
+                                              }
+                                            : null,
                                       ),
                                       IconButton(
                                         icon: const Icon(Icons.delete),
                                         tooltip: 'Hapus User',
-                                        onPressed: () async {
+                                        onPressed: isSuperadmin
+                                            ? () async {
                                           final confirm = await showDialog<bool>(
                                             context: context,
                                             builder: (context) => AlertDialog(
@@ -411,7 +637,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                                           if (confirm == true) {
                                             await deleteUser(user['user_id'].toString());
                                           }
-                                        },
+                                        }
+                                            : null,
                                       ),
                                     ],
                                   ),

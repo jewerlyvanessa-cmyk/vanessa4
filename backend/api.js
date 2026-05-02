@@ -1,12 +1,12 @@
 const express = require('express');
-const pool = require('./db');
+const db = require('./db');
 
 const router = express.Router();
 
 // Endpoint untuk mendapatkan semua data
 router.get('/data', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM data');
+    const result = await db.query('SELECT * FROM data');
     res.json(result.rows);
   } catch (err) {
     console.error(err.message);
@@ -18,7 +18,7 @@ router.get('/data', async (req, res) => {
 router.post('/data', async (req, res) => {
   const { name, value } = req.body;
   try {
-    const result = await pool.query(
+    const result = await db.query(
       'INSERT INTO data (name, value) VALUES ($1, $2) RETURNING *',
       [name, value]
     );
@@ -34,7 +34,7 @@ router.put('/data/:id', async (req, res) => {
   const { id } = req.params;
   const { name, value } = req.body;
   try {
-    const result = await pool.query(
+    const result = await db.query(
       'UPDATE data SET name = $1, value = $2 WHERE id = $3 RETURNING *',
       [name, value, id]
     );
@@ -49,7 +49,7 @@ router.put('/data/:id', async (req, res) => {
 router.delete('/data/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query('DELETE FROM data WHERE id = $1', [id]);
+    await db.query('DELETE FROM data WHERE id = $1', [id]);
     res.status(204).send();
   } catch (err) {
     console.error(err.message);

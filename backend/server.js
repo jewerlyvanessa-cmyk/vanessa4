@@ -4,11 +4,8 @@
 
 // PATCH endpoints dipindahkan ke bawah setelah app dan middleware
 
-require('dotenv').config({ path: require('path').join(__dirname, '.env') });
-
+const { app, port, SECRET_KEY, JWT_EXPIRES_IN } = require('./app');
 const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
 const WebSocket = require('ws');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
@@ -17,54 +14,16 @@ const path = require('path');
 const cron = require('node-cron');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
+const { authenticateToken, requireRoles } = require('./middleware/auth');
+const { emitNotification } = require('./websocket/emit');
+const { local: localStorage } = require('./storage/storage.service');
 const customersRoute = require('./routes/customers'); // Import customers route
 const apiRoutes = require('./api'); // Import new API routes
 const dashboardOrdersRoute = require('./routes/dashboard_orders'); // Import dashboard orders route
 const branchesRoute = require('./routes/branches'); // Import branches route
-const app = express();
-const port = process.env.PORT || 3000; // Update port to 3000
-const SECRET_KEY = process.env.JWT_SECRET;
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
-const allowedOrigins = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map(origin => origin.trim())
-  .filter(Boolean);
-
-// Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow server-to-server/mobile requests (no browser origin)
-    if (!origin) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error('CORS origin not allowed'));
-  },
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-app.use(bodyParser.json());
-
-if (!SECRET_KEY) {
-  throw new Error('JWT_SECRET is required. Please set it in environment variables.');
-}
-
-const allowedUploadMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const uploadExtByMime = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-function createSafeUploadFilename(file) {
-  const ext = uploadExtByMime[file.mimetype] || 'bin';
-  return `${Date.now()}-${crypto.randomUUID()}.${ext}`;
-}
+const userInfoRoute = require('./routes/userInfo');
 
 /**
  * Stockist clients send item_name as a display label "KODE - Nama" while
@@ -98,6 +57,116 @@ function roundUpToNearest5000(amount) {
   return Math.ceil(n / 5000) * 5000;
 }
 
+let _cachedItemsPhotoColumn = null; // 'photo_produk' | 'photo_url' | null
+async function getItemsPhotoColumn(client) {
+  if (_cachedItemsPhotoColumn !== null) return _cachedItemsPhotoColumn;
+  try {
+    const r = await client.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'items'
+          AND column_name IN ('photo_produk', 'photo_url')
+      `,
+      []
+    );
+    const cols = new Set(r.rows.map((x) => x.column_name));
+    if (cols.has('photo_produk')) {
+      _cachedItemsPhotoColumn = 'photo_produk';
+    } else if (cols.has('photo_url')) {
+      _cachedItemsPhotoColumn = 'photo_url';
+    } else {
+      _cachedItemsPhotoColumn = null;
+    }
+  } catch (_) {
+    _cachedItemsPhotoColumn = null;
+  }
+  return _cachedItemsPhotoColumn;
+}
+
+let _cachedPaymentsProofColumnExists = null; // boolean | null (unknown)
+async function paymentsHasProofUrlColumn(client) {
+  if (_cachedPaymentsProofColumnExists !== null) return _cachedPaymentsProofColumnExists;
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'proof_url'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedPaymentsProofColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedPaymentsProofColumnExists = false;
+  }
+  return _cachedPaymentsProofColumnExists;
+}
+
+let _cachedPaymentsValidatedByColumnExists = null; // boolean | null (unknown)
+async function paymentsHasValidatedByColumn(client) {
+  if (_cachedPaymentsValidatedByColumnExists !== null) {
+    return _cachedPaymentsValidatedByColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'validated_by'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedPaymentsValidatedByColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedPaymentsValidatedByColumnExists = false;
+  }
+  return _cachedPaymentsValidatedByColumnExists;
+}
+
+let _cachedUsersRoleColumnExists = null; // boolean | null (unknown)
+let _cachedUsersBranchIdColumnExists = null; // boolean | null (unknown)
+async function usersHasRoleAndBranchColumns(client) {
+  if (
+    _cachedUsersRoleColumnExists !== null &&
+    _cachedUsersBranchIdColumnExists !== null
+  ) {
+    return {
+      hasRole: _cachedUsersRoleColumnExists,
+      hasBranchId: _cachedUsersBranchIdColumnExists,
+    };
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name IN ('role', 'branch_id')
+      `,
+      []
+    );
+    const cols = new Set(r.rows.map((x) => x.column_name));
+    _cachedUsersRoleColumnExists = cols.has('role');
+    _cachedUsersBranchIdColumnExists = cols.has('branch_id');
+  } catch (_) {
+    _cachedUsersRoleColumnExists = false;
+    _cachedUsersBranchIdColumnExists = false;
+  }
+  return {
+    hasRole: _cachedUsersRoleColumnExists,
+    hasBranchId: _cachedUsersBranchIdColumnExists,
+  };
+}
+
 async function getOrdersJumlahColumnMode(client) {
   // Returns: 'generated' | 'plain' | 'missing'
   try {
@@ -120,28 +189,57 @@ async function getOrdersJumlahColumnMode(client) {
   }
 }
 
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+const authRequired = authenticateToken(SECRET_KEY);
 
+/** Koneksi WebSocket yang mengirim ?token=JWT — dipakai superadmin untuk melihat user aktif. */
+const wsPresenceBySocket = new Map();
+
+function tryRegisterWsPresenceFromToken(ws, token) {
+  if (!token || typeof token !== 'string') return false;
   try {
     const payload = jwt.verify(token, SECRET_KEY);
-    req.user = payload;
-    next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    const userIdRaw = payload.user_id ?? payload.id;
+    const user_id =
+      userIdRaw != null ? parseInt(String(userIdRaw), 10) : NaN;
+    if (Number.isNaN(user_id)) return false;
+    wsPresenceBySocket.set(ws, {
+      user_id,
+      username: (payload.username || '').toString(),
+      role: (payload.role || '').toString(),
+      branch_id: (payload.branch_id ?? '').toString(),
+      connected_at: new Date().toISOString(),
+    });
+    return true;
+  } catch (_) {
+    return false;
   }
-};
+}
 
-const requireRoles = (...roles) => (req, res, next) => {
-  if (!req.user?.role || !roles.includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden' });
+function getActivePresenceSnapshot() {
+  const byUser = new Map();
+  for (const meta of wsPresenceBySocket.values()) {
+    const uid = meta.user_id;
+    if (!byUser.has(uid)) {
+      byUser.set(uid, {
+        user_id: uid,
+        username: meta.username,
+        role_active: meta.role,
+        branch_id: meta.branch_id,
+        sessions: 0,
+        connected_since: meta.connected_at,
+      });
+    }
+    const row = byUser.get(uid);
+    row.sessions += 1;
+    if (meta.connected_at < row.connected_since) {
+      row.connected_since = meta.connected_at;
+    }
   }
-  next();
-};
+  const users = Array.from(byUser.values()).sort((a, b) =>
+    String(a.username).localeCompare(String(b.username)),
+  );
+  return { users, total_connections: wsPresenceBySocket.size };
+}
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -165,10 +263,10 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Integrasi file storage untuk foto dan PDF
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Folder penyimpanan
+    cb(null, path.join(__dirname, 'uploads')); // Folder penyimpanan
   },
   filename: (req, file, cb) => {
-    cb(null, createSafeUploadFilename(file));
+    cb(null, localStorage.createSafeUploadFilename(file));
   },
 });
 
@@ -176,7 +274,9 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!allowedUploadMimeTypes.has(file.mimetype)) {
+    const allowedByMime = localStorage.isAllowedUploadMimeType(file.mimetype);
+    const allowedByName = localStorage.isAllowedUploadFilename(file.originalname);
+    if (!allowedByMime && !allowedByName) {
       cb(new Error('Only JPEG, PNG, and WEBP uploads are allowed'));
       return;
     }
@@ -184,27 +284,72 @@ const upload = multer({
   },
 });
 
-app.use('/users', authenticateToken, requireRoles('superadmin'));
-app.use('/employees', authenticateToken, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
-app.use('/user-branch-roles', authenticateToken, requireRoles('superadmin'));
+// Users:
+// - superadmin: full access
+// - admin_toko/manajer: read-only (GET) for oversight
+app.use('/users', authRequired, (req, res, next) => {
+  if (req.method === 'GET') {
+    return requireRoles('superadmin', 'admin_toko', 'manajer')(req, res, next);
+  }
+  // Allow password reset and status updates for superadmin + manajer only.
+  // NOTE: Intentionally separated from full user edit (PUT) which stays superadmin-only.
+  if (req.method === 'PATCH' && /^\/\d+\/(password|status)$/.test(req.path)) {
+    return requireRoles('superadmin', 'manajer')(req, res, next);
+  }
+  return requireRoles('superadmin')(req, res, next);
+});
+// Employees:
+// - superadmin/admin_toko/admin_workshop: full access
+// - manajer: read-only (GET) for oversight
+app.use('/employees', authRequired, (req, res, next) => {
+  if (req.method === 'GET') {
+    return requireRoles(
+      'superadmin',
+      'admin_toko',
+      'admin_workshop',
+      'manajer',
+    )(req, res, next);
+  }
+  return requireRoles('superadmin', 'admin_toko', 'admin_workshop')(
+    req,
+    res,
+    next,
+  );
+});
+app.use('/user-branch-roles', authRequired, requireRoles('superadmin'));
 // Branch list needs to be readable by non-superadmin modules (e.g. transfers).
 // Keep writes restricted at the route-handler level.
-app.use('/branches', authenticateToken);
-app.use('/api/branches', authenticateToken, requireRoles('superadmin'));
-app.use('/orders', authenticateToken);
-app.use('/payments', authenticateToken);
-app.use('/transfers', authenticateToken);
-app.use('/items', authenticateToken);
-app.use('/item-conditions', authenticateToken);
-app.use('/order-items', authenticateToken);
-app.use('/stock-mutations', authenticateToken);
-app.use('/stock-history', authenticateToken, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
-app.use('/reports', authenticateToken, requireRoles('superadmin', 'manajer'));
-app.use('/api', authenticateToken);
-app.use('/api/workshop', authenticateToken, requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer'));
-app.use('/workshop-orders', authenticateToken, requireRoles('superadmin', 'admin_workshop', 'tukang'));
-app.use('/technicians', authenticateToken, requireRoles('superadmin', 'admin_workshop'));
-app.use('/test-db', authenticateToken, requireRoles('superadmin'));
+app.use('/branches', authRequired);
+// Branch list needs to be readable by non-superadmin modules (e.g. transfers/printing).
+// Keep writes restricted to superadmin.
+app.use('/api/branches', authRequired, (req, res, next) => {
+  if (req.method === 'GET') return next();
+  return requireRoles('superadmin')(req, res, next);
+});
+app.use('/orders', authRequired);
+app.use('/payments', authRequired);
+app.use('/transfers', authRequired);
+app.use('/items', authRequired);
+app.use('/item-conditions', authRequired);
+app.use('/order-items', authRequired);
+app.use('/stock-mutations', authRequired);
+app.use('/stock-history', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
+app.use('/reports', authRequired, requireRoles('superadmin', 'manajer'));
+app.use('/api', authRequired);
+app.use('/api/workshop', authRequired, requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer'));
+
+// Debug helper: inspect JWT payload (for troubleshooting role/branch issues)
+app.get('/api/whoami', authRequired, (req, res) => {
+  res.json({ user: req.user ?? null });
+});
+
+app.get('/api/admin/active-sessions', requireRoles('superadmin'), (req, res) => {
+  res.json(getActivePresenceSnapshot());
+});
+
+app.use('/workshop-orders', authRequired, requireRoles('superadmin', 'admin_workshop', 'tukang'));
+app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
+app.use('/test-db', authRequired, requireRoles('superadmin'));
 app.use(['/orders', '/payments', '/transfers', '/items', '/stock-history', '/stock-mutations', '/employees', '/branches', '/users'], writeApiLimiter);
 
 // Sample data
@@ -268,6 +413,10 @@ app.get('/orders', async (req, res) => {
   try {
     const { branch_id, status, order_number } = req.query;
     console.log('GET /orders called with query:', req.query);
+    const itemsPhotoCol = await getItemsPhotoColumn(db);
+    const itemsPhotoSelect = itemsPhotoCol
+      ? `i.${itemsPhotoCol} as item_photo_produk`
+      : `NULL as item_photo_produk`;
     let query = `
       SELECT
         o.*,
@@ -280,6 +429,7 @@ app.get('/orders', async (req, res) => {
         oi.qty,
         oi.harga_per_gram,
         oi.total,
+        oi.photo_produk,
         oi.material,
         oi.purity,
         oi.kategori,
@@ -293,7 +443,8 @@ app.get('/orders', async (req, res) => {
         i.weight as item_weight,
         i.kategori as item_kategori,
         i.jenis as item_jenis,
-        i.tipe as item_tipe
+        i.tipe as item_tipe,
+        ${itemsPhotoSelect}
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
@@ -353,6 +504,7 @@ app.get('/orders', async (req, res) => {
         qty: row.qty,
         harga_per_gram: parseFloat(row.harga_per_gram || 0),
         total: parseFloat(row.total || 0),
+        photo_produk: row.photo_produk || row.item_photo_produk,
         material: row.material || row.item_material,
         purity: row.purity || row.item_purity,
         kategori: row.kategori || row.item_kategori,
@@ -416,10 +568,15 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     // Handle uploaded photo
     let uploadedPhotoPath = null;
     if (req.file) {
-      uploadedPhotoPath = req.file.filename; // e.g., '1234567890-image.jpg'
+      // Store a URL path (so clients can render it directly)
+      uploadedPhotoPath = `/uploads/${req.file.filename}`;
     }
 
     await client.query('BEGIN');
+
+    // Backward-compatible: DB may have items.photo_url (old) or items.photo_produk (new)
+    const itemsPhotoCol = await getItemsPhotoColumn(client);
+    const itemsPhotoColName = itemsPhotoCol || 'photo_url';
 
   // Persist upload metadata (safe: filename is server-generated)
   let uploadId = null;
@@ -427,20 +584,31 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
     const urlPath = `/uploads/${req.file.filename}`;
 
-    const upRes = await client.query(
-      `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING upload_id`,
-      [
-        req.file.filename,
-        req.file.originalname || null,
-        req.file.mimetype || null,
-        typeof req.file.size === 'number' ? req.file.size : null,
-        urlPath,
-        Number.isFinite(uploaderUserId) ? uploaderUserId : null,
-      ]
-    );
-    uploadId = upRes.rows[0]?.upload_id ?? null;
+    // Best-effort: some environments may not have `uploads` table.
+    // IMPORTANT: a failed query inside a transaction aborts the whole transaction
+    // in PostgreSQL, so we must use a SAVEPOINT.
+    await client.query('SAVEPOINT uploads_insert');
+    try {
+      const upRes = await client.query(
+        `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING upload_id`,
+        [
+          req.file.filename,
+          req.file.originalname || null,
+          req.file.mimetype || null,
+          typeof req.file.size === 'number' ? req.file.size : null,
+          urlPath,
+          Number.isFinite(uploaderUserId) ? uploaderUserId : null,
+        ]
+      );
+      uploadId = upRes.rows[0]?.upload_id ?? null;
+      await client.query('RELEASE SAVEPOINT uploads_insert');
+    } catch (_) {
+      uploadId = null;
+      await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
+      await client.query('RELEASE SAVEPOINT uploads_insert');
+    }
   }
 
     const {
@@ -508,7 +676,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       if (final_item_id) {
         const existingItem = await client.query(
           `SELECT
-             name, kode_produk, weight, material, purity, kategori, jenis, tipe, photo_url,
+             name, kode_produk, weight, material, purity, kategori, jenis, tipe, ${itemsPhotoColName} as photo_produk,
              quantity, status, ownership, stock_type
            FROM items WHERE item_id = $1`,
           [final_item_id]
@@ -525,7 +693,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             kategori: dbItem.kategori,
             jenis: dbItem.jenis,
             tipe: dbItem.tipe,
-            photo_produk: itemData.photo_produk || dbItem.photo_url,
+            photo_produk: itemData.photo_produk || dbItem.photo_produk,
             // Stock fields (used for quantity decrement / status decisions)
             item_quantity: dbItem.quantity,
             item_status: dbItem.status,
@@ -538,7 +706,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       // Update item photo if new photo is provided for existing stock items
       if (final_item_id && itemData.photo_produk && itemData.photo_produk !== itemDetails.photo_produk) {
         await client.query(
-          `UPDATE items SET photo_url = $1, updated_at = NOW() WHERE item_id = $2`,
+          `UPDATE items SET ${itemsPhotoColName} = $1, updated_at = NOW() WHERE item_id = $2`,
           [itemData.photo_produk, final_item_id]
         );
       }
@@ -551,7 +719,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           const itemResult = await client.query(
             `INSERT INTO items (
               name, kode_produk, weight, material, purity, kategori, jenis, tipe,
-              ownership, stock_type, status, is_quick_registered, branch_id, source, photo_url
+              ownership, stock_type, status, is_quick_registered, branch_id, source, ${itemsPhotoColName}
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING item_id`,
             [
@@ -962,13 +1130,55 @@ app.get('/orders/pending-payment', async (req, res) => {
 // Get daily payments for kasir and admin toko
 app.get('/payments/daily-summary', async (req, res) => {
   try {
-    const { branch_id, date } = req.query;
+    const { branch_id, date, user_id } = req.query;
 
     if (!branch_id) {
       return res.status(400).json({ error: 'branch_id is required' });
     }
 
     const targetDate = date || new Date().toISOString().split('T')[0];
+    const hasProofCol = await paymentsHasProofUrlColumn(db);
+    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
+
+    const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
+    const validatedOnly =
+      validatedOnlyRaw === '1' || validatedOnlyRaw === 'true' || validatedOnlyRaw === 'yes';
+
+    const userIdFilterRaw = (user_id ?? '').toString().trim();
+    let userIdFromQuery =
+      userIdFilterRaw.length > 0 ? parseInt(userIdFilterRaw, 10) : null;
+    if (userIdFilterRaw.length > 0 && (userIdFromQuery == null || Number.isNaN(userIdFromQuery))) {
+      return res.status(400).json({ error: 'user_id must be a number' });
+    }
+
+    let userIdFilter = null;
+    if (validatedOnly) {
+      if (!hasValidatedByCol) {
+        return res.status(400).json({
+          error: 'Kolom payments.validated_by belum tersedia',
+          details:
+            'Jalankan migration backend/migrations/20260502_000006_add_payments_validated_by.sql agar filter pembayaran per kasir bisa dipakai.',
+        });
+      }
+      const tokenUserId = req.user?.user_id ?? req.user?.id;
+      const parsedTokenUserId =
+        tokenUserId != null ? parseInt(String(tokenUserId), 10) : NaN;
+      if (tokenUserId == null || Number.isNaN(parsedTokenUserId)) {
+        return res.status(401).json({
+          error: 'Unauthorized',
+          details: 'Token tidak berisi user_id; silakan login ulang.',
+        });
+      }
+      userIdFilter = parsedTokenUserId;
+    } else if (userIdFromQuery != null) {
+      if (!hasValidatedByCol) {
+        console.warn(
+          '[payments/daily-summary] Ignoring user_id query filter: payments.validated_by column missing.',
+        );
+      } else {
+        userIdFilter = userIdFromQuery;
+      }
+    }
 
     // Get payments for the day
     const paymentsResult = await db.query(`
@@ -978,6 +1188,9 @@ app.get('/payments/daily-summary', async (req, res) => {
         p.amount,
         p.method as payment_method,
         p.status,
+        ${hasProofCol ? 'p.proof_url' : 'NULL'} as proof_url,
+        ${hasValidatedByCol ? 'p.validated_by' : 'NULL'} as validated_by,
+        p.notes,
         p.created_at,
         p.updated_at,
         o.order_number,
@@ -989,8 +1202,9 @@ app.get('/payments/daily-summary', async (req, res) => {
       JOIN customers c ON o.customer_id = c.customer_id
       WHERE o.branch_id = $1
         AND DATE(p.created_at) = $2
+        ${userIdFilter != null ? 'AND p.validated_by = $3' : ''}
       ORDER BY p.created_at DESC
-    `, [branch_id, targetDate]);
+    `, userIdFilter != null ? [branch_id, targetDate, userIdFilter] : [branch_id, targetDate]);
 
     // Get summary
     const summaryResult = await db.query(`
@@ -1005,7 +1219,8 @@ app.get('/payments/daily-summary', async (req, res) => {
       WHERE o.branch_id = $1
         AND DATE(p.created_at) = $2
         AND p.status = 'completed'
-    `, [branch_id, targetDate]);
+        ${userIdFilter != null ? 'AND p.validated_by = $3' : ''}
+    `, userIdFilter != null ? [branch_id, targetDate, userIdFilter] : [branch_id, targetDate]);
 
     const summary = summaryResult.rows[0] || {
       total_payments: 0,
@@ -1022,6 +1237,9 @@ app.get('/payments/daily-summary', async (req, res) => {
       amount: parseFloat(row.amount || 0),
       payment_method: row.payment_method,
       status: row.status,
+      proof_url: row.proof_url,
+      validated_by: row.validated_by,
+      notes: row.notes,
       created_at: row.created_at,
       updated_at: row.updated_at,
       order_number: row.order_number,
@@ -1853,6 +2071,56 @@ app.put('/users/:id', async (req, res) => {
   }
 });
 
+app.patch('/users/:id/password', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { password } = req.body ?? {};
+    const newPassword = (password ?? '').toString();
+    if (!newPassword.trim()) {
+      return res.status(400).json({ error: 'password is required' });
+    }
+    if (newPassword.trim().length < 4) {
+      return res.status(400).json({ error: 'password must be at least 4 characters' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const result = await db.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+      [hashedPassword, id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Error updating user password:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/users/:id/status', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { status } = req.body ?? {};
+    const nextStatus = (status ?? '').toString().trim().toLowerCase();
+    if (nextStatus !== 'active' && nextStatus !== 'inactive') {
+      return res.status(400).json({ error: 'status must be active or inactive' });
+    }
+
+    const result = await db.query(
+      'UPDATE users SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+      [nextStatus, id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'User status updated successfully', status: nextStatus });
+  } catch (error) {
+    console.error('Error updating user status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.delete('/users/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -2380,6 +2648,52 @@ app.get('/upload', (req, res) => {
   res.send('Gunakan POST untuk upload file ke endpoint ini.');
 });
 
+// Endpoint POST /upload
+// Dipakai oleh Flutter app untuk upload foto (field: "file").
+// Mengembalikan url path relatif: "/uploads/<filename>".
+app.post('/upload', upload.any(), async (req, res) => {
+  try {
+    const file = (Array.isArray(req.files) && req.files.length > 0)
+      ? req.files[0]
+      : req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const urlPath = `/uploads/${file.filename}`;
+
+    // Best-effort: persist upload metadata if table exists.
+    try {
+      await db.query(
+        `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          file.filename,
+          file.originalname || null,
+          file.mimetype || null,
+          typeof file.size === 'number' ? file.size : null,
+          urlPath,
+          null,
+        ]
+      );
+    } catch (_) {
+      // ignore if uploads table doesn't exist or insert fails
+    }
+
+    res.status(200).json({
+      success: true,
+      url: urlPath,
+      fileUrl: urlPath,
+      path: urlPath,
+      filename: file.filename,
+    });
+  } catch (error) {
+    console.error('Error uploading file:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Tambahkan endpoint untuk root path
 app.get('/', (req, res) => {
   res.send('Server is running!');
@@ -2394,20 +2708,47 @@ const server = app.listen(port, '0.0.0.0', () => {
 // Tambahkan WebSocket untuk notifikasi realtime
 const wss = new WebSocket.Server({ server }); // Use the same server for WebSocket
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   console.log('New client connected'); // Log tambahan untuk koneksi baru
 
-  ws.on('message', (message) => {
-    console.log(`Received message: ${message}`); // Log tambahan untuk pesan yang diterima
-    // Broadcast message to all clients
+  try {
+    const host = req.headers.host || 'localhost';
+    const url = new URL(req.url || '/', `http://${host}`);
+    const token = url.searchParams.get('token');
+    if (token) tryRegisterWsPresenceFromToken(ws, token);
+  } catch (err) {
+    console.warn('WebSocket presence (query):', err.message);
+  }
+
+  ws.on('message', (raw) => {
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+    try {
+      const msg = JSON.parse(text);
+      if (msg && msg.type === 'presence' && typeof msg.token === 'string') {
+        const ok = tryRegisterWsPresenceFromToken(ws, msg.token);
+        ws.send(
+          JSON.stringify(
+            ok
+              ? { type: 'presence_ack' }
+              : { type: 'presence_error', error: 'invalid_token' },
+          ),
+        );
+        return;
+      }
+    } catch (_) {
+      // bukan JSON presence — lanjut broadcast
+    }
+
+    console.log(`Received message: ${text}`); // Log tambahan untuk pesan yang diterima
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        client.send(text);
       }
     });
   });
 
   ws.on('close', () => {
+    wsPresenceBySocket.delete(ws);
     console.log('Client disconnected'); // Log tambahan untuk koneksi yang ditutup
   });
 });
@@ -2434,11 +2775,7 @@ console.log('Cron job untuk pengingat otomatis telah diaktifkan.');
 // Tambahkan fungsi untuk mengirim notifikasi realtime
 function sendNotificationToClients(message) {
   console.log(`Broadcasting message: ${message}`);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: 'notification', message }));
-    }
-  });
+  emitNotification(wss, message);
 }
 
 // Endpoint untuk mencatat perubahan stok
@@ -2469,7 +2806,7 @@ app.post('/stock-history', (req, res) => {
 // Endpoint untuk mencatat transaksi pembayaran
 app.post('/payments', async (req, res) => {
   try {
-    const { order_id, amount, method, status, notes } = req.body;
+    const { order_id, amount, method, status, notes, proof_url } = req.body;
 
     if (!order_id || !amount || !method) {
       return res.status(400).json({ error: 'order_id, amount, dan method wajib diisi' });
@@ -2484,6 +2821,17 @@ app.post('/payments', async (req, res) => {
     const validMethods = ['cash', 'transfer', 'qris', 'e-wallet'];
     if (!validMethods.includes(method)) {
       return res.status(400).json({ error: 'Method pembayaran tidak valid' });
+    }
+
+    // For non-cash methods, payment proof photo is required
+    const requiresProof = method === 'transfer' || method === 'qris' || method === 'e-wallet';
+    if (requiresProof) {
+      const proof = (proof_url ?? '').toString().trim();
+      if (!proof) {
+        return res.status(400).json({
+          error: 'Bukti pembayaran (proof_url) wajib untuk metode transfer/qris/e-wallet',
+        });
+      }
     }
 
     // Validasi status
@@ -2510,14 +2858,44 @@ app.post('/payments', async (req, res) => {
       return res.status(400).json({ error: 'Order ini sudah dibayar. Tidak dapat melakukan pembayaran ganda.' });
     }
 
-    // Insert pembayaran ke database
+    const hasProofCol = await paymentsHasProofUrlColumn(db);
+    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
+    let finalNotes = notes;
+    const proofTrimmed = (proof_url ?? '').toString().trim();
+    if (!hasProofCol && proofTrimmed) {
+      const n = (finalNotes ?? '').toString().trim();
+      finalNotes = n ? `${n}\nBukti: ${proofTrimmed}` : `Bukti: ${proofTrimmed}`;
+    }
+
+    // Insert pembayaran ke database (backward-compatible with older DBs)
+    const validatedBy = req.user?.user_id ?? req.user?.id ?? null;
+    const cols = ['order_id', 'amount', 'method', 'status', 'notes'];
+    const values = ['$1', '$2', '$3', '$4', '$5'];
+    const params = [parsedOrderId, amount, method, paymentStatus, finalNotes];
+    let idx = params.length;
+
+    if (hasProofCol) {
+      cols.push('proof_url');
+      values.push(`$${++idx}`);
+      params.push(proof_url || null);
+    }
+
+    if (hasValidatedByCol) {
+      cols.push('validated_by');
+      values.push(`$${++idx}`);
+      params.push(validatedBy);
+    }
+
+    cols.push('payment_date');
+    values.push('CURRENT_TIMESTAMP');
+
     const insertQuery = `
-      INSERT INTO payments (order_id, amount, method, status, notes, payment_date)
-      VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+      INSERT INTO payments (${cols.join(', ')})
+      VALUES (${values.join(', ')})
       RETURNING *
     `;
 
-    const result = await db.query(insertQuery, [parsedOrderId, amount, method, paymentStatus, notes]);
+    const result = await db.query(insertQuery, params);
 
     // Update status order jika pembayaran completed
     if (paymentStatus === 'completed') {
@@ -2543,13 +2921,26 @@ app.post('/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'username and password are required' });
     }
 
-    // Ambil user dan role dari user_branch_roles (ambil role utama jika ada kolom is_primary)
-    const query = `SELECT u.*, ubr.role, ubr.branch_id
-                   FROM users u
-                   LEFT JOIN user_branch_roles ubr ON u.user_id = ubr.user_id
-                   WHERE u.username = $1
-                   ORDER BY ubr.is_primary DESC NULLS LAST
-                   LIMIT 1`;
+    // Ambil user + role/branch dari user_branch_roles (primary dulu).
+    // Beberapa deployment legacy mungkin punya users.role/users.branch_id — include hanya jika kolomnya ada.
+    const usersCols = await usersHasRoleAndBranchColumns(db);
+    const userRoleSelect = usersCols.hasRole ? 'u.role as user_role,' : '';
+    const userBranchSelect = usersCols.hasBranchId
+      ? 'u.branch_id as user_branch_id,'
+      : '';
+    const query = `
+      SELECT
+        u.*,
+        ${userRoleSelect}
+        ${userBranchSelect}
+        ubr.role as branch_role,
+        ubr.branch_id as branch_role_branch_id
+      FROM users u
+      LEFT JOIN user_branch_roles ubr ON u.user_id = ubr.user_id
+      WHERE u.username = $1
+      ORDER BY ubr.is_primary DESC NULLS LAST
+      LIMIT 1
+    `;
     const result = await db.query(query, [username]);
 
     if (result.rows.length === 0) {
@@ -2557,6 +2948,18 @@ app.post('/login', loginLimiter, async (req, res) => {
     }
 
     const user = result.rows[0];
+    const resolvedRole =
+      (user.branch_role ?? user.user_role ?? user.role ?? '').toString().trim().toLowerCase();
+    const resolvedBranchId =
+      (user.branch_role_branch_id ?? user.user_branch_id ?? user.branch_id ?? '').toString().trim();
+
+    if (!resolvedRole || !resolvedBranchId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details:
+          'User belum memiliki role/branch. Tambahkan assignment di tabel user_branch_roles (atau jalankan setup_superadmin.js untuk akun superadmin).',
+      });
+    }
     let isPasswordValid = false;
     const passwordHash = user.password_hash || '';
     if (passwordHash.startsWith('$2')) {
@@ -2579,7 +2982,7 @@ app.post('/login', loginLimiter, async (req, res) => {
 
     // Tentukan mainModule sesuai role
     let mainModule = null;
-    switch (user.role) {
+    switch (resolvedRole) {
       case 'cs':
         mainModule = 'cs';
         break;
@@ -2626,8 +3029,8 @@ app.post('/login', loginLimiter, async (req, res) => {
       {
         user_id: user.user_id,
         username: user.username,
-        role: user.role,
-        branch_id: user.branch_id,
+        role: resolvedRole,
+        branch_id: resolvedBranchId,
       },
       SECRET_KEY,
       { expiresIn: JWT_EXPIRES_IN }
@@ -2637,8 +3040,8 @@ app.post('/login', loginLimiter, async (req, res) => {
       success: true,
       user_id: user.user_id, // tambahkan user_id
       username: user.username,
-      role: user.role,
-      branch: user.branch_id,
+      role: resolvedRole,
+      branch: resolvedBranchId,
       mainModule,
       roles,
       branches,
@@ -2841,13 +3244,18 @@ app.get('/payments', async (req, res) => {
 // Endpoint untuk mendapatkan data order harian (admin_toko)
 app.get('/orders/daily', async (req, res) => {
   try {
-    const { branch_id, user_id } = req.query;
+    const { branch_id, user_id, date } = req.query;
 
     if (!branch_id) {
       return res.status(400).json({ error: 'branch_id is required' });
     }
 
-    // Use CURRENT_DATE from database for consistency with dashboard
+    // Use provided date (YYYY-MM-DD) or fallback to CURRENT_DATE.
+    const targetDate = (date && String(date).trim().length > 0)
+      ? String(date).trim()
+      : null;
+
+    // Params: branch_id, (optional) user_id, (optional) date
     const params = [parseInt(branch_id)];
 
     // For admin_toko and CS (no user_id filter), return orders with item details
@@ -2885,8 +3293,7 @@ app.get('/orders/daily', async (req, res) => {
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN order_items oi ON o.order_id = oi.order_id
         LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE DATE(o.created_at) = CURRENT_DATE
-          AND o.branch_id = $1
+        WHERE o.branch_id = $1
           AND o.user_id = $2
       `;
       params.push(parseInt(user_id));
@@ -2922,8 +3329,39 @@ app.get('/orders/daily', async (req, res) => {
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN order_items oi ON o.order_id = oi.order_id
         LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE DATE(o.created_at) = CURRENT_DATE
-          AND o.branch_id = $1
+        WHERE o.branch_id = $1
+      `;
+    }
+
+    // Date filter:
+    // - include orders created on target date
+    // - PLUS orders that have a completed payment on target date (paid today)
+    if (targetDate) {
+      query += `
+        AND (
+          DATE(o.created_at) = $${params.length + 1}
+          OR EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
+              AND DATE(p.created_at) = $${params.length + 1}
+          )
+        )
+      `;
+      params.push(targetDate);
+    } else {
+      query += `
+        AND (
+          DATE(o.created_at) = CURRENT_DATE
+          OR EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
+              AND DATE(p.created_at) = CURRENT_DATE
+          )
+        )
       `;
     }
 
@@ -3775,6 +4213,8 @@ app.use('/api', apiRoutes); // Integrate new API routes
 app.use('/api', dashboardOrdersRoute);
 // Integrate branches routes
 app.use('/api', branchesRoute);
+// User info route
+app.use('/api', userInfoRoute);
 
 // Workshop API endpoints
 app.get("/api/workshop/work-queue", async (req, res) => {

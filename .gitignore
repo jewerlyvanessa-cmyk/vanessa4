@@ -33,6 +33,12 @@ migrate_working_dir/
 /build/
 /coverage/
 *node_modules
+
+# Build artifacts (never commit)
+/android/build/
+
+# Backup files
+*.backup
 # Symbolication related
 app.*.symbols
 

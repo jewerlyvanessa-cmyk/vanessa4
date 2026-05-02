@@ -1,0 +1,254 @@
+ARSITEKTUR VANESSA (VERSI IDEAL / TARGET)
+
+Tujuan dokumen ini: mendefinisikan arsitektur ideal (best practice) untuk Vanessa tanpa terikat implementasi repo saat ini.
+
+============================================================
+1) OVERVIEW SISTEM
+============================================================
+
++----------------------------+
+|        FRONTEND            |  Flutter (Android/iOS/Web/Desktop)
+|----------------------------|
+| - UI per Role + Branch     |
+| - Offline-first cache      |
+| - REST client + WS client  |
++----------------------------+
+              |
+              | HTTPS (REST) + WSS (Realtime)
+              v
++----------------------------+
+|        API BACKEND         |  Node.js (Express / Fastify)
+|----------------------------|
+| - Auth (JWT + refresh)     |
+| - RBAC + Branch scoping    |
+| - Orders / Payments        |
+| - Stock / Reports          |
+| - File upload & PDF        |
+| - WebSocket events         |
++----------------------------+
+              |
+              | SQL
+              v
++----------------------------+
+|         DATABASE           |  PostgreSQL
+|----------------------------|
+| - transactional tables     |
+| - audit & history          |
+| - indexes & constraints    |
++----------------------------+
+              |
+              | Object Storage
+              v
++----------------------------+
+|          STORAGE           |  S3/MinIO + CDN (opsional)
++----------------------------+
+
+============================================================
+2) PRINSIP ARSITEKTUR
+============================================================
+
+2.1 Feature-based modularization
+- Backend dipecah per domain feature (auth, order, payment, stock, report, workshop).
+- Setiap feature punya: routes → controller → service → repository → validation.
+
+2.2 Single source of truth untuk kontrak API
+- OpenAPI/Swagger jadi kontrak utama.
+- Frontend generate client (optional) atau minimal ada “contract tests”.
+
+2.3 Offline-first (frontend)
+- Cache data read-heavy (customers, items, reference tables).
+- Queue untuk write ops saat offline (draft order, payment pending).
+- Sync worker dengan idempotency key untuk mencegah double submit.
+
+2.4 Observability
+- Structured logging (JSON), trace id per request.
+- Metrics (latency, error rate, WS connected clients).
+- Error tracking (Sentry) untuk frontend & backend.
+
+============================================================
+3) SUSUNAN FOLDER (IDEAL)
+============================================================
+
+3.1 Frontend (Flutter)
+
+lib/
+ ├─ app.dart                        # root app widget & providers bootstrap
+ ├─ main.dart
+ ├─ core/
+ │   ├─ config/                     # env config, build flavor, constants
+ │   ├─ theme/
+ │   ├─ network/                    # http client, interceptors, retry
+ │   ├─ storage/                    # secure storage + shared prefs
+ │   └─ utils/
+ ├─ features/                       # feature-first (ideal)
+ │   ├─ auth/
+ │   │   ├─ data/                   # api models + api client wrapper
+ │   │   ├─ domain/                 # entities + usecases
+ │   │   └─ presentation/           # pages + widgets + providers
+ │   ├─ orders/
+ │   ├─ payments/
+ │   ├─ stock/
+ │   ├─ reports/
+ │   └─ workshop/
+ ├─ routing/
+ └─ shared/
+     ├─ widgets/
+     ├─ formatters/
+     └─ validators/
+
+3.2 Backend (Node.js)
+
+backend/
+ ├─ config/                          # env, constants, app config
+ │  ├─ env.js
+ │  ├─ database.js
+ │  └─ websocket.js
+ ├─ database/                        # koneksi & ORM/query builder setup
+ │  ├─ db.js
+ │  └─ pool.js
+ ├─ modules/                         # FEATURE-BASED (inti arsitektur)
+ │  ├─ auth/
+ │  │  ├─ auth.controller.js
+ │  │  ├─ auth.service.js
+ │  │  ├─ auth.repository.js
+ │  │  ├─ auth.routes.js
+ │  │  └─ auth.validation.js
+ │  ├─ user/
+ │  ├─ branch/
+ │  ├─ customer/
+ │  ├─ order/
+ │  │  ├─ order.controller.js
+ │  │  ├─ order.service.js
+ │  │  ├─ order.repository.js
+ │  │  ├─ order.routes.js
+ │  │  ├─ order.validation.js
+ │  │  └─ order.events.js            # emit websocket event
+ │  ├─ payment/
+ │  │  ├─ payment.controller.js
+ │  │  ├─ payment.service.js
+ │  │  ├─ payment.repository.js
+ │  │  ├─ payment.routes.js
+ │  │  ├─ payment.validation.js
+ │  │  └─ payment.events.js
+ │  ├─ stock/
+ │  ├─ report/
+ │  ├─ workshop/
+ │  └─ index.js                      # register semua module routes
+ ├─ middleware/                      # request pipeline
+ │  ├─ auth.middleware.js
+ │  ├─ role.middleware.js
+ │  ├─ branch.middleware.js
+ │  ├─ error.middleware.js
+ │  └─ logging.middleware.js
+ ├─ websocket/                       # realtime system
+ │  ├─ socket.server.js
+ │  ├─ socket.manager.js
+ │  └─ events/
+ ├─ workers/                         # background jobs
+ │  ├─ queue.js
+ │  ├─ report.worker.js
+ │  └─ cron.js
+ ├─ storage/                         # abstraction file storage
+ │  ├─ storage.service.js
+ │  ├─ local.storage.js
+ │  └─ s3.storage.js
+ ├─ migrations/                      # DB versioning
+ ├─ schema/                          # SQL schema reference
+ ├─ docs/
+ │  └─ openapi.yaml                  # API contract (single source)
+ ├─ app.js                           # express app setup
+ └─ server.js                        # entry point
+
+============================================================
+4) AUTH, RBAC, DAN BRANCH SCOPING (IDEAL)
+============================================================
+
+4.1 Token
+- Access token: JWT pendek (mis 15-30 menit)
+- Refresh token: rotate + revoke list
+- Device/session binding (optional)
+
+4.2 RBAC
+- Role: cs, kasir, admin_toko, admin_workshop, tukang, manajer, superadmin, stockist
+- Semua endpoint wajib ada policy: siapa boleh read/write.
+
+4.3 Branch scoping
+- Hampir semua data transaksi wajib scoped by branch_id.
+- Backend meng-derive branch context dari:
+  - token claims + request param yang diverifikasi, atau
+  - header `X-Branch-Id` yang diverifikasi (pilih satu konvensi).
+
+============================================================
+5) KONTRAK ENDPOINT UTAMA (IDEAL)
+============================================================
+
+5.1 Auth
+- POST /auth/login
+  - req: { username, password }
+  - res: { accessToken, refreshToken, user: { id, username }, session: { primaryRole, primaryBranch }, roles[], branches[] }
+- POST /auth/refresh
+- POST /auth/logout
+
+5.2 Orders
+- POST /orders
+- GET /orders?branch_id=...&date=...
+- GET /orders/:id
+- PATCH /orders/:id/status
+
+5.3 Payments (Kasir)
+- GET /orders/pending-payment?branch_id=...
+- POST /payments
+  - req includes: { order_id, amount, method, notes, user_id, branch_id, idempotency_key }
+- GET /payments/daily-summary?branch_id=...&user_id=...&date=...
+
+5.4 Workshop
+- GET /workshop/work-queue?branch_id=...&technician_id=...
+- POST /workshop/update-progress
+- POST /workshop/update-stock
+
+5.5 Health & Ops
+- GET /health (no auth) untuk monitoring
+- GET /metrics (restricted)
+
+============================================================
+6) REALTIME (WEBSOCKET) (IDEAL)
+============================================================
+
+6.1 Event schema (konsisten)
+- Semua message JSON: { type, eventId, timestamp, branch_id, payload }
+- Contoh:
+  - order.created
+  - order.status_changed
+  - payment.completed
+  - stock.updated
+
+6.2 Delivery guarantee
+- At-most-once untuk UI update cepat.
+- Untuk data penting, UI tetap refresh lewat REST (source of truth).
+
+============================================================
+7) STORAGE & PDF (IDEAL)
+============================================================
+
+- Upload file ke object storage (S3/MinIO).
+- Backend simpan metadata file di DB.
+- PDF generator menghasilkan file → upload → return signed URL.
+
+============================================================
+8) DATABASE (IDEAL)
+============================================================
+
+- Gunakan constraints & foreign keys.
+- Index untuk query harian (branch_id + created_at).
+- Audit table / history untuk perubahan status order/payment.
+- Migrations wajib versioned + reversible (down migration bila perlu).
+
+============================================================
+9) DEPLOYMENT (IDEAL)
+============================================================
+
+- API behind reverse-proxy (TLS termination).
+- Config via environment variables.
+- Separate environments: dev/staging/prod.
+- CI: lint + tests + migration check.
+- CD: build image + deploy + health check.

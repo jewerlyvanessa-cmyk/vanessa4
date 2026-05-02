@@ -241,7 +241,11 @@ class TodayOrdersNotifier
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
       // Build query parameters
-      final queryParams = <String, String>{'branch_id': branchId.toString()};
+      final todayKey = DateTime.now().toIso8601String().split('T')[0];
+      final queryParams = <String, String>{
+        'branch_id': branchId.toString(),
+        'date': todayKey, // ensure server uses the same "today" boundary
+      };
 
       // CS page requirement: show only today's orders created by current user
       if (userId != null) {

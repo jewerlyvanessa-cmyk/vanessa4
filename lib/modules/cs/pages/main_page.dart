@@ -310,6 +310,12 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                       iconColor: Colors.amber,
                       onTap: () => Navigator.pushNamed(context, '/dashboard'),
                     ),
+                    _MenuButton(
+                      icon: Icons.people,
+                      label: 'PELANGGAN',
+                      iconColor: Colors.cyan,
+                      onTap: () => Navigator.pushNamed(context, '/customers'),
+                    ),
                   ],
                 ),
               ),

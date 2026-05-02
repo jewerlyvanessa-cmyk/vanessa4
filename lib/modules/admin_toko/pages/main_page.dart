@@ -10,6 +10,7 @@ import 'goods_transfer_page.dart';
 import 'stock_mutation_page.dart';
 import 'stock_page.dart';
 import 'employee_management_page.dart';
+import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/store_dashboard_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
@@ -234,6 +235,17 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  _MenuButton(
+                    icon: Icons.groups_2,
+                    label: 'Pelanggan',
+                    iconColor: Colors.cyan,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CustomersPage(),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -349,6 +361,7 @@ class _AdminTokoPendingTransfersCardState
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -364,6 +377,7 @@ class _AdminTokoPendingTransfersCardState
       final uri = Uri.parse('$baseUrl/transfers?branch_id=$branchId');
       final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200) {
+        if (!mounted) return;
         setState(() {
           _error = 'Gagal memuat transfer (${res.statusCode})';
           _loading = false;
@@ -378,11 +392,13 @@ class _AdminTokoPendingTransfersCardState
           .where((t) => (t['status'] ?? '').toString() == 'pending')
           .toList();
 
+      if (!mounted) return;
       setState(() {
         _pending = rows;
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;

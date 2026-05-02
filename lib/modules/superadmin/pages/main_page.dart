@@ -10,26 +10,37 @@ import './branch_management_page.dart';
 import 'customer_management_page.dart';
 import 'import_data_page.dart';
 import 'export_data_page.dart';
+import 'active_user_sessions_page.dart';
 
-class SuperadminMainPage extends ConsumerWidget {
+class SuperadminMainPage extends ConsumerStatefulWidget {
   const SuperadminMainPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SuperadminMainPage> createState() => _SuperadminMainPageState();
+}
+
+class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final us = ref.read(userStateProvider);
+      if (us.userId != null && us.role.isNotEmpty) {
+        ref
+            .read(webSocketProvider.notifier)
+            .ensureConnected(authToken: us.authToken);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Watch health check status for Live indicator
     final isServerHealthy = ref.watch(healthCheckProvider);
 
-    // Listen to user state changes for consistency with other pages
     ref.listen(userStateProvider, (previous, next) {
-      // Force rebuild when user state changes (e.g., branch/role switch)
-      // This ensures UI stays consistent across all pages
-
-      // Initialize WebSocket if user is logged in and WebSocket is not connected
       if (next.userId != null && next.role.isNotEmpty) {
-        final webSocketChannel = ref.read(webSocketProvider);
-        if (webSocketChannel == null) {
-          ref.read(webSocketProvider.notifier).initializeAfterLogin();
-        }
+        ref.read(webSocketProvider.notifier).ensureConnected(authToken: next.authToken);
       }
     });
 
@@ -125,6 +136,17 @@ class SuperadminMainPage extends ConsumerWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const UserManagementPage(),
+                      ),
+                    ),
+                  ),
+                  _MenuButton(
+                    icon: Icons.how_to_reg,
+                    label: 'USER LOGIN',
+                    iconColor: Colors.teal,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ActiveUserSessionsPage(),
                       ),
                     ),
                   ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import '../core/network/api_client.dart';
 import '../utils/network_config.dart';
 
 class UnauthorizedApiException implements Exception {
@@ -75,13 +76,12 @@ class ApiService {
     final url = Uri.parse('$baseUrl/login');
 
     try {
-      final response = await http
-          .post(
-            url,
-            headers: NetworkConfig.defaultHeaders,
-            body: jsonEncode({'username': username, 'password': password}),
-          )
-          .timeout(NetworkConfig.connectionTimeout);
+      final response = await _makeRequest(
+        () => ApiClient.post(
+          url.toString(),
+          body: jsonEncode({'username': username, 'password': password}),
+        ),
+      );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

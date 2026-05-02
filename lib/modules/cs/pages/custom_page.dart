@@ -64,11 +64,19 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     final uri = Uri.parse('$storageUrl/upload');
     final request = http.MultipartRequest('POST', uri)
       ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+    final token = NetworkConfig.authToken;
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
     final response = await request.send();
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
       final data = jsonDecode(respStr);
-      return data['url'] ?? data['fileUrl'] ?? data['path'];
+      final url = data['url'] ?? data['fileUrl'] ?? data['path'];
+      if (url is String && url.startsWith('/')) {
+        return '$storageUrl$url';
+      }
+      return url;
     }
     return null;
   }
@@ -85,15 +93,16 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   }
 
   Future<File> _compressFoto(File file) async {
-    final targetPath = file.path
-        .replaceFirst('.jpg', '_compressed.jpg')
-        .replaceFirst('.png', '_compressed.png');
+    // Always output JPEG so backend mime filter accepts it.
+    final targetPath =
+        '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg';
     XFile? resultX = await FlutterImageCompress.compressAndGetFile(
       file.absolute.path,
       targetPath,
       minWidth: 800,
       minHeight: 800,
       quality: 90,
+      format: CompressFormat.jpeg,
       keepExif: false,
     );
     if (resultX != null) {
@@ -126,6 +135,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     TextEditingController controller,
   ) async {
     final nameController = TextEditingController(text: initialName);
+    final emailController = TextEditingController();
     final phoneController = TextEditingController();
     final addressController = TextEditingController();
 
@@ -139,6 +149,11 @@ class _CustomPageState extends ConsumerState<CustomPage> {
             TextField(
               controller: nameController,
               decoration: const InputDecoration(labelText: 'Nama'),
+            ),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+              keyboardType: TextInputType.emailAddress,
             ),
             TextField(
               controller: phoneController,
@@ -167,10 +182,13 @@ class _CustomPageState extends ConsumerState<CustomPage> {
       try {
         final baseUrl = NetworkConfig.baseUrl;
         final response = await http.post(
-          Uri.parse('$baseUrl/customers'),
+          Uri.parse('$baseUrl/api/customers'),
           headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
+            'email': emailController.text.trim().isEmpty
+                ? null
+                : emailController.text.trim(),
             'phone': phoneController.text,
             'address': addressController.text,
           }),
@@ -253,28 +271,54 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     if (_fotoFile != null) {
       fotoUrl = await _uploadFoto(_fotoFile);
     }
+    if (_fotoFile != null && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).')),
+        );
+      }
+      return;
+    }
+
+    final weightVal = double.tryParse(_beratTargetController.text.trim()) ?? 0;
+    final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
+        ? _notaOrderController.text.trim()
+        : 'CUST-${DateTime.now().millisecondsSinceEpoch}';
 
     final orderData = {
+      'order_type': 'custom',
+      'order_number': _notaOrderController.text.isNotEmpty
+          ? _notaOrderController.text
+          : null,
       'branch_id': branchId,
-      'order_number': _notaOrderController.text,
+      'user_id': userId,
+      'mode': _modeToko.toLowerCase(),
       'customer_id': _selectedCustomer!['customer_id'],
+      'diskon': 0,
+      'order_items': [
+        {
+          'nama_item': _namaItemController.text.trim(),
+          'kode_produk': generatedKodeProduk,
+          'weight': weightVal,
+          'qty': 1,
+          'harga_per_gram': 0,
+          'photo_produk': fotoUrl,
+          'kategori': 'custom',
+          'jenis': _jenisBarang,
+          'tipe': 'custom',
+          'material': _materialController.text.trim(),
+          'purity': _kadarController.text.trim(),
+        },
+      ],
+      // Extra fields (backend may ignore; kept for future use)
+      'spesifikasi': _spesifikasiController.text.trim(),
+      'asal_material': _asalMaterial,
+      'material_tambahan': _materialTambahanController.text.trim(),
+      'asal_tambahan': _asalTambahan,
+      'estimasi_waktu': _estimasiWaktuController.text.trim(),
       'customer_name': _customerController.text,
       'customer_phone': _customerPhoneController.text,
       'customer_address': _customerAddressController.text,
-      'jenis_barang': _jenisBarang,
-      'nama_item': _namaItemController.text,
-      'spesifikasi': _spesifikasiController.text,
-      'berat_target': _beratTargetController.text,
-      'material': _materialController.text,
-      'asal_material': _asalMaterial,
-      'material_tambahan': _materialTambahanController.text,
-      'asal_tambahan': _asalTambahan,
-      'kadar': _kadarController.text,
-      'estimasi_waktu': _estimasiWaktuController.text,
-      'foto_new': fotoUrl,
-      'user_id': userId,
-      'order_type': 'custom',
-      'status': 'production',
     };
 
     try {

@@ -21,6 +21,12 @@ class _DailyOrdersPaymentsPageState
   bool _isLoading = true;
   String _error = '';
 
+  num _toNum(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v;
+    return num.tryParse(v.toString()) ?? 0;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -252,7 +258,7 @@ class _DailyOrdersPaymentsPageState
               children: [
                 _buildStatItem(
                   'Total',
-                  'Rp ${NumberFormat('#,###', 'id_ID').format(totalAmount)}',
+                  'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(totalAmount))}',
                   Colors.green,
                 ),
                 _buildStatItem(
@@ -278,7 +284,7 @@ class _DailyOrdersPaymentsPageState
                     children: [
                       Text(method['method'] ?? 'Unknown'),
                       Text(
-                        'Rp ${NumberFormat('#,###', 'id_ID').format(method['total_amount'] ?? 0)}',
+                        'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(method['total_amount']))}',
                       ),
                     ],
                   ),
@@ -320,7 +326,7 @@ class _DailyOrdersPaymentsPageState
                       '${order['nama_item'] ?? 'N/A'} - ${order['status']}',
                     ),
                     trailing: Text(
-                      'Rp ${NumberFormat('#,###', 'id_ID').format(double.tryParse(order['total']?.toString() ?? '0') ?? 0)}',
+                      'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(order['total']))}',
                     ),
                   );
                 },
@@ -361,7 +367,7 @@ class _DailyOrdersPaymentsPageState
                       '${payment['customer_name'] ?? 'N/A'} - ${payment['method']}',
                     ),
                     trailing: Text(
-                      'Rp ${NumberFormat('#,###', 'id_ID').format(payment['amount'] ?? 0)}',
+                      'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(payment['amount']))}',
                     ),
                   );
                 },

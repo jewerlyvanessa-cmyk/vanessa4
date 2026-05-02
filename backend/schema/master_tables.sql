@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS items (
     weight NUMERIC NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL,
+    photo_produk TEXT,
     source TEXT DEFAULT 'manual',
     metadata JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

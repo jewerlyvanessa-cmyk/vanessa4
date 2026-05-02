@@ -104,62 +104,16 @@ Upload file → REST API ke backend storage
 
 2.2 Backend (Node.js / FastAPI)
 
-Layered Architecture
+Rujukan skema yang tersedia di repo:
+- `backend/schema/master_tables.sql`
+- `backend/schema/orders.sql`
+- `backend/schema/payments.sql`
 
-Backend API
-├─ routes/    # REST API endpoint
-|- controllers          #database controLL (CRUD)
-├─ services            # Business logic (orders, stock, payments)
-├─ repositories        # DB CRUD abstraction
-├─ models              # ORM / DB mapping
-├─ utils               # Helper, validation
-├─ middleware          # Auth, role & branch guard
-├─ workers             # Edge Functions / cron jobs
-└─ websocket           # Realtime notification
-|_ migrations            # create/update database files
-
-
-Fitur Backend:
-
-Authentication → JWT
-
-Branch & role management per session
-
-Order processing (1 order = 1 item)
-
-Stock history update
-
-PDF / nota generator → file storage
-
-Payment / finance management
-
-Realtime notification → WebSocket / push notification
-
-2.3 Database (PostgreSQL 16)
-
-Tabel utama:
-
-users
-
-branches
-
-user_branch_roles (is_primary)
-
-items
-
-orders
-
-order_items
-
-stock_history
-
-Fitur DB:
-
-JSONB → metadata item fleksibel
-
-Partitioning → tabel transaksi besar (orders, items)
-
-Generated columns → nomor dokumen otomatis
+Tabel inti yang umumnya ada sesuai skema:
+- users, branches
+- orders (dan relasi terkait)
+- payments (dan ringkasannya)
+- items + tabel stock terkait (tergantung migrasi)
 
 Foreign key & constraints untuk integritas data
 

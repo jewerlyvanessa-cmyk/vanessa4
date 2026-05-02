@@ -249,7 +249,7 @@ router.post('/orders', async (req, res) => {
       specification,
       target_weight,
       estimation_time,
-      photo_url,
+      photo_produk,
       scanned_qr,
       branch_id = 1,
       user_id,
@@ -380,7 +380,7 @@ router.post('/orders', async (req, res) => {
         specification,
         target_weight,
         estimation_time,
-        photo_url,
+        photo_produk,
         scanned_qr,
         status,
         branch_id,
@@ -431,7 +431,7 @@ router.post('/orders', async (req, res) => {
           purity,
           status,
           branch_id,
-          photo_url,
+          photo_produk,
           created_at,
           updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
@@ -445,7 +445,7 @@ router.post('/orders', async (req, res) => {
         purity,
         'active', // default status
         branch_id,
-        photo_url,
+        photo_produk,
       ];
 
       const itemResult = await client.query(itemQuery, itemValues);

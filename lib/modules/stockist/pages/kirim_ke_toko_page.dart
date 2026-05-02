@@ -245,32 +245,64 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
 
             return StatefulBuilder(
               builder: (context, setDialogState) {
+                final mq = MediaQuery.sizeOf(context);
+                final maxW = (mq.width - 48).clamp(280.0, 520.0);
+                final maxH = mq.height * 0.72;
                 return AlertDialog(
                   title: const Text('Kirim ke Toko'),
-                  content: SizedBox(
-                    width: 420,
+                  content: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxW, maxHeight: maxH),
                     child: SingleChildScrollView(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           DropdownButtonFormField<String>(
+                            key: ValueKey(toBranchId ?? '__none__'),
                             initialValue: toBranchId,
+                            isExpanded: true,
+                            menuMaxHeight: 320,
                             decoration: const InputDecoration(
                               labelText: 'Tujuan (Cabang)',
                               border: OutlineInputBorder(),
                               isDense: true,
                             ),
+                            hint: const Text('Pilih cabang'),
                             items: availableBranches.map((b) {
                               final id = b['branch_id'].toString();
                               final name = (b['name'] ?? id).toString();
-                              return DropdownMenuItem(value: id, child: Text(name));
+                              return DropdownMenuItem<String>(
+                                value: id,
+                                child: Text(
+                                  name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
                             }).toList(),
-                            onChanged: (v) => setDialogState(() => toBranchId = v),
+                            selectedItemBuilder: (context) {
+                              return availableBranches.map((b) {
+                                final name =
+                                    (b['name'] ?? b['branch_id'] ?? '').toString();
+                                return Align(
+                                  alignment: AlignmentDirectional.centerStart,
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                );
+                              }).toList();
+                            },
+                            onChanged: availableBranches.isEmpty
+                                ? null
+                                : (v) => setDialogState(() => toBranchId = v),
                           ),
                           const SizedBox(height: 12),
                           if (error != null)
                             Text(
                               error,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(color: Colors.red),
                             )
                           else if (isLoading)
@@ -707,7 +739,11 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text('$itemName • $qty • Ke: $toName • Kurir: $kurir'),
+                                  Text(
+                                    '$itemName • $qty • Ke: $toName • Kurir: $kurir',
+                                    maxLines: 4,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                   if (status == 'completed' || status == 'rejected')
                                     Text(
                                       status == 'completed'

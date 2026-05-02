@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
@@ -217,6 +218,14 @@ class _JualPageState extends ConsumerState<JualPage> {
     });
   }
 
+  MediaType _detectImageMediaType(String filePath) {
+    final lower = filePath.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    // default to jpeg for .jpg/.jpeg or unknown (we compress to jpg)
+    return MediaType('image', 'jpeg');
+  }
+
   Future<String?> _uploadFoto(File? foto) async {
     if (foto == null) return null;
 
@@ -226,7 +235,13 @@ class _JualPageState extends ConsumerState<JualPage> {
 
       final uri = Uri.parse('$baseUrl/upload');
       final request = http.MultipartRequest('POST', uri)
-        ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+        ..files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            foto.path,
+            contentType: _detectImageMediaType(foto.path),
+          ),
+        );
 
       final response = await request.send();
       debugPrint('Upload response status: ${response.statusCode}');
@@ -281,15 +296,16 @@ class _JualPageState extends ConsumerState<JualPage> {
   }
 
   Future<File> _compressFoto(File file) async {
-    final targetPath = file.path
-        .replaceFirst('.jpg', '_compressed.jpg')
-        .replaceFirst('.png', '_compressed.png');
+    // Always output JPEG so backend mime filter accepts it.
+    final targetPath =
+        '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg';
     XFile? resultX = await FlutterImageCompress.compressAndGetFile(
       file.absolute.path,
       targetPath,
       minWidth: 800,
       minHeight: 800,
       quality: 90,
+      format: CompressFormat.jpeg,
       keepExif: false,
     );
     if (resultX != null) {
@@ -401,6 +417,7 @@ class _JualPageState extends ConsumerState<JualPage> {
     TextEditingController controller,
   ) async {
     final nameController = TextEditingController(text: initialName);
+    final emailController = TextEditingController();
     final phoneController = TextEditingController();
     final addressController = TextEditingController();
 
@@ -414,6 +431,11 @@ class _JualPageState extends ConsumerState<JualPage> {
             TextField(
               controller: nameController,
               decoration: const InputDecoration(labelText: 'Nama'),
+            ),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+              keyboardType: TextInputType.emailAddress,
             ),
             TextField(
               controller: phoneController,
@@ -446,6 +468,9 @@ class _JualPageState extends ConsumerState<JualPage> {
           headers: NetworkConfig.defaultHeaders,
           body: jsonEncode({
             'name': nameController.text,
+            'email': emailController.text.trim().isEmpty
+                ? null
+                : emailController.text.trim(),
             'phone': phoneController.text,
             'address': addressController.text,
           }),
@@ -562,6 +587,44 @@ class _JualPageState extends ConsumerState<JualPage> {
       debugPrint('No foto file to upload');
     }
 
+    // If user picked a photo but upload failed, stop here.
+    if (_fotoFile != null && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Upload foto gagal. Coba ambil foto ulang atau pilih dari galeri (JPEG/PNG).'),
+          ),
+        );
+      }
+      setState(() {
+        _isSubmitting = false;
+      });
+      return;
+    }
+
+    // Pastikan order_items.photo_produk terisi:
+    // - Jika ambil dari stok dan item belum punya foto, maka foto wajib diupload.
+    if (_saleType == 'from_stock' && _fotoFile == null) {
+      final existingPhoto = (_selectedItem?['photo_url'] ??
+              _selectedItem?['photo_produk'] ??
+              '')
+          .toString()
+          .trim();
+      if (existingPhoto.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Foto produk WAJIB diisi untuk item stok tanpa foto.'),
+            ),
+          );
+        }
+        setState(() {
+          _isSubmitting = false;
+        });
+        return;
+      }
+    }
+
     // Prepare order data according to new schema (tabel2.txt)
     Map<String, dynamic> orderData = {
       'order_type': 'jual',
@@ -629,7 +692,15 @@ class _JualPageState extends ConsumerState<JualPage> {
 
     if (_saleType == 'from_stock' && _selectedItem != null) {
       // For stock items
-      final photoProduk = fotoUrl ?? _selectedItem!['photo_url'];
+      final existingPhoto = (_selectedItem?['photo_url'] ??
+              _selectedItem?['photo_produk'] ??
+              _selectedItem?['photo'] ??
+              '')
+          .toString()
+          .trim();
+      final photoProduk = (fotoUrl?.toString().trim().isNotEmpty ?? false)
+          ? fotoUrl
+          : (existingPhoto.isNotEmpty ? existingPhoto : null);
       debugPrint('Order item photo_produk (from_stock): $photoProduk');
 
       orderItems.add({

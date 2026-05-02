@@ -1,9 +1,73 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:vanessa3/utils/faktur_print.dart';
+import 'package:vanessa3/utils/network_config.dart';
+import 'package:http/http.dart' as http;
+import 'package:qr_flutter/qr_flutter.dart';
 
-class FakturPage extends StatelessWidget {
+class FakturPage extends StatefulWidget {
   final Map<String, dynamic> orderData;
   const FakturPage({super.key, required this.orderData});
+
+  @override
+  State<FakturPage> createState() => _FakturPageState();
+}
+
+class _FakturPageState extends State<FakturPage> {
+  late final Future<String> _branchTitleFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _branchTitleFuture = _resolveBranchTitle();
+  }
+
+  String _branchTitleFromOrderData() {
+    final raw =
+        widget.orderData['branch_name'] ??
+        widget.orderData['nama_cabang'] ??
+        widget.orderData['branchName'] ??
+        widget.orderData['branch_name_text'];
+    final s = raw?.toString().trim();
+    if (s != null && s.isNotEmpty) return s;
+    return '';
+  }
+
+  String _branchIdFromOrderData() {
+    final raw =
+        widget.orderData['branch_id'] ??
+        widget.orderData['branchId'] ??
+        widget.orderData['branch'];
+    final s = raw?.toString().trim();
+    if (s == null) return '';
+    return s;
+  }
+
+  Future<String> _resolveBranchTitle() async {
+    final fromData = _branchTitleFromOrderData();
+    if (fromData.isNotEmpty) return fromData;
+
+    final branchId = _branchIdFromOrderData();
+    if (branchId.isEmpty) return 'VANESSA GOLD & DIAMOND';
+
+    try {
+      final url = '${NetworkConfig.baseUrl}/api/branches/$branchId';
+      final resp = await http
+          .get(Uri.parse(url), headers: NetworkConfig.defaultHeaders)
+          .timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return 'VANESSA GOLD & DIAMOND';
+      final body = resp.body.trim();
+      if (body.isEmpty) return 'VANESSA GOLD & DIAMOND';
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['name'] != null) {
+        final name = decoded['name'].toString().trim();
+        if (name.isNotEmpty) return name;
+      }
+    } catch (_) {}
+
+    return 'VANESSA GOLD & DIAMOND';
+  }
 
   String _fmtMoney(dynamic v) {
     final n = double.tryParse(v?.toString() ?? '');
@@ -14,8 +78,18 @@ class FakturPage extends StatelessWidget {
     );
   }
 
+  String? _photoUrl(dynamic raw) {
+    final s = raw?.toString().trim();
+    if (s == null || s.isEmpty) return null;
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    if (s.startsWith('/')) return '${NetworkConfig.baseUrl}$s';
+    // Fallback: treat as relative filename or path
+    return '${NetworkConfig.baseUrl}/uploads/$s';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final orderData = widget.orderData;
     if (orderData.isEmpty || !orderData.containsKey('order_id')) {
       return Scaffold(
         appBar: AppBar(title: const Text('Faktur Order')),
@@ -34,6 +108,7 @@ class FakturPage extends StatelessWidget {
     final customerAddress = orderData['customer_address'] ??
         orderData['address'] ??
         orderData['alamat'];
+    final orderNumber = (orderData['order_number'] ?? '').toString().trim();
 
     return Scaffold(
       appBar: AppBar(
@@ -63,11 +138,20 @@ class FakturPage extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Center(
-              child: Text(
-                'VANESSA GOLD & DIAMOND',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+              child: FutureBuilder<String>(
+                future: _branchTitleFuture,
+                builder: (context, snapshot) {
+                  final title =
+                      (snapshot.data?.toString().trim().isNotEmpty ?? false)
+                          ? snapshot.data!.toString().trim()
+                          : 'VANESSA GOLD & DIAMOND';
+                  return Text(
+                    title,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                  );
+                },
               ),
             ),
             const Divider(height: 32, thickness: 2),
@@ -89,6 +173,28 @@ class FakturPage extends StatelessWidget {
                   children: [
                     Text('Order ID: ${orderData['order_id'] ?? '-'}'),
                     Text('Order Number: ${orderData['order_number'] ?? '-'}'),
+                    if (orderNumber.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Column(
+                          children: [
+                            QrImageView(
+                              data: orderNumber,
+                              version: QrVersions.auto,
+                              size: 160,
+                              gapless: false,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              orderNumber,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     Text('Tipe Order: ${orderData['order_type'] ?? '-'}'),
                     Text('Status: ${orderData['status'] ?? '-'}'),
                     Text(
@@ -130,6 +236,41 @@ class FakturPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Foto produk (jika ada)
+                        if (_photoUrl(item['photo_produk']) != null) ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Image.network(
+                                _photoUrl(item['photo_produk'])!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade200,
+                                    alignment: Alignment.center,
+                                    child: const Text('Gagal memuat foto'),
+                                  );
+                                },
+                                loadingBuilder: (context, child, loadingProgress) {
+                                  if (loadingProgress == null) return child;
+                                  final expected = loadingProgress.expectedTotalBytes;
+                                  final loaded = loadingProgress.cumulativeBytesLoaded;
+                                  final value = (expected != null && expected > 0)
+                                      ? loaded / expected
+                                      : null;
+                                  return Container(
+                                    color: Colors.grey.shade100,
+                                    alignment: Alignment.center,
+                                    child: CircularProgressIndicator(value: value),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+
                         // 1) Kode
                         Text('Kode: ${item['kode_produk'] ?? '-'}'),
                         const SizedBox(height: 4),

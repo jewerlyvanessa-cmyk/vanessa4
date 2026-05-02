@@ -11,6 +11,7 @@ class DashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final orderStatsAsync = ref.watch(orderTodayStatsProvider);
+    final todayOrdersAsync = ref.watch(todayOrdersProvider);
     final isServerHealthy = ref.watch(healthCheckProvider);
 
     // Listen to user state changes
@@ -75,7 +76,7 @@ class DashboardPage extends ConsumerWidget {
               orderStatsAsync.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, stack) => Center(child: Text('Error: $error')),
-                data: (stats) => _buildStatsCards(stats),
+                data: (stats) => _buildStatsCards(stats, todayOrdersAsync),
               ),
             ],
           ),
@@ -126,7 +127,27 @@ class DashboardPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatsCards(OrderTodayStats stats) {
+  Widget _buildStatsCards(
+    OrderTodayStats stats,
+    AsyncValue<List<Map<String, dynamic>>> todayOrdersAsync,
+  ) {
+    double revenueFromJumlah(List<Map<String, dynamic>> orders) {
+      double sum = 0;
+      for (final o in orders) {
+        final v = o['jumlah'];
+        if (v == null) continue;
+        final n = double.tryParse(v.toString());
+        if (n == null) continue;
+        sum += n;
+      }
+      return sum;
+    }
+
+    final revenueToday = todayOrdersAsync.maybeWhen(
+      data: (orders) => revenueFromJumlah(orders),
+      orElse: () => stats.totalRevenue,
+    );
+
     return Column(
       children: [
         // Row 1: Total Orders & Revenue
@@ -145,7 +166,7 @@ class DashboardPage extends ConsumerWidget {
             Expanded(
               child: _buildStatCard(
                 title: 'Revenue',
-                value: 'Rp ${NumberFormat('#,###').format(stats.totalRevenue)}',
+                value: 'Rp ${NumberFormat('#,###').format(revenueToday)}',
                 icon: Icons.attach_money,
                 color: Colors.green,
                 subtitle: 'Hari ini',

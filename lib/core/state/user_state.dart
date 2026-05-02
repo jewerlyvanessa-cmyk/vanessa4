@@ -48,6 +48,7 @@ class UserState {
 class UserStateNotifier extends StateNotifier<UserState> {
   static const String _userDataKey = 'user_data';
   static const String _authTokenKey = 'auth_token';
+  static const String _apiBaseUrlKey = 'api_base_url';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
   UserStateNotifier() : super(UserState()) {
@@ -60,6 +61,10 @@ class UserStateNotifier extends StateNotifier<UserState> {
       final userDataJson = prefs.getString(_userDataKey);
 
       if (userDataJson != null) {
+        // If API base URL changed (e.g. prod -> local), invalidate the stored token.
+        final savedBaseUrl = prefs.getString(_apiBaseUrlKey) ?? '';
+        final currentBaseUrl = NetworkConfig.baseUrl;
+
         final userData = jsonDecode(userDataJson);
         String authToken = '';
         try {
@@ -67,6 +72,10 @@ class UserStateNotifier extends StateNotifier<UserState> {
         } catch (e) {
           // Backward compatibility: fallback token stored in shared preferences.
           authToken = userData['authToken'] ?? '';
+        }
+
+        if (savedBaseUrl.isNotEmpty && savedBaseUrl != currentBaseUrl) {
+          authToken = '';
         }
 
         state = UserState(
@@ -79,6 +88,16 @@ class UserStateNotifier extends StateNotifier<UserState> {
           branches: List<Map<String, dynamic>>.from(userData['branches'] ?? []),
         );
         NetworkConfig.setAuthToken(authToken.isEmpty ? null : authToken);
+
+        // Persist current baseUrl for next boot.
+        await prefs.setString(_apiBaseUrlKey, currentBaseUrl);
+
+        // If we invalidated token due to baseUrl change, make sure it is cleared from storage too.
+        if (authToken.isEmpty) {
+          try {
+            await _secureStorage.delete(key: _authTokenKey);
+          } catch (_) {}
+        }
       }
     } catch (e) {
       // If loading fails, keep the default empty state
@@ -99,6 +118,7 @@ class UserStateNotifier extends StateNotifier<UserState> {
         'branches': state.branches,
       };
       await prefs.setString(_userDataKey, jsonEncode(userData));
+      await prefs.setString(_apiBaseUrlKey, NetworkConfig.baseUrl);
       if (state.authToken.isNotEmpty) {
         await _secureStorage.write(key: _authTokenKey, value: state.authToken);
       } else {
@@ -165,6 +185,7 @@ class UserStateNotifier extends StateNotifier<UserState> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_userDataKey);
+      await prefs.remove(_apiBaseUrlKey);
       await _secureStorage.delete(key: _authTokenKey);
       NetworkConfig.setAuthToken(null);
     } catch (e) {

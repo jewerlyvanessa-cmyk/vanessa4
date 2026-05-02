@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../utils/network_config.dart';
 import '../utils/network_connectivity.dart';
+import '../services/offline_sync_service.dart';
 
 // Network status state
 class NetworkState {
@@ -92,6 +93,11 @@ class NetworkStatusNotifier extends StateNotifier<NetworkState> {
         statusMessage: statusMessage,
         latency: latency,
       );
+
+      if (isOnline && isBackendReachable) {
+        // Fire-and-forget: flush any offline write queue.
+        unawaited(OfflineSyncService.syncPending());
+      }
     } catch (e) {
       state = const NetworkState(
         isOnline: false,

@@ -1,16 +1,52 @@
-# vanessa3
+# Vanessa (vanessa3)
 
-A new Flutter project.
+Aplikasi operasional toko & workshop berbasis **Flutter** dengan backend **Node.js (Express)**, database **PostgreSQL**, upload storage, dan realtime WebSocket.
 
-## Getting Started
+## Dokumentasi utama
 
-This project is a starting point for a Flutter application.
+- **Arsitektur**: `ARCHITECTURE.md`
+- Dokumen lain: `DOKUMENTASI_INDEX.md`, `START_HERE.md`, `arsitektur_aplikasi.md`
 
-A few resources to get you started if this is your first Flutter project:
+## Struktur repo (ringkas)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- Frontend Flutter: `lib/`
+- Backend Express: `backend/`
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Menjalankan aplikasi (ringkas)
+
+### Frontend (Flutter)
+
+```bash
+flutter pub get
+flutter run
+```
+
+### Backend (Express)
+
+```bash
+cd backend
+npm install
+node server.js
+```
+
+Catatan:
+- Port backend **default** ditentukan di `backend/server.js` (`process.env.PORT || 3000`).
+- Aplikasi Flutter mengambil base URL dari `lib/utils/network_config.dart` (saat ini diarahkan ke port `4000`).
+- Jika kamu menjalankan backend lokal dan Flutter tidak bisa konek, cek bagian **“Port & Deployment”** di `ARCHITECTURE.md`.
+
+## Database migrations (node-pg-migrate)
+
+Repo ini mendukung migrasi via `node-pg-migrate` (JS) di folder `backend/migrations_js/`.
+
+```bash
+# Create a new migration
+npm run migrate:create -- add_new_table
+
+# Run migrations
+npm run migrate:up
+
+# Rollback one migration
+npm run migrate:down
+```
+
+Konfigurasi DB dibaca dari env (lihat `backend/.env.example`) melalui `backend/migrate.config.cjs`.

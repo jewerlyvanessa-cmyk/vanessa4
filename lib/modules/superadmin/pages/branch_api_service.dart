@@ -115,15 +115,28 @@ class BranchApiService {
   }
 
   Future<bool> deleteBranch(String branchId) async {
-    try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/branches/$branchId'),
-        headers: NetworkConfig.defaultHeaders,
-      );
-      return response.statusCode == 200;
-    } catch (e) {
-      throw Exception('Error deleting branch: $e');
+    final response = await http.delete(
+      Uri.parse('$baseUrl/branches/$branchId'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+
+    if (response.statusCode == 200) return true;
+
+    // Prefer backend-provided error message when present.
+    final body = response.body.trim();
+    if (body.isNotEmpty) {
+      try {
+        final decoded = json.decode(body);
+        if (decoded is Map && decoded['error'] != null) {
+          throw Exception(decoded['error'].toString());
+        }
+      } catch (_) {
+        // Not JSON; fall through to show raw body.
+      }
+      throw Exception(body);
     }
+
+    throw Exception('HTTP ${response.statusCode}');
   }
 
   Future<List<Map<String, dynamic>>> searchBranches(String query, {String? status}) async {

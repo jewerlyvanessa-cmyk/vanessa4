@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  flutter:
+    name: Flutter analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  backend:
+    name: Backend sanity checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install node deps (root)
+        run: npm ci
+
+      - name: Ensure OpenAPI exists
+        run: test -f backend/docs/openapi.yaml
+
+      - name: Node syntax check
+        run: |
+          node -c backend/server.js
+          node -c backend/app.js
+          node -c backend/middleware/auth.js
+          node -c backend/websocket/emit.js
+          node -c backend/storage/local.storage.js
+          node -c backend/storage/storage.service.js
+
