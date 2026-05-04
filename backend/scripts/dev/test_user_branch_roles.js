@@ -1,10 +1,20 @@
+/**
+ * Dev helper: starts backend/server.js from this repo and GETs /user-branch-roles/:id.
+ * Run from repo root: node backend/scripts/dev/test_user_branch_roles.js
+ */
 const http = require('http');
+const path = require('path');
+const { spawn } = require('child_process');
 
-// Test user-branch-roles endpoint
+const roleId = process.argv[2] || '11';
+const backendDir = path.join(__dirname, '..', '..');
+
 const testEndpoint = () => {
-  const req = http.get('http://localhost:3000/user-branch-roles/11', (res) => {
+  const req = http.get(`http://localhost:3000/user-branch-roles/${roleId}`, (res) => {
     let data = '';
-    res.on('data', chunk => data += chunk);
+    res.on('data', (chunk) => {
+      data += chunk;
+    });
     res.on('end', () => {
       console.log('Status:', res.statusCode);
       console.log('Response:', data.substring(0, 500));
@@ -24,11 +34,9 @@ const testEndpoint = () => {
   });
 };
 
-// Start server first
-const { spawn } = require('child_process');
 const server = spawn('node', ['server.js'], {
-  cwd: '/Users/macbookpro2019/Documents/vanessa/vanessa 3/vanessa3/backend',
-  stdio: 'inherit'
+  cwd: backendDir,
+  stdio: 'inherit',
 });
 
 server.on('error', (err) => {
@@ -36,12 +44,10 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-// Wait for server to start
 setTimeout(() => {
   testEndpoint();
 }, 3000);
 
-// Cleanup on exit
 process.on('exit', () => {
   server.kill();
 });
