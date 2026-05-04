@@ -1,5 +1,7 @@
 # Miscellaneous
 .backend_server_pid
+# Cursor / IDE artifact filenames
+*Code*Citations*.md
 *.class
 *.log
 *.pyc
@@ -60,8 +62,8 @@ app.*.map.json
 /backend/uploads/*
 !/backend/uploads/.gitkeep
 
-# Optional mini upload server secrets
-/storage/express-backend/.env
+# Legacy mini upload server (removed from repo; ignore local leftovers)
+/storage/express-backend/
 
 # Ad-hoc screenshots at repo root
 /flutter_*.png

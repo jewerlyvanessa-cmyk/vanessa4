@@ -60,9 +60,7 @@ Dokumen ini menjelaskan arsitektur aplikasi **Vanessa** end-to-end: **Flutter cl
   - `backend/schema/`: SQL schema yang disimpan di repo (struktur nyata ada di bagian “Database”).
   - `backend/migrations/`: migrasi SQL.
   - `backend/db.js`: koneksi DB.
-- **Catatan folder legacy**:
-  - `express-backend/`: saat ini hanya berisi `uploads/` (bukan backend utama).
-- **Dokumentasi lain** (opsional): `arsitektur_aplikasi.md`, `DOKUMENTASI_INDEX.md`, dll.
+- **Dokumentasi lain** (opsional): `docs/arsitektur_aplikasi.md`, `docs/DOKUMENTASI_INDEX.md`, dll.
 
 ## Konfigurasi Network (Frontend)
 
