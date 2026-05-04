@@ -14,7 +14,6 @@ Semua berkas Markdown proyek (selain berkas ini) berada di folder **`docs/`**.
 - Frontend Flutter: `lib/`
 - Backend Express: `backend/`
 - Dokumentasi Markdown: `docs/`
-- Skrip uji / utilitas Node ad-hoc (dev): `backend/scripts/dev/` — jalankan dari root repo, misalnya `node backend/scripts/dev/test_db.js`
 
 ## Menjalankan aplikasi (ringkas)
 
