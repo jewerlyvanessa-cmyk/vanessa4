@@ -1,10 +1,13 @@
+const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+
+const backendRoot = path.join(__dirname, '..', '..');
 
 // Start server
 console.log('Starting server...');
 const server = spawn('node', ['server.js'], {
-  cwd: __dirname,
+  cwd: backendRoot,
   stdio: 'inherit'
 });
 

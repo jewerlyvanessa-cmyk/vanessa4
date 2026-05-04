@@ -1,4 +1,5 @@
-const db = require('./db');
+const path = require('path');
+const db = require(path.join(__dirname, '..', '..', 'db'));
 
 async function testOrderSaving() {
   console.log('🧪 Testing Order Saving Functionality...\n');

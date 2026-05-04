@@ -4,13 +4,17 @@ Aplikasi operasional toko & workshop berbasis **Flutter** dengan backend **Node.
 
 ## Dokumentasi utama
 
-- **Arsitektur**: `ARCHITECTURE.md`
-- Dokumen lain: `DOKUMENTASI_INDEX.md`, `START_HERE.md`, `arsitektur_aplikasi.md`
+Semua berkas Markdown proyek (selain berkas ini) berada di folder **`docs/`**.
+
+- **Arsitektur**: `docs/ARCHITECTURE.md`
+- Indeks & mulai cepat: `docs/DOKUMENTASI_INDEX.md`, `docs/START_HERE.md`, `docs/arsitektur_aplikasi.md`
 
 ## Struktur repo (ringkas)
 
 - Frontend Flutter: `lib/`
 - Backend Express: `backend/`
+- Dokumentasi Markdown: `docs/`
+- Skrip uji / utilitas Node ad-hoc (dev): `backend/scripts/dev/` — jalankan dari root repo, misalnya `node backend/scripts/dev/test_db.js`
 
 ## Menjalankan aplikasi (ringkas)
 
@@ -32,7 +36,7 @@ node server.js
 Catatan:
 - Port backend **default** ditentukan di `backend/server.js` (`process.env.PORT || 3000`).
 - Aplikasi Flutter mengambil base URL dari `lib/utils/network_config.dart` (saat ini diarahkan ke port `4000`).
-- Jika kamu menjalankan backend lokal dan Flutter tidak bisa konek, cek bagian **“Port & Deployment”** di `ARCHITECTURE.md`.
+- Jika kamu menjalankan backend lokal dan Flutter tidak bisa konek, cek bagian **“Port & Deployment”** di `docs/ARCHITECTURE.md`.
 
 ## Database migrations (node-pg-migrate)
 

@@ -62,15 +62,12 @@ Baca lengkap: **`TROUBLESHOOTING_LOGIN.md`**
 
 **Quick Fix untuk Testing:**
 ```bash
-# 1. Setup user test
-cd backend && node setup_test_user.js
+# 1. Buat user uji (ikuti langkah di TROUBLESHOOTING_LOGIN.md atau lewat Superadmin)
 
 # 2. Start server
 cd backend && node server.js
 
-# 3. Test credentials di Flutter:
-# Username: admin
-# Password: admin123
+# 3. Gunakan credential yang sudah ada di DB / yang baru dibuat
 ```
 
 ---

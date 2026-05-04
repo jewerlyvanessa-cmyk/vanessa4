@@ -24,8 +24,8 @@ const isPasswordValid = password === user.password_hash;
 
 **Status:** ✅ **SUDAH DIPERBAIKI**
 
-### **2. Setup User Test**
-Script `setup_test_user.js` telah dibuat untuk membuat user test dengan credentials yang benar:
+### **2. Setup user uji**
+Contoh credential yang sering dipakai untuk uji manual (hash SHA256 dari `admin123`):
 
 ```bash
 Username: admin
@@ -33,7 +33,7 @@ Password: admin123
 SHA256 Hash: 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9
 ```
 
-**Status:** ✅ **SUDAH DIBUAT & DIJALANKAN**
+Buat atau perbarui baris di tabel `users` lewat SQL, seed, atau UI Superadmin. Skrip `setup_test_user.js` **tidak** disertakan di repo ini.
 
 ### **3. Verifikasi Server Setup**
 
@@ -153,11 +153,7 @@ adb shell ping -c 3 10.0.2.2
 
 ### **Issue 1: "Invalid username or password"**
 **Cause:** User tidak ada di database
-**Solution:**
-```bash
-cd backend
-node setup_test_user.js
-```
+**Solution:** Pastikan user ada di DB (insert manual, migrasi seed, atau alur superadmin) dan `password_hash` cocok dengan hash yang dikirim aplikasi.
 
 ### **Issue 2: "Database connection error"**
 **Cause:** PostgreSQL tidak berjalan atau config salah
@@ -209,7 +205,7 @@ Expected Module: cs
 
 ### **Manual API Test:**
 ```bash
-# Copy hash dari setup_test_user.js output
+# Hash SHA256 untuk password plain "admin123" (contoh)
 HASH="240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"
 
 curl -X POST http://10.0.2.2:3000/login \
@@ -234,8 +230,7 @@ curl -X POST http://10.0.2.2:3000/login \
 ## 🎯 **Quick Fix Commands**
 
 ```bash
-# 1. Setup user test
-cd backend && node setup_test_user.js
+# 1. Pastikan user uji ada di database (lihat bagian Setup user uji di atas)
 
 # 2. Start server
 cd backend && node server.js

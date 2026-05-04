@@ -335,23 +335,14 @@ Best For:
   ✓ Network connectivity problems
 ```
 
-### 12. **setup_test_user.js** 🔧
+### 12. **Setup user untuk uji login** 🔧
 ```
-📍 Path: backend/setup_test_user.js
-📊 Size: ~80 baris
-🎯 Purpose: Script untuk membuat user test dengan credentials yang benar
+📍 Referensi: docs/TROUBLESHOOTING_LOGIN.md
+🎯 Purpose: Panduan membuat user test / verifikasi credential
 
-Contains:
-  • SHA256 password hashing
-  • User creation (admin/admin123)
-  • Branch setup
-  • Role assignment (cs & kasir)
-  • Database constraint handling
-
-Best For:
-  ✓ Quick user setup for testing
-  ✓ Password hash verification
-  ✓ Database initialization
+Catatan:
+  • Skrip `setup_test_user.js` yang pernah didokumentasikan tidak ada di repo saat ini;
+    ikuti langkah di TROUBLESHOOTING_LOGIN.md atau buat user lewat alur superadmin.
 ```
 
 ---

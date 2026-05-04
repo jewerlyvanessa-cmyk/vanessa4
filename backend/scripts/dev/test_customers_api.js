@@ -1,10 +1,13 @@
+const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+
+const backendRoot = path.join(__dirname, '..', '..');
 
 // Start server
 console.log('Starting server...');
 const server = spawn('node', ['server.js'], {
-  cwd: __dirname,
+  cwd: backendRoot,
   stdio: 'inherit'
 });
 
@@ -15,12 +18,12 @@ server.on('error', (err) => {
 
 // Wait for server to start
 setTimeout(() => {
-  console.log('Testing /branches endpoint...');
+  console.log('Testing /api/customers endpoint...');
 
   const options = {
     hostname: 'localhost',
     port: 3000,
-    path: '/branches',
+    path: '/api/customers',
     method: 'GET',
     headers: {
       'Content-Type': 'application/json'
@@ -37,7 +40,8 @@ setTimeout(() => {
       body += chunk;
     });
     res.on('end', () => {
-      console.log('Response body:', body);
+      console.log('Response body length:', body.length);
+      console.log('Response body (first 200 chars):', body.substring(0, 200));
 
       // Stop server
       server.kill('SIGTERM');
