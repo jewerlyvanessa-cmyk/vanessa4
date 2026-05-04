@@ -54,3 +54,13 @@ app.*.map.json
 /backend/.env
 /backend/.env.*
 !/backend/.env.example
+
+# User uploads (runtime — keep directory only)
+/backend/uploads/*
+!/backend/uploads/.gitkeep
+
+# Optional mini upload server secrets
+/storage/express-backend/.env
+
+# Ad-hoc screenshots at repo root
+/flutter_*.png

@@ -3,7 +3,7 @@
 ## Features
 - POST /upload: Upload image, save to uploads/, store file URL in PostgreSQL
 - GET /files: List all uploaded files
-- .env for DB config
+- `.env` for DB config (local only; never commit — it is listed in the repo root `.gitignore`).
 
 ## Setup
 1. Copy `.env.example` to `.env` dan edit DB credentials
