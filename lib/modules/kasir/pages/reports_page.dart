@@ -1,12 +1,14 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class KasirReportsPage extends ConsumerStatefulWidget {
   const KasirReportsPage({super.key});
@@ -324,23 +326,98 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
                 if (_payments.isEmpty)
                   const Text('Tidak ada pembayaran pada tanggal ini')
                 else
-                  ..._payments.take(50).map((p) {
-                    if (p is! Map) return const SizedBox.shrink();
-                    final orderId = p['order_id']?.toString() ?? '-';
-                    final methodRaw =
-                        (p['payment_method'] ?? p['method'] ?? '-').toString();
-                    final amount = double.tryParse(p['amount']?.toString() ?? '') ?? 0;
-                    return Card(
-                      child: ListTile(
-                        dense: true,
-                        title: Text('Order #$orderId'),
-                        subtitle: Text(
-                          'Metode: ${_kasirPaymentMethodLabel(methodRaw)}',
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final cs = Theme.of(context).colorScheme;
+final slice = _payments.take(50).toList();
+                      final rows = <DataRow>[];
+                      for (var i = 0; i < slice.length; i++) {
+                        final p = slice[i];
+                        if (p is! Map) continue;
+                        final orderId = p['order_id']?.toString() ?? '-';
+                        final methodRaw =
+                            (p['payment_method'] ?? p['method'] ?? '-')
+                                .toString();
+                        final amount =
+                            double.tryParse(p['amount']?.toString() ?? '') ?? 0;
+                        rows.add(
+                          DataRow(
+                            color: WidgetStateProperty.resolveWith((s) {
+                              if (s.contains(WidgetState.hovered)) {
+                                return cs.primary.withValues(alpha: 0.06);
+                              }
+                              return i.isOdd
+                                  ? cs.surfaceContainerHighest
+                                      .withValues(alpha: 0.45)
+                                  : null;
+                            }),
+                            cells: [
+                              DataCell(
+                                Text(
+                                  '#$orderId',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Text(_kasirPaymentMethodLabel(methodRaw)),
+                              ),
+                              DataCell(
+                                Text(
+                                  'Rp ${money.format(amount)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: cs.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final minW = math.max(c.maxWidth, 520.0);
+                      return Material(
+                        elevation: 0,
+                        color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: cs.outlineVariant.withValues(alpha: 0.45),
+                          ),
                         ),
-                        trailing: Text('Rp ${money.format(amount)}'),
-                      ),
-                    );
-                  }),
+                        clipBehavior: Clip.antiAlias,
+                        child: Scrollbar(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(minWidth: minW),
+                              child: DataTable(
+                                headingRowColor: WidgetStateProperty.all(
+                                  cs.surfaceContainerHigh,
+                                ),
+dataRowMinHeight: 40,
+                                dataRowMaxHeight: 48,
+                                columnSpacing: 12,
+                                horizontalMargin: 10,
+                                showCheckboxColumn: false,
+                                dividerThickness: 0.5,
+                                columns: [
+                                  DataColumn(label: dataTableColumnLabel('Order')),
+                                  DataColumn(label: dataTableColumnLabel('Metode')),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Nominal'),
+                                    numeric: true,
+                                  ),
+                                ],
+                                rows: rows,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                 if (_payments.length > 50)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),

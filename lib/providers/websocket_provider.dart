@@ -19,6 +19,9 @@ final notificationProvider = StreamProvider<String>((ref) {
   return webSocketNotifier.notificationStream;
 });
 
+/// Dipanggil saat server mengirim `force_logout` (mis. superadmin memutus sesi).
+typedef AdminForceLogoutCallback = void Function(String? reason);
+
 class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
@@ -29,6 +32,11 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   static const Duration reconnectDelay = Duration(seconds: 3);
   static const int _maxPresenceAttempts = 12;
   bool _isLoggedIn = false;
+  /// Setelah admin kick: jangan auto-reconnect sampai login lagi.
+  bool _suppressReconnect = false;
+
+  /// Di-set dari [VanessaApp] agar token & navigasi ke login bisa dibersihkan.
+  static AdminForceLogoutCallback? onAdminForceLogout;
   final StreamController<String> _notificationController =
       StreamController<String>.broadcast();
   final StreamController<dynamic> _rawMessageController =
@@ -47,6 +55,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     if (authToken != null && authToken.isNotEmpty) {
       NetworkConfig.setAuthToken(authToken);
     }
+    _suppressReconnect = false;
     if (!_isLoggedIn) {
       _isLoggedIn = true;
     }
@@ -120,8 +129,15 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
           _rawMessageController.add(message);
           try {
             final data = jsonDecode(message);
-            if (data['type'] == 'notification') {
-              _notificationController.add(data['message']);
+            if (data is Map && data['type'] == 'force_logout') {
+              final reason = data['reason']?.toString();
+              debugPrint('🔌 WebSocket: force_logout — $reason');
+              disconnectAfterKick();
+              onAdminForceLogout?.call(reason);
+              return;
+            }
+            if (data is Map && data['type'] == 'notification') {
+              _notificationController.add(data['message'] as String? ?? '');
             }
           } catch (e) {
             debugPrint('🔌 WebSocket: Failed to parse message: $e');
@@ -153,6 +169,11 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     _isReconnecting = true;
     state = null;
 
+    if (_suppressReconnect || !_isLoggedIn) {
+      _isReconnecting = false;
+      return;
+    }
+
     if (_reconnectAttempts < maxReconnectAttempts) {
       _reconnectAttempts++;
       _reconnectTimer?.cancel();
@@ -167,6 +188,9 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
 
   void _handleConnectionClosed() {
     state = null;
+    if (_suppressReconnect || !_isLoggedIn) {
+      return;
+    }
     if (!_isReconnecting && _reconnectAttempts < maxReconnectAttempts) {
       // Attempt to reconnect if not already reconnecting
       _reconnectTimer?.cancel();
@@ -196,7 +220,23 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     }
   }
 
+  /// Tutup WebSocket setelah server memutus sesi; tidak reconnect.
+  void disconnectAfterKick() {
+    _suppressReconnect = true;
+    _isLoggedIn = false;
+    _presenceRetryTimer?.cancel();
+    _presenceRetryTimer = null;
+    _reconnectTimer?.cancel();
+    _reconnectAttempts = maxReconnectAttempts;
+    try {
+      _channel?.sink.close(status.goingAway);
+    } catch (_) {}
+    _channel = null;
+    state = null;
+  }
+
   void disconnect() {
+    _suppressReconnect = false;
     _presenceRetryTimer?.cancel();
     _presenceRetryTimer = null;
     _reconnectTimer?.cancel();

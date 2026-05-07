@@ -1,12 +1,27 @@
 const express = require('express');
 const db = require('../db');
+const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
+const {
+  getOrderItemsPkColumn: _getOrderItemsPkColumn,
+  orderItemLineAmountSql: _orderItemLineAmountSql,
+} = require('./order_items_sql');
 
 const ORDER_CALENDAR_TIMEZONE =
   /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
     ? String(process.env.BUSINESS_TIMEZONE).trim()
     : 'Asia/Jakarta';
+
+/** Hanya CS yang melihat statistik order hari ini milik sendiri; role lain = seluruh cabang. */
+function orderTodayUserFilterFromJwt(req) {
+  const role = (req.user?.role || '').toString().trim().toLowerCase();
+  const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
+  if (role === 'cs' && Number.isFinite(uid) && uid > 0) {
+    return uid;
+  }
+  return null;
+}
 const multer = require('multer');
-const path = require('path');
+const _path = require('path');
 const crypto = require('crypto');
 
 const router = express.Router();
@@ -49,47 +64,113 @@ const upload = multer({
 // Returns today's order statistics for dashboard
 router.get('/dashboard/order-today', async (req, res) => {
   try {
-    const branchId = req.query.branch_id || 1; // Default branch_id for now
-    const userId = req.query.user_id; // Optional user_id filter
+    const scope = await assertUserCanAccessBranchForOrders(req, req.query.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
+    }
+    const branchId = scope.branchId;
+    const filterUserId = orderTodayUserFilterFromJwt(req);
+
+    const datePat = /^\d{4}-\d{2}-\d{2}$/;
+    const dfClient = String(req.query.date_from ?? '').trim();
+    const dtClient = String(req.query.date_to ?? '').trim();
+    const useRange = datePat.test(dfClient) && datePat.test(dtClient);
+    const MAX_RANGE_DAYS = 93;
+
+    if (useRange && dfClient > dtClient) {
+      return res.status(400).json({ error: 'date_from harus <= date_to' });
+    }
+    if (useRange) {
+      const spanMs =
+        Date.parse(`${dtClient}T12:00:00`) - Date.parse(`${dfClient}T12:00:00`);
+      const spanDays = Math.floor(spanMs / 86400000) + 1;
+      if (spanDays > MAX_RANGE_DAYS) {
+        return res.status(400).json({
+          error: `Rentang tanggal maksimal ${MAX_RANGE_DAYS} hari`,
+        });
+      }
+    }
 
     const dateFromClient =
       req.query.date && String(req.query.date).trim().length > 0
         ? String(req.query.date).trim()
         : '';
     const localToday =
-      dateFromClient && /^\d{4}-\d{2}-\d{2}$/.test(dateFromClient)
+      !useRange && dateFromClient && datePat.test(dateFromClient)
         ? dateFromClient
-        : new Intl.DateTimeFormat('en-CA', {
-            timeZone: ORDER_CALENDAR_TIMEZONE,
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          }).format(new Date());
+        : !useRange
+          ? new Intl.DateTimeFormat('en-CA', {
+              timeZone: ORDER_CALENDAR_TIMEZONE,
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(new Date())
+          : null;
 
-    // Align "hari ini" with BUSINESS_TIMEZONE (default Asia/Jakarta), not DB session UTC.
-    let whereClause = `WHERE (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date AND o.branch_id = $2`;
-    let queryParams = [localToday, branchId];
-    let paramIndex = 3;
+    // Sama dengan /api/orders/daily: order dihitung per hari kalender bisnis (created_at) ATAU ada pembayaran completed di hari itu. Rentang = gabungan hari $1..$2.
+    const dayMatchSql = useRange
+      ? `(
+      (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date BETWEEN $1::date AND $2::date
+      OR EXISTS (
+        SELECT 1
+        FROM payments p
+        WHERE p.order_id = o.order_id
+          AND p.status = 'completed'
+          AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date BETWEEN $1::date AND $2::date
+      )
+    )`
+      : `(
+      (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date
+      OR EXISTS (
+        SELECT 1
+        FROM payments p
+        WHERE p.order_id = o.order_id
+          AND p.status = 'completed'
+          AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = $1::date
+      )
+    )`;
+    let whereClause = useRange
+      ? `WHERE ${dayMatchSql} AND o.branch_id = $3`
+      : `WHERE ${dayMatchSql} AND o.branch_id = $2`;
+    let queryParams = useRange
+      ? [dfClient, dtClient, branchId]
+      : [localToday, branchId];
+    let paramIndex = useRange ? 4 : 3;
 
-    if (userId) {
+    if (filterUserId != null) {
       whereClause += ` AND o.user_id = $${paramIndex}`;
-      queryParams.push(userId);
+      queryParams.push(filterUserId);
       paramIndex++;
     }
 
-    // Query for order statistics
+    // Query for order statistics (tanpa JOIN order_items — hindari inflate COUNT/SUM & kolom jumlah/total yang tidak konsisten).
+    // Selesai / pending selaras filter Flutter CS: done = completed|sold; open = selain itu kecuali cancelled.
     const statsQuery = `
       SELECT
         COUNT(DISTINCT o.order_id) as total_orders,
-        COUNT(DISTINCT CASE WHEN o.status = 'completed' THEN o.order_id END) as completed_orders,
-        COUNT(DISTINCT CASE WHEN o.status != 'completed' THEN o.order_id END) as pending_orders,
+        COUNT(DISTINCT CASE WHEN lower(trim(coalesce(o.status::text, ''))) IN ('completed', 'sold') THEN o.order_id END) as completed_orders,
+        COUNT(DISTINCT CASE WHEN lower(trim(coalesce(o.status::text, ''))) NOT IN ('completed', 'sold', 'cancelled') THEN o.order_id END) as pending_orders,
         COUNT(DISTINCT CASE WHEN o.order_type = 'jual' THEN o.order_id END) as jual_count,
         COUNT(DISTINCT CASE WHEN o.order_type = 'buyback' THEN o.order_id END) as buyback_count,
         COUNT(DISTINCT CASE WHEN o.order_type = 'service' THEN o.order_id END) as service_count,
         COUNT(DISTINCT CASE WHEN o.order_type = 'custom' THEN o.order_id END) as custom_count,
-        COALESCE(SUM(CASE WHEN o.order_type = 'buyback' THEN oi.total ELSE 0 END), 0) as total_revenue
+        -- Revenue rules:
+        -- - jual completed/sold: uang masuk (positive)
+        -- - buyback completed: uang keluar (negative)
+        -- - service/custom: belum dihitung sebagai revenue di sini (0)
+        COALESCE(SUM(CASE
+          WHEN o.order_type = 'jual'
+            AND lower(trim(coalesce(o.status::text, ''))) IN ('completed', 'sold')
+            THEN COALESCE(o.jumlah, o.total, 0)
+          ELSE 0
+        END), 0) as revenue_jual_completed,
+        COALESCE(SUM(CASE
+          WHEN o.order_type = 'buyback'
+            AND lower(trim(coalesce(o.status::text, ''))) = 'completed'
+            THEN COALESCE(o.jumlah, o.total, 0)
+          ELSE 0
+        END), 0) as expense_buyback_completed
       FROM orders o
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
       ${whereClause}
     `;
 
@@ -115,17 +196,28 @@ router.get('/dashboard/order-today', async (req, res) => {
         'on-service': 0,
         production: 0,
       },
-      total_revenue: parseFloat(stats.total_revenue) || 0,
+      revenue_by_type_completed: {
+        jual: parseFloat(stats.revenue_jual_completed) || 0,
+        // Pengeluaran buyback: negatif supaya mudah dihitung net.
+        buyback: -1 * (parseFloat(stats.expense_buyback_completed) || 0),
+        service: 0,
+        custom: 0,
+      },
+      revenue_jual_completed: parseFloat(stats.revenue_jual_completed) || 0,
+      expense_buyback_completed: parseFloat(stats.expense_buyback_completed) || 0,
+      // Backward-compatible: total_revenue kini = net (jual - buyback)
+      total_revenue:
+        (parseFloat(stats.revenue_jual_completed) || 0) -
+        (parseFloat(stats.expense_buyback_completed) || 0),
       date: new Date().toISOString(),
     };
 
-    // Get status breakdown
+    // Status per order (bukan per baris join item).
     const statusQuery = `
-      SELECT status, COUNT(*) as count
+      SELECT o.status, COUNT(DISTINCT o.order_id) as count
       FROM orders o
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
       ${whereClause}
-      GROUP BY status
+      GROUP BY o.status
     `;
 
     const statusResult = await db.query(statusQuery, queryParams);
@@ -136,7 +228,10 @@ router.get('/dashboard/order-today', async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('Error fetching order today stats:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({
+      error: 'Internal server error',
+      detail: error && error.message ? String(error.message) : undefined,
+    });
   }
 });
 
@@ -157,22 +252,19 @@ router.get('/orders/today', async (req, res) => {
         o.order_id,
         o.order_type,
         o.status,
-        o.total_akhir as total_amount,
+        o.total as total_amount,
         o.created_at,
         o.updated_at,
         c.customer_id,
         c.name as customer_name,
         c.phone as customer_phone,
         c.address as customer_address,
-        oi.id as order_item_id,
+        oi.order_item_id,
         oi.nama_item,
         oi.weight,
         oi.harga_per_gram,
-        oi.jumlah,
-        oi.diskon,
-        oi.total,
-        oi.total_akhir as item_total_akhir,
-        oi.terbilang,
+        oi.qty,
+        oi.jumlah as item_jumlah,
         i.kategori,
         i.jenis,
         i.tipe,
@@ -181,10 +273,10 @@ router.get('/orders/today', async (req, res) => {
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON o.item_id = i.item_id
+      LEFT JOIN items i ON oi.item_id = i.item_id
       WHERE (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date
       AND o.branch_id = $2
-      ORDER BY o.created_at DESC, o.order_id DESC, oi.id ASC
+      ORDER BY o.created_at DESC, o.order_id DESC, oi.order_item_id ASC
     `;
 
     const result = await db.query(query, [localToday, branchId]);
@@ -214,16 +306,18 @@ router.get('/orders/today', async (req, res) => {
 
       // Add item to order if it exists
       if (row.order_item_id) {
+        const line = parseFloat(row.item_jumlah) || 0;
         ordersMap.get(orderId).items.push({
           id: row.order_item_id,
           nama_item: row.nama_item,
           weight: parseFloat(row.weight) || 0,
           harga_per_gram: parseFloat(row.harga_per_gram) || 0,
-          jumlah: parseFloat(row.jumlah) || 0,
-          diskon: parseFloat(row.diskon) || 0,
-          total: parseFloat(row.total) || 0,
-          total_akhir: parseFloat(row.item_total_akhir) || 0,
-          terbilang: row.terbilang,
+          qty: parseInt(row.qty, 10) || 0,
+          jumlah: line,
+          diskon: 0,
+          total: line,
+          total_akhir: line,
+          terbilang: null,
           kategori: row.kategori,
           jenis: row.jenis,
           tipe: row.tipe,
@@ -237,7 +331,10 @@ router.get('/orders/today', async (req, res) => {
     res.json(orders);
   } catch (error) {
     console.error('Error fetching today orders:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({
+      error: 'Internal server error',
+      detail: error && error.message ? String(error.message) : undefined,
+    });
   }
 });
 
@@ -266,15 +363,15 @@ router.post('/orders', async (req, res) => {
       branch_id = 1,
       user_id,
       // Jual order specific fields
-      customer_name,
-      customer_phone,
-      customer_address,
+      customer_name: _customer_name,
+      customer_phone: _customer_phone,
+      customer_address: _customer_address,
       nama_item,
       jual_weight,
-      kategori,
-      jenis,
-      tipe,
-      kadar,
+      kategori: _kategori,
+      jenis: _jenis,
+      tipe: _tipe,
+      kadar: _kadar,
       qty,
       harga_per_gram,
       jumlah,
@@ -284,7 +381,7 @@ router.post('/orders', async (req, res) => {
       terbilang,
       foto_new,
       mode,
-      status: statusFromRequest,
+      status: _statusFromRequest,
     } = req.body;
 
     // Validate required fields based on order type
@@ -293,16 +390,25 @@ router.post('/orders', async (req, res) => {
     }
 
     // Determine status based on order type
+    const wfEst = parseFloat(
+      req.body?.service_estimated_total ?? req.body?.custom_estimated_total ?? 0
+    );
+    const wfDp = parseFloat(
+      req.body?.service_dp_amount ?? req.body?.custom_dp_amount ?? 0
+    );
+    const hasWfCost =
+      Number.isFinite(wfEst) && wfEst > 0 &&
+      Number.isFinite(wfDp) && wfDp > 0;
     let status;
     switch (order_type) {
       case 'service':
-        status = 'in_workshop';
+        status = hasWfCost ? 'pending' : 'sent-to-workshop';
         break;
       case 'buyback':
         status = 'buyback';
         break;
       case 'custom':
-        status = 'custom_work';
+        status = hasWfCost ? 'pending' : 'sent-to-workshop';
         break;
       case 'jual':
         status = req.body.status || 'pending'; // Use status from request or default to 'pending'
@@ -350,7 +456,7 @@ router.post('/orders', async (req, res) => {
         status,
         terbilang,
         qty || 1,
-        foto_new || photo_url,
+        foto_new || photo_produk,
         user_id,
         branch_id,
       ];

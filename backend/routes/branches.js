@@ -21,7 +21,19 @@ router.get('/branches', async (req, res) => {
       FROM branches
       ORDER BY name ASC
     `);
-    res.json(result.rows);
+    const rows = result.rows.map((row) => ({
+      branch_id: row.branch_id != null ? String(row.branch_id) : '',
+      name: row.name,
+      code: row.code,
+      alias: row.alias,
+      initials: row.initials,
+      address: row.address,
+      phone_number: row.phone_number,
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
+    res.json(rows);
   } catch (err) {
     console.error('Error fetching branches:', err.message);
     res.status(500).json({ error: 'Server Error' });

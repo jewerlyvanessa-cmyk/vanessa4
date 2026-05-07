@@ -1,22 +1,26 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:http_parser/http_parser.dart';
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
+import '../../../utils/pembulatan.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart';
 import 'faktur_page.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'
     if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class BuybackPage extends ConsumerStatefulWidget {
   const BuybackPage({super.key, this.client});
@@ -48,7 +52,10 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   final TextEditingController _kategoriController = TextEditingController();
   final TextEditingController _jenisController = TextEditingController();
   final TextEditingController _tipeController = TextEditingController();
-  final TextEditingController _orderIdController = TextEditingController();
+  // Nota lama (untuk lookup order jual sebelumnya)
+  final TextEditingController _notaLamaController = TextEditingController();
+  // Kode produk (untuk disimpan di order_items buyback)
+  final TextEditingController _kodeProdukController = TextEditingController();
   final TextEditingController _notaOrderController = TextEditingController();
   final TextEditingController _nomorNotaController = TextEditingController();
   final TextEditingController _scannedQrController = TextEditingController();
@@ -77,9 +84,12 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   // Flag untuk menandai apakah data material/kadar berasal dari order_items
   bool _isDataFromOrderItems = false;
 
+  // Jika lookup nota lama tidak ditemukan, user bisa isi manual
+  bool _isManualEntry = false;
+  bool _isCustomerLockedFromLookup = false;
+
   // State untuk kondisi barang
   String _kondisiFisik = 'BAIK';
-  final List<String> _selectedKerusakan = [];
   String _notaJual = 'ADA';
   String? _selectedTipeBarang;
 
@@ -144,7 +154,8 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     _kategoriController.dispose();
     _jenisController.dispose();
     _tipeController.dispose();
-    _orderIdController.dispose();
+    _notaLamaController.dispose();
+    _kodeProdukController.dispose();
     _notaOrderController.dispose();
     _nomorNotaController.dispose();
     _scannedQrController.dispose();
@@ -193,7 +204,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
     final nilaiResale =
         (hargaPerGram * penyesuaianBerat) + nilaiUntungRugi - potonganKondisi;
-    _nilaiResaleController.text = nilaiResale.toStringAsFixed(0);
+    // Pembulatan: round UP ke kelipatan 5.000 (konsisten dengan backend).
+    final rounded = pembulatan(nilaiResale.ceil());
+    _nilaiResaleController.text = rounded.toString();
   }
 
   @override
@@ -247,6 +260,14 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     }
   }
 
+  MediaType _detectImageMediaType(String filePath) {
+    final lower = filePath.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    // default to jpeg for .jpg/.jpeg or unknown (we compress to jpg)
+    return MediaType('image', 'jpeg');
+  }
+
   void _generateOrderNumber() {
     final userState = ref.read(userStateProvider);
 
@@ -287,9 +308,21 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     });
   }
 
+  void _switchToManualEntryMode() {
+    _isManualEntry = true;
+    _isDataFromOrderItems = false;
+    _selectedItem = null;
+    _nomorNotaController.clear();
+    _isCustomerLockedFromLookup = false;
+    _selectedCustomer = null;
+    _customerController.clear();
+    _customerPhoneController.clear();
+    _customerAddressController.clear();
+  }
+
   Future<void> _lookupItem() async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final notaLama = _orderIdController.text.trim();
+    final notaLama = _notaLamaController.text.trim();
 
     if (notaLama.isEmpty) {
       scaffoldMessenger.showSnackBar(
@@ -300,6 +333,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
     setState(() {
       _isLookingUpItem = true;
+      _isManualEntry = false;
     });
 
     try {
@@ -320,8 +354,15 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
         if (orderData == null || orderData.isEmpty) {
           scaffoldMessenger.showSnackBar(
-            const SnackBar(content: Text('Order tidak ditemukan')),
+            const SnackBar(
+              content: Text(
+                'Nota lama tidak ditemukan. Silakan isi data secara manual.',
+              ),
+            ),
           );
+          setState(() {
+            _switchToManualEntryMode();
+          });
           return;
         }
 
@@ -335,6 +376,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
               ),
             ),
           );
+          setState(() {
+            _switchToManualEntryMode();
+          });
           return;
         }
 
@@ -351,6 +395,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
           _customerAddressController.text = orderData['customer_address'] ?? '';
           _nomorNotaController.text =
               orderData['order_number'] ?? orderData['nota_order'] ?? '';
+          _isCustomerLockedFromLookup = true;
         });
 
         // Get valid items from order
@@ -362,6 +407,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
               content: Text('Order tidak memiliki item yang valid'),
             ),
           );
+          setState(() {
+            _switchToManualEntryMode();
+          });
           return;
         }
 
@@ -376,11 +424,17 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         scaffoldMessenger.showSnackBar(
           SnackBar(content: Text('Error: ${response.statusCode}')),
         );
+        setState(() {
+          _switchToManualEntryMode();
+        });
       }
     } catch (e) {
       scaffoldMessenger.showSnackBar(
         SnackBar(content: Text('Error looking up item: $e')),
       );
+      setState(() {
+        _switchToManualEntryMode();
+      });
     } finally {
       setState(() {
         _isLookingUpItem = false;
@@ -391,30 +445,76 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   Future<void> _showItemSelectionDialog(List<dynamic> items) async {
     final selectedItem = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Pilih Item'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return ListTile(
-                title: Text(item['name'] ?? 'Unknown Item'),
-                subtitle: Text('Kode: ${item['kode_produk'] ?? ''}'),
-                onTap: () => Navigator.of(context).pop(item),
-              );
-            },
+      builder: (dialogContext) {
+        final cs = Theme.of(dialogContext).colorScheme;
+        final dataRows = <DataRow>[];
+        for (var i = 0; i < items.length; i++) {
+          final item = items[i] as Map<String, dynamic>;
+          final picked = Map<String, dynamic>.from(item);
+          dataRows.add(
+            DataRow(
+              color: WidgetStateProperty.resolveWith((s) {
+                if (s.contains(WidgetState.hovered)) {
+                  return cs.primary.withValues(alpha: 0.06);
+                }
+                return i.isOdd
+                    ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                    : null;
+              }),
+              onSelectChanged: (_) => Navigator.of(dialogContext).pop(picked),
+              cells: [
+                DataCell(Text('${item['name'] ?? 'Unknown Item'}')),
+                DataCell(Text('${item['kode_produk'] ?? '—'}')),
+              ],
+            ),
+          );
+        }
+        return AlertDialog(
+          title: const Text('Pilih Item'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: math.min(
+              360.0,
+              MediaQuery.sizeOf(dialogContext).height * 0.5,
+            ),
+            child: Material(
+              elevation: 0,
+              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.45),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: DataTable(
+                    headingRowColor: WidgetStateProperty.all(
+                      cs.surfaceContainerHigh,
+                    ),
+                    dataRowMinHeight: 40,
+                    columnSpacing: 12,
+                    horizontalMargin: 12,
+                    showCheckboxColumn: false,
+                    columns: [
+                      DataColumn(label: dataTableColumnLabel('Item')),
+                      DataColumn(label: dataTableColumnLabel('Kode')),
+                    ],
+                    rows: dataRows,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Batal'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Batal'),
+            ),
+          ],
+        );
+      },
     );
 
     if (selectedItem != null) {
@@ -426,22 +526,22 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     Logger.logInfo('Selecting item: $item');
     Logger.logInfo('Item material: ${item['material']}');
     Logger.logInfo('Item purity: ${item['purity']}');
-    Logger.logInfo('Item item_material: ${item['item_material']}');
-    Logger.logInfo('Item item_purity: ${item['item_purity']}');
 
     // Auto-fill form fields dari item yang dipilih
     final namaItem =
         item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '';
     final berat = (item['weight'] ?? item['item_weight'] ?? 0).toString();
-    // Prioritize data from order_items over items table, but fallback if empty
+    // Prefer order_items snapshot; fallback to items if legacy orders didn't store it.
     final material =
-        (item['material'] != null && item['material'].toString().isNotEmpty)
-        ? item['material']
-        : (item['item_material'] ?? '');
+        ((item['material'] ?? '').toString().trim().isNotEmpty
+                ? item['material']
+                : item['item_material'] ?? '')
+            .toString();
     final kadar =
-        (item['purity'] != null && item['purity'].toString().isNotEmpty)
-        ? item['purity']
-        : (item['item_purity'] ?? '');
+        ((item['purity'] ?? '').toString().trim().isNotEmpty
+                ? item['purity']
+                : item['item_purity'] ?? '')
+            .toString();
     final kategori = item['kategori'] ?? item['item_kategori'] ?? '';
     final jenis = item['jenis'] ?? item['item_jenis'] ?? '';
     final tipe = item['tipe'] ?? item['item_tipe'] ?? '';
@@ -456,7 +556,8 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     setState(() {
       _selectedItem = item;
       _notaJual = _nomorNotaController.text.isNotEmpty ? 'ADA' : 'TIDAK_ADA';
-      _isDataFromOrderItems = true; // Mark that data comes from order_items
+      _isDataFromOrderItems = true; // material/kadar sourced from order_items
+      _isManualEntry = false;
 
       // Fill all controllers
       _namaItemController.text = namaItem;
@@ -470,7 +571,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       _quantityController.text = quantity;
       _hargaBeliController.text = hargaBeli;
       _hargaPerGramController.text = hargaPerGram;
-      _orderIdController.text = kodeProduk;
+      _kodeProdukController.text = kodeProduk.toString();
     });
 
     Logger.logInfo('Form fields updated:');
@@ -617,16 +718,8 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       return;
     }
 
-    if (_selectedItem == null) {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Pilih item dari penjualan terlebih dahulu dengan mencari nota lama',
-          ),
-        ),
-      );
-      return;
-    }
+    // Allow manual entry when nota lama not found.
+    // When lookup succeeds, _selectedItem is filled and will be used for item_id (if any).
 
     if (_fotoFile == null) {
       scaffoldMessenger.showSnackBar(
@@ -649,6 +742,14 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         'order_number': _notaOrderController.text.isNotEmpty
             ? _notaOrderController.text
             : null,
+        'nota_lama': _notaLamaController.text.trim().isEmpty
+            ? null
+            : _notaLamaController.text.trim(),
+        'reference_order_number': _nomorNotaController.text.trim().isEmpty
+            ? (_notaLamaController.text.trim().isEmpty
+                  ? null
+                  : _notaLamaController.text.trim())
+            : _nomorNotaController.text.trim(),
         'customer_id': _selectedCustomer!['customer_id'],
         'branch_id': int.parse(
           userState.branch.isNotEmpty ? userState.branch : '1',
@@ -671,7 +772,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
             'tipe': _notaJual == 'TIDAK_ADA'
                 ? (_selectedTipeBarang ?? '')
                 : _tipeController.text.trim(),
-            'kode_produk': _orderIdController.text.trim(),
+            'kode_produk': _kodeProdukController.text.trim(),
             'qty': int.tryParse(_quantityController.text.trim()) ?? 1,
             'subtotal':
                 (double.tryParse(_hargaBeliController.text.trim()) ?? 0) *
@@ -682,14 +783,16 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
             'diskon': 0,
             'kondisi_barang': {
               'kondisi_fisik': _kondisiFisik,
-              'kerusakan': _selectedKerusakan,
               'berat_akhir': double.tryParse(_beratController.text.trim()),
               'penyesuaian_berat':
                   double.tryParse(_penyesuaianBeratController.text.trim()) ?? 0,
               'harga_per_gram':
                   double.tryParse(_hargaPerGramController.text.trim()) ?? 0,
               'nilai_untung_rugi': _nilaiUntungRugiController.text.trim(),
-              'nota_jual': _notaJual,
+              'nota_jual': _nomorNotaController.text.trim().isEmpty
+                  ? _notaLamaController.text.trim()
+                  : _nomorNotaController.text.trim(),
+              'nota_jual_status': _notaJual,
               'potongan_kondisi':
                   double.tryParse(_potonganKondisiController.text.trim()) ?? 0,
               'nilai_resale':
@@ -706,6 +809,15 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       final uri = Uri.parse('$baseUrl/orders');
 
       final request = http.MultipartRequest('POST', uri);
+      // IMPORTANT: MultipartRequest tidak otomatis membawa header Authorization
+      // dari NetworkConfig.defaultHeaders (yang biasa dipakai untuk JSON request).
+      // Untuk multipart, biarkan Content-Type di-handle oleh MultipartRequest,
+      // tapi tetap kirim token auth.
+      final token = NetworkConfig.authToken;
+      if (token != null && token.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+      request.headers['Accept'] = 'application/json';
 
       // Add JSON data
       request.fields['order_data'] = jsonEncode(orderData);
@@ -713,18 +825,26 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       // Add image file if exists
       if (_fotoFile != null) {
         request.files.add(
-          await http.MultipartFile.fromPath('photo', _fotoFile!.path),
+          await http.MultipartFile.fromPath(
+            'photo',
+            _fotoFile!.path,
+            contentType: _detectImageMediaType(_fotoFile!.path),
+          ),
         );
       }
 
       final response = await request.send();
       final responseData = await response.stream.bytesToString();
 
+      if (response.statusCode == 401) {
+        NetworkConfig.notifyUnauthorized();
+      }
       if (response.statusCode == 201) {
         final jsonResponse = jsonDecode(responseData);
 
-        // Refresh orders list
+        // Refresh "order hari ini" list + stats
         ref.invalidate(todayOrdersProvider);
+        ref.invalidate(orderTodayStatsProvider);
 
         // Navigate to faktur page
         if (mounted) {
@@ -890,7 +1010,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                 onFieldSubmitted,
                               ) {
                                 return TextFormField(
-                                  controller: _orderIdController,
+                                  controller: _notaLamaController,
                                   focusNode: focusNode,
                                   decoration: InputDecoration(
                                     hintText: 'Masukkan nomor nota lama...',
@@ -909,7 +1029,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                             Icons.qr_code_scanner,
                                           ),
                                           onPressed: () =>
-                                              _scanAndFill(_orderIdController),
+                                              _scanAndFill(_notaLamaController),
                                           tooltip: 'Scan QR nota lama',
                                         ),
                                       ],
@@ -936,12 +1056,12 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                   Expanded(
                     child: TextFormField(
                       controller: _nomorNotaController,
-                      readOnly: true,
+                      readOnly: !_isManualEntry,
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         hintText: 'Nomor nota jual akan muncul setelah lookup',
-                        filled: true,
-                        fillColor: Colors.grey[100],
+                        filled: !_isManualEntry,
+                        fillColor: !_isManualEntry ? Colors.grey[100] : null,
                       ),
                     ),
                   ),
@@ -979,264 +1099,304 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: StatefulBuilder(
-                          builder: (context, setFieldState) {
-                            return Row(
-                              children: [
-                                Expanded(
-                                  child: customerList.isLoading
-                                      ? const TextField(
-                                          decoration: InputDecoration(
-                                            labelText: 'Loading customers...',
-                                          ),
-                                          enabled: false,
-                                        )
-                                      : Autocomplete<Map<String, dynamic>>(
-                                          initialValue:
-                                              _selectedCustomer != null
-                                              ? TextEditingValue(
-                                                  text:
-                                                      _selectedCustomer!['name'] ??
-                                                      _selectedCustomer!['nama'] ??
-                                                      '',
-                                                )
-                                              : null,
-                                          optionsBuilder:
-                                              (
-                                                TextEditingValue
-                                                textEditingValue,
-                                              ) {
-                                                if (textEditingValue.text ==
-                                                    '') {
-                                                  return const Iterable<
-                                                    Map<String, dynamic>
-                                                  >.empty();
-                                                }
-                                                final input = textEditingValue
-                                                    .text
-                                                    .toLowerCase();
-                                                final suggestions = customerList
-                                                    .customers
-                                                    .where((c) {
-                                                      final name =
-                                                          (c['name'] ??
-                                                                  c['nama'] ??
-                                                                  '')
-                                                              .toString()
+                        child:
+                            _isCustomerLockedFromLookup &&
+                                _selectedCustomer != null
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextFormField(
+                                    controller: _customerController,
+                                    readOnly: true,
+                                    decoration: InputDecoration(
+                                      hintText: 'Customer dari order jual',
+                                      border: const OutlineInputBorder(),
+                                      filled: true,
+                                      fillColor: Colors.grey[100],
+                                      suffixIcon: const Tooltip(
+                                        message:
+                                            'Customer otomatis dari nota lama',
+                                        child: Icon(Icons.lock_outline),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : StatefulBuilder(
+                                builder: (context, setFieldState) {
+                                  return Row(
+                                    children: [
+                                      Expanded(
+                                        child: customerList.isLoading
+                                            ? const TextField(
+                                                decoration: InputDecoration(
+                                                  labelText:
+                                                      'Loading customers...',
+                                                ),
+                                                enabled: false,
+                                              )
+                                            : Autocomplete<
+                                                Map<String, dynamic>
+                                              >(
+                                                initialValue:
+                                                    _selectedCustomer != null
+                                                    ? TextEditingValue(
+                                                        text:
+                                                            _selectedCustomer!['name'] ??
+                                                            _selectedCustomer!['nama'] ??
+                                                            '',
+                                                      )
+                                                    : null,
+                                                optionsBuilder:
+                                                    (
+                                                      TextEditingValue
+                                                      textEditingValue,
+                                                    ) {
+                                                      if (textEditingValue
+                                                              .text ==
+                                                          '') {
+                                                        return const Iterable<
+                                                          Map<String, dynamic>
+                                                        >.empty();
+                                                      }
+                                                      final input =
+                                                          textEditingValue.text
                                                               .toLowerCase();
-                                                      return name.contains(
-                                                        input,
-                                                      );
-                                                    })
-                                                    .toList();
-                                                return suggestions; // Return new list each time
-                                              },
-                                          displayStringForOption: (option) =>
-                                              option['name'] ??
-                                              option['nama'] ??
-                                              '',
-                                          onSelected: (customer) {
-                                            setState(() {
-                                              _customerPhoneController.text =
-                                                  customer['phone'] ??
-                                                  customer['no_hp'] ??
-                                                  '';
-                                              _customerAddressController.text =
-                                                  customer['address'] ??
-                                                  customer['alamat'] ??
-                                                  '';
-                                              _selectedCustomer = customer;
-                                            });
-                                          },
-                                          fieldViewBuilder:
-                                              (
-                                                context,
-                                                controller,
-                                                focusNode,
-                                                onFieldSubmitted,
-                                              ) {
-                                                // Use the provided controller directly, no need to sync with _customerController
-                                                return Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Row(
-                                                      children: [
-                                                        Expanded(
-                                                          child: TextFormField(
-                                                            controller:
-                                                                controller,
-                                                            focusNode:
-                                                                focusNode,
-                                                            decoration: const InputDecoration(
-                                                              hintText:
-                                                                  'Cari customer...',
-                                                              border:
-                                                                  OutlineInputBorder(),
-                                                              contentPadding:
-                                                                  EdgeInsets.symmetric(
-                                                                    vertical:
+                                                      final suggestions = customerList
+                                                          .customers
+                                                          .where((c) {
+                                                            final name =
+                                                                (c['name'] ??
+                                                                        c['nama'] ??
+                                                                        '')
+                                                                    .toString()
+                                                                    .toLowerCase();
+                                                            return name
+                                                                .contains(
+                                                                  input,
+                                                                );
+                                                          })
+                                                          .toList();
+                                                      return suggestions;
+                                                    },
+                                                displayStringForOption:
+                                                    (option) =>
+                                                        option['name'] ??
+                                                        option['nama'] ??
+                                                        '',
+                                                onSelected: (customer) {
+                                                  setState(() {
+                                                    _customerPhoneController
+                                                            .text =
+                                                        customer['phone'] ??
+                                                        customer['no_hp'] ??
+                                                        '';
+                                                    _customerAddressController
+                                                            .text =
+                                                        customer['address'] ??
+                                                        customer['alamat'] ??
+                                                        '';
+                                                    _selectedCustomer =
+                                                        customer;
+                                                    _isCustomerLockedFromLookup =
+                                                        false;
+                                                  });
+                                                },
+                                                fieldViewBuilder:
+                                                    (
+                                                      context,
+                                                      controller,
+                                                      focusNode,
+                                                      onFieldSubmitted,
+                                                    ) {
+                                                      return Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          Row(
+                                                            children: [
+                                                              Expanded(
+                                                                child: TextFormField(
+                                                                  controller:
+                                                                      controller,
+                                                                  focusNode:
+                                                                      focusNode,
+                                                                  decoration: const InputDecoration(
+                                                                    hintText:
+                                                                        'Cari customer...',
+                                                                    border:
+                                                                        OutlineInputBorder(),
+                                                                    contentPadding: EdgeInsets.symmetric(
+                                                                      vertical:
+                                                                          12,
+                                                                      horizontal:
+                                                                          12,
+                                                                    ),
+                                                                  ),
+                                                                  onChanged: (_) =>
+                                                                      setState(
+                                                                        () {},
+                                                                      ),
+                                                                  onFieldSubmitted:
+                                                                      (value) =>
+                                                                          onFieldSubmitted(),
+                                                                  validator: (value) {
+                                                                    if (value ==
+                                                                            null ||
+                                                                        value
+                                                                            .isEmpty) {
+                                                                      return 'Customer wajib dipilih';
+                                                                    }
+                                                                    return null;
+                                                                  },
+                                                                ),
+                                                              ),
+                                                              Builder(
+                                                                builder: (context) {
+                                                                  final input =
+                                                                      controller
+                                                                          .text
+                                                                          .trim()
+                                                                          .toLowerCase();
+                                                                  final exists = ref
+                                                                      .read(
+                                                                        customersProvider,
+                                                                      )
+                                                                      .customers
+                                                                      .any((c) {
+                                                                        final name =
+                                                                            (c['name'] ??
+                                                                                    c['nama'] ??
+                                                                                    '')
+                                                                                .toString()
+                                                                                .toLowerCase();
+                                                                        return name ==
+                                                                                input &&
+                                                                            input.isNotEmpty;
+                                                                      });
+                                                                  if (!exists &&
+                                                                      input
+                                                                          .isNotEmpty) {
+                                                                    return Row(
+                                                                      mainAxisSize:
+                                                                          MainAxisSize
+                                                                              .min,
+                                                                      children: [
+                                                                        IconButton(
+                                                                          icon: const Icon(
+                                                                            Icons.person_add,
+                                                                            size:
+                                                                                20,
+                                                                          ),
+                                                                          tooltip:
+                                                                              'Tambah Customer',
+                                                                          onPressed: () => _showAddCustomerDialog(
+                                                                            controller.text,
+                                                                            controller,
+                                                                          ),
+                                                                          padding:
+                                                                              EdgeInsets.zero,
+                                                                          constraints:
+                                                                              const BoxConstraints(),
+                                                                        ),
+                                                                        IconButton(
+                                                                          icon: const Icon(
+                                                                            Icons.qr_code_scanner,
+                                                                            size:
+                                                                                20,
+                                                                          ),
+                                                                          tooltip:
+                                                                              'Scan QR Customer',
+                                                                          onPressed: () => _scanAndFill(
+                                                                            controller,
+                                                                          ),
+                                                                          padding:
+                                                                              EdgeInsets.zero,
+                                                                          constraints:
+                                                                              const BoxConstraints(),
+                                                                        ),
+                                                                      ],
+                                                                    );
+                                                                  } else {
+                                                                    return Row(
+                                                                      mainAxisSize:
+                                                                          MainAxisSize
+                                                                              .min,
+                                                                      children: [
+                                                                        IconButton(
+                                                                          icon: const Icon(
+                                                                            Icons.person_add,
+                                                                            size:
+                                                                                20,
+                                                                          ),
+                                                                          tooltip:
+                                                                              'Tambah Customer',
+                                                                          onPressed: () => _showAddCustomerDialog(
+                                                                            controller.text,
+                                                                            controller,
+                                                                          ),
+                                                                          padding:
+                                                                              EdgeInsets.zero,
+                                                                          constraints:
+                                                                              const BoxConstraints(),
+                                                                        ),
+                                                                        IconButton(
+                                                                          icon: const Icon(
+                                                                            Icons.qr_code_scanner,
+                                                                            size:
+                                                                                20,
+                                                                          ),
+                                                                          tooltip:
+                                                                              'Scan QR Customer',
+                                                                          onPressed: () => _scanAndFill(
+                                                                            controller,
+                                                                          ),
+                                                                          padding:
+                                                                              EdgeInsets.zero,
+                                                                          constraints:
+                                                                              const BoxConstraints(),
+                                                                        ),
+                                                                      ],
+                                                                    );
+                                                                  }
+                                                                },
+                                                              ),
+                                                            ],
+                                                          ),
+                                                          if (_selectedCustomer !=
+                                                              null) ...[
+                                                            const SizedBox(
+                                                              height: 4,
+                                                            ),
+                                                            Text(
+                                                              'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
+                                                              style:
+                                                                  const TextStyle(
+                                                                    fontSize:
                                                                         12,
-                                                                    horizontal:
-                                                                        12,
+                                                                    color: Colors
+                                                                        .grey,
                                                                   ),
                                                             ),
-                                                            onChanged: (_) =>
-                                                                setState(() {}),
-                                                            onFieldSubmitted:
-                                                                (value) =>
-                                                                    onFieldSubmitted(),
-                                                            validator: (value) {
-                                                              if (value ==
-                                                                      null ||
-                                                                  value
-                                                                      .isEmpty) {
-                                                                return 'Customer wajib dipilih';
-                                                              }
-                                                              return null;
-                                                            },
-                                                          ),
-                                                        ),
-                                                        Builder(
-                                                          builder: (context) {
-                                                            final input =
-                                                                controller.text
-                                                                    .trim()
-                                                                    .toLowerCase();
-                                                            final exists = ref
-                                                                .read(
-                                                                  customersProvider,
-                                                                )
-                                                                .customers
-                                                                .any((c) {
-                                                                  final name =
-                                                                      (c['name'] ??
-                                                                              c['nama'] ??
-                                                                              '')
-                                                                          .toString()
-                                                                          .toLowerCase();
-                                                                  return name ==
-                                                                          input &&
-                                                                      input
-                                                                          .isNotEmpty;
-                                                                });
-                                                            if (!exists &&
-                                                                input
-                                                                    .isNotEmpty) {
-                                                              return Row(
-                                                                mainAxisSize:
-                                                                    MainAxisSize
-                                                                        .min,
-                                                                children: [
-                                                                  IconButton(
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .person_add,
-                                                                      size: 20,
-                                                                    ),
-                                                                    tooltip:
-                                                                        'Tambah Customer',
-                                                                    onPressed: () => _showAddCustomerDialog(
-                                                                      controller
-                                                                          .text,
-                                                                      controller,
-                                                                    ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    constraints:
-                                                                        const BoxConstraints(),
-                                                                  ),
-                                                                  IconButton(
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .qr_code_scanner,
-                                                                      size: 20,
-                                                                    ),
-                                                                    tooltip:
-                                                                        'Scan QR Customer',
-                                                                    onPressed: () =>
-                                                                        _scanAndFill(
-                                                                          controller,
-                                                                        ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    constraints:
-                                                                        const BoxConstraints(),
-                                                                  ),
-                                                                ],
-                                                              );
-                                                            } else {
-                                                              return Row(
-                                                                mainAxisSize:
-                                                                    MainAxisSize
-                                                                        .min,
-                                                                children: [
-                                                                  IconButton(
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .person_add,
-                                                                      size: 20,
-                                                                    ),
-                                                                    tooltip:
-                                                                        'Tambah Customer',
-                                                                    onPressed: () => _showAddCustomerDialog(
-                                                                      controller
-                                                                          .text,
-                                                                      controller,
-                                                                    ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    constraints:
-                                                                        const BoxConstraints(),
-                                                                  ),
-                                                                  IconButton(
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .qr_code_scanner,
-                                                                      size: 20,
-                                                                    ),
-                                                                    tooltip:
-                                                                        'Scan QR Customer',
-                                                                    onPressed: () =>
-                                                                        _scanAndFill(
-                                                                          controller,
-                                                                        ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    constraints:
-                                                                        const BoxConstraints(),
-                                                                  ),
-                                                                ],
-                                                              );
-                                                            }
-                                                          },
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    if (_selectedCustomer !=
-                                                        null) ...[
-                                                      const SizedBox(height: 4),
-                                                      Text(
-                                                        'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                                        style: const TextStyle(
-                                                          fontSize: 12,
-                                                          color: Colors.grey,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ],
-                                                );
-                                              },
-                                        ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
+                                                          ],
+                                                        ],
+                                                      );
+                                                    },
+                                              ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
                       ),
                     ],
                   ),
@@ -1249,6 +1409,22 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const SizedBox(height: 16),
+                  // Kode Produk (boleh manual / terisi dari lookup)
+                  Row(
+                    children: [
+                      const SizedBox(width: 100, child: Text('Kode Produk')),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _kodeProdukController,
+                          decoration: const InputDecoration(
+                            hintText: 'Kode produk (opsional)',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   // Kategori
                   Row(
@@ -1412,7 +1588,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                 onFieldSubmitted,
                               ) {
                                 return TextFormField(
-                                  controller: controller,
+                                  controller: _materialController,
                                   focusNode: focusNode,
                                   readOnly: _isDataFromOrderItems,
                                   decoration: InputDecoration(
@@ -1460,7 +1636,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                 onFieldSubmitted,
                               ) {
                                 return TextFormField(
-                                  controller: controller,
+                                  controller: _kadarController,
                                   focusNode: focusNode,
                                   readOnly: _isDataFromOrderItems,
                                   decoration: InputDecoration(
@@ -1649,75 +1825,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  // Kerusakan (jika kondisi rusak)
-                  if (_kondisiFisik == 'RUSAK') ...[
-                    Row(
-                      children: [
-                        const SizedBox(width: 100, child: Text('Kerusakan')),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8.0,
-                            children: [
-                              FilterChip(
-                                label: const Text('Patah'),
-                                selected: _selectedKerusakan.contains('Patah'),
-                                onSelected: (selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedKerusakan.add('Patah');
-                                    } else {
-                                      _selectedKerusakan.remove('Patah');
-                                    }
-                                  });
-                                },
-                              ),
-                              FilterChip(
-                                label: const Text('Retak'),
-                                selected: _selectedKerusakan.contains('Retak'),
-                                onSelected: (selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedKerusakan.add('Retak');
-                                    } else {
-                                      _selectedKerusakan.remove('Retak');
-                                    }
-                                  });
-                                },
-                              ),
-                              FilterChip(
-                                label: const Text('Lecet'),
-                                selected: _selectedKerusakan.contains('Lecet'),
-                                onSelected: (selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedKerusakan.add('Lecet');
-                                    } else {
-                                      _selectedKerusakan.remove('Lecet');
-                                    }
-                                  });
-                                },
-                              ),
-                              FilterChip(
-                                label: const Text('Karat'),
-                                selected: _selectedKerusakan.contains('Karat'),
-                                onSelected: (selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedKerusakan.add('Karat');
-                                    } else {
-                                      _selectedKerusakan.remove('Karat');
-                                    }
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                  ],
                   // Catatan Kondisi
                   Row(
                     children: [
@@ -1733,28 +1840,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                             hintText: 'Catatan Kondisi',
                           ),
                           maxLines: 1,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Nilai Untung/Rugi
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text('Nilai Untung/Rugi'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _nilaiUntungRugiController,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            hintText: 'Nilai untung/rugi (otomatis)',
-                            filled: true,
-                            fillColor: Color(0xFFF5F5F5),
-                          ),
                         ),
                       ),
                     ],
@@ -1811,6 +1896,28 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                             hintText: 'Potongan Kondisi (Rp)',
                           ),
                           keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Nilai Untung/Rugi
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 100,
+                        child: Text('Nilai Untung/Rugi'),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _nilaiUntungRugiController,
+                          readOnly: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Nilai untung/rugi (otomatis)',
+                            filled: true,
+                            fillColor: Color(0xFFF5F5F5),
+                          ),
                         ),
                       ),
                     ],

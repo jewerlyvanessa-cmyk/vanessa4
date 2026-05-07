@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart'; // Import for userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 
 // Model untuk Technician Dashboard Data
@@ -97,29 +97,16 @@ class TechnicianDashboardNotifier extends StateNotifier<AsyncValue<TechnicianDas
           StackTrace.current,
         );
       } else {
-        // Fallback to mock data if API not available
-        final mockData = TechnicianDashboardData(
-          pendingWorkOrders: 5,
-          inProgressWorkOrders: 2,
-          completedWorkOrders: 8,
-          recentAssignments: [
-            {'id': 1, 'title': 'Perbaikan Emas Putus', 'status': 'pending'},
-            {'id': 2, 'title': 'Polesan Cincin', 'status': 'in_progress'},
-          ],
-          lastUpdated: DateTime.now(),
+        state = AsyncValue.error(
+          'Failed to load technician dashboard (${response.statusCode})',
+          StackTrace.current,
         );
-        state = AsyncValue.data(mockData);
       }
     } catch (error) {
-      // Fallback to mock data on error
-      final mockData = TechnicianDashboardData(
-        pendingWorkOrders: 0,
-        inProgressWorkOrders: 0,
-        completedWorkOrders: 0,
-        recentAssignments: [],
-        lastUpdated: DateTime.now(),
+      state = AsyncValue.error(
+        'Failed to load technician dashboard: $error',
+        StackTrace.current,
       );
-      state = AsyncValue.data(mockData);
     }
   }
 

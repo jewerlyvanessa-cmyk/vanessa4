@@ -17,6 +17,56 @@ class FakturPage extends StatefulWidget {
 class _FakturPageState extends State<FakturPage> {
   late final Future<String> _branchTitleFuture;
 
+  String _normalizeOrderType(dynamic raw) {
+    return (raw ?? '').toString().trim().toLowerCase();
+  }
+
+  String _orderTypeDisplayLabel(dynamic raw) {
+    final type = _normalizeOrderType(raw);
+    switch (type) {
+      case 'jual':
+        return 'Jual';
+      case 'buyback':
+        return 'Buyback';
+      case 'service':
+        return 'Service';
+      case 'custom':
+        return 'Custom';
+      case 'ambil':
+      case 'pickup':
+      case 'picked_up':
+        return 'Ambil';
+      default:
+        if (type.isEmpty) return '-';
+        return type
+            .split(RegExp(r'[_\s-]+'))
+            .where((e) => e.isNotEmpty)
+            .map((w) => '${w[0].toUpperCase()}${w.substring(1)}')
+            .join(' ');
+    }
+  }
+
+  String _fakturHeading(dynamic raw) {
+    final type = _normalizeOrderType(raw);
+    switch (type) {
+      case 'jual':
+        return 'FAKTUR PENJUALAN';
+      case 'buyback':
+        return 'FAKTUR BUYBACK';
+      case 'service':
+        return 'FAKTUR SERVIS';
+      case 'custom':
+        return 'FAKTUR CUSTOM';
+      case 'ambil':
+      case 'pickup':
+      case 'picked_up':
+        return 'FAKTUR PENGAMBILAN';
+      default:
+        if (type.isEmpty) return 'FAKTUR ORDER';
+        return 'FAKTUR ${_orderTypeDisplayLabel(type).toUpperCase()}';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -72,10 +122,12 @@ class _FakturPageState extends State<FakturPage> {
   String _fmtMoney(dynamic v) {
     final n = double.tryParse(v?.toString() ?? '');
     if (n == null) return v?.toString() ?? '0';
-    return n.toStringAsFixed(0).replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]}.',
-    );
+    return n
+        .toStringAsFixed(0)
+        .replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]}.',
+        );
   }
 
   String? _photoUrl(dynamic raw) {
@@ -102,13 +154,19 @@ class _FakturPageState extends State<FakturPage> {
     // Get order items
     final List<dynamic> items = orderData['items'] ?? [];
     final customerName =
-        orderData['customer_name'] ?? orderData['name'] ?? orderData['customer'];
+        orderData['customer_name'] ??
+        orderData['name'] ??
+        orderData['customer'];
     final customerPhone =
         orderData['customer_phone'] ?? orderData['phone'] ?? orderData['no_hp'];
-    final customerAddress = orderData['customer_address'] ??
+    final customerAddress =
+        orderData['customer_address'] ??
         orderData['address'] ??
         orderData['alamat'];
     final orderNumber = (orderData['order_number'] ?? '').toString().trim();
+    final orderType = orderData['order_type'];
+    final fakturHeading = _fakturHeading(orderType);
+    final orderTypeLabel = _orderTypeDisplayLabel(orderType);
 
     return Scaffold(
       appBar: AppBar(
@@ -129,7 +187,7 @@ class _FakturPageState extends State<FakturPage> {
             // Header
             Center(
               child: Text(
-                'FAKTUR PENJUALAN',
+                fakturHeading,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: Colors.blue[800],
@@ -143,13 +201,13 @@ class _FakturPageState extends State<FakturPage> {
                 builder: (context, snapshot) {
                   final title =
                       (snapshot.data?.toString().trim().isNotEmpty ?? false)
-                          ? snapshot.data!.toString().trim()
-                          : 'VANESSA GOLD & DIAMOND';
+                      ? snapshot.data!.toString().trim()
+                      : 'VANESSA GOLD & DIAMOND';
                   return Text(
                     title,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   );
                 },
               ),
@@ -195,7 +253,7 @@ class _FakturPageState extends State<FakturPage> {
                         ),
                       ),
                     ],
-                    Text('Tipe Order: ${orderData['order_type'] ?? '-'}'),
+                    Text('Tipe Order: $orderTypeLabel'),
                     Text('Status: ${orderData['status'] ?? '-'}'),
                     Text(
                       'Tanggal: ${orderData['created_at'] != null ? DateTime.parse(orderData['created_at']).toLocal().toString().split('.')[0] : '-'}',
@@ -252,19 +310,25 @@ class _FakturPageState extends State<FakturPage> {
                                     child: const Text('Gagal memuat foto'),
                                   );
                                 },
-                                loadingBuilder: (context, child, loadingProgress) {
-                                  if (loadingProgress == null) return child;
-                                  final expected = loadingProgress.expectedTotalBytes;
-                                  final loaded = loadingProgress.cumulativeBytesLoaded;
-                                  final value = (expected != null && expected > 0)
-                                      ? loaded / expected
-                                      : null;
-                                  return Container(
-                                    color: Colors.grey.shade100,
-                                    alignment: Alignment.center,
-                                    child: CircularProgressIndicator(value: value),
-                                  );
-                                },
+                                loadingBuilder:
+                                    (context, child, loadingProgress) {
+                                      if (loadingProgress == null) return child;
+                                      final expected =
+                                          loadingProgress.expectedTotalBytes;
+                                      final loaded =
+                                          loadingProgress.cumulativeBytesLoaded;
+                                      final value =
+                                          (expected != null && expected > 0)
+                                          ? loaded / expected
+                                          : null;
+                                      return Container(
+                                        color: Colors.grey.shade100,
+                                        alignment: Alignment.center,
+                                        child: CircularProgressIndicator(
+                                          value: value,
+                                        ),
+                                      );
+                                    },
                               ),
                             ),
                           ),
@@ -294,9 +358,7 @@ class _FakturPageState extends State<FakturPage> {
                         ),
 
                         // 5) Total (source-of-truth dari backend)
-                        Text(
-                          'Total: Rp ${_fmtMoney(item['total'] ?? 0)}',
-                        ),
+                        Text('Total: Rp ${_fmtMoney(item['total'] ?? 0)}'),
                       ],
                     ),
                   ),
@@ -329,8 +391,9 @@ class _FakturPageState extends State<FakturPage> {
                           const Text('Diskon:'),
                           Text(
                             (() {
-                              final d =
-                                  double.tryParse(orderData['diskon'].toString());
+                              final d = double.tryParse(
+                                orderData['diskon'].toString(),
+                              );
                               if (d == null) return '${orderData['diskon']}%';
                               final s = (d % 1 == 0)
                                   ? d.toStringAsFixed(0)
@@ -354,13 +417,10 @@ class _FakturPageState extends State<FakturPage> {
                         Text(
                           (orderData['jumlah'] ?? orderData['total']) != null
                               ? 'Rp ${_fmtMoney(orderData['jumlah'] ?? ((() {
-                                  final t = double.tryParse(
-                                        orderData['total']?.toString() ?? '',
-                                      ) ??
-                                      0;
-                                  final rounded = (t / 5000).ceil() * 5000;
-                                  return rounded;
-                                })()))}'
+                                      final t = double.tryParse(orderData['total']?.toString() ?? '') ?? 0;
+                                      final rounded = (t / 5000).ceil() * 5000;
+                                      return rounded;
+                                    })()))}'
                               : 'Rp 0',
                           style: const TextStyle(
                             fontSize: 18,

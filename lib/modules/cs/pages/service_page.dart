@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
@@ -12,8 +13,10 @@ import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'
     if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 int? toInt(dynamic value) {
   if (value is int) return value;
@@ -49,6 +52,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       TextEditingController();
   final TextEditingController _estimasiSelesaiController =
       TextEditingController();
+  final TextEditingController _totalBiayaController = TextEditingController();
+  final TextEditingController _uangMukaController = TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
   File? _fotoFile;
@@ -84,6 +89,12 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       return url;
     }
     return null;
+  }
+
+  double _parseMoney(String raw) {
+    final s = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    final v = double.tryParse(s);
+    return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
   }
 
   Future<void> _pickFoto() async {
@@ -261,20 +272,29 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       fotoUrl = await _uploadFoto(_fotoFile);
     }
     if (!mounted) return;
-    if (_fotoFile != null && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+    if (_fotoFile != null &&
+        (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).')),
+        const SnackBar(
+          content: Text('Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).'),
+        ),
       );
       return;
     }
 
     final weightVal = double.tryParse(_beratController.text.trim()) ?? 0;
+    final totalBiayaVal = _parseMoney(_totalBiayaController.text);
+    final uangMukaVal = _parseMoney(_uangMukaController.text);
+    final initialServiceStatus = (totalBiayaVal > 0 && uangMukaVal > 0)
+        ? 'pending'
+        : 'sent-to-workshop';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
         : 'SERV-${DateTime.now().millisecondsSinceEpoch}';
 
     final orderData = {
       'order_type': 'service',
+      'status': initialServiceStatus,
       'order_number': _notaOrderController.text.isNotEmpty
           ? _notaOrderController.text
           : null,
@@ -282,6 +302,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       'user_id': userId,
       'mode': _modeToko.toLowerCase(),
       'customer_id': _selectedCustomer!['customer_id'],
+      'service_estimated_total': totalBiayaVal,
+      'service_dp_amount': uangMukaVal,
       'diskon': 0,
       'order_items': [
         {
@@ -290,6 +312,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
           'weight': weightVal,
           'qty': 1,
           'harga_per_gram': 0,
+          'manual_total': totalBiayaVal,
           'photo_produk': fotoUrl,
           'kategori': 'service',
           'jenis': _jenisBarang,
@@ -300,6 +323,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       ],
       // Extra fields (backend may ignore; kept for future use)
       'nota_lama': _notaLamaController.text.trim(),
+      'reference_order_number': _notaLamaController.text.trim().isEmpty
+          ? null
+          : _notaLamaController.text.trim(),
       'kelengkapan': _kelengkapan,
       'keterangan': _keteranganServiceController.text.trim(),
       'estimasi_selesai': _estimasiSelesaiController.text.trim(),
@@ -319,6 +345,29 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final createdOrderId = data['order_id'] ?? data['orderId'];
+
+        // Record DP as a pending payment (uang muka) if provided.
+        if (uangMukaVal > 0 && createdOrderId != null) {
+          try {
+            await http.post(
+              Uri.parse('$baseUrl/payments'),
+              headers: NetworkConfig.defaultHeaders,
+              body: jsonEncode({
+                'order_id': createdOrderId,
+                'amount': uangMukaVal,
+                'method': 'cash',
+                'status': 'pending',
+                'notes': 'Uang muka (service)',
+              }),
+            );
+          } catch (_) {
+            // DP best-effort; order creation still considered success.
+          }
+        }
+        // Refresh "order hari ini" list + stats
+        ref.invalidate(todayOrdersProvider);
+        ref.invalidate(orderTodayStatsProvider);
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(
@@ -343,12 +392,16 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   }
 
   /// Mengisi form dari order jual [completed] berdasarkan nomor nota lama (untuk service).
-  Future<void> _lookupNotaLamaForService(TextEditingController notaController) async {
+  Future<void> _lookupNotaLamaForService(
+    TextEditingController notaController,
+  ) async {
     final messenger = ScaffoldMessenger.of(context);
     final notaLama = notaController.text.trim();
     if (notaLama.isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Masukkan nomor nota lama terlebih dahulu')),
+        const SnackBar(
+          content: Text('Masukkan nomor nota lama terlebih dahulu'),
+        ),
       );
       return;
     }
@@ -415,9 +468,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       final validItems = orderData['items'] as List<dynamic>? ?? [];
       if (validItems.isEmpty) {
         messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Order tidak memiliki item yang valid'),
-          ),
+          const SnackBar(content: Text('Order tidak memiliki item yang valid')),
         );
         return;
       }
@@ -439,9 +490,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         );
       }
     } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Gagal mencari nota: $e')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('Gagal mencari nota: $e')));
     }
   }
 
@@ -451,12 +500,12 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     final berat = (item['weight'] ?? item['item_weight'] ?? 0).toString();
     final material =
         (item['material'] != null && item['material'].toString().isNotEmpty)
-            ? item['material']
-            : (item['item_material'] ?? '');
+        ? item['material']
+        : (item['item_material'] ?? '');
     final kadar =
         (item['purity'] != null && item['purity'].toString().isNotEmpty)
-            ? item['purity']
-            : (item['item_purity'] ?? '');
+        ? item['purity']
+        : (item['item_purity'] ?? '');
 
     setState(() {
       _namaItemController.text = namaItem.toString();
@@ -471,34 +520,78 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   ) async {
     return showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Pilih item dari nota'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index] as Map<String, dynamic>;
-              final label =
-                  item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '-';
-              return ListTile(
-                title: Text(label.toString()),
-                subtitle: Text('Kode: ${item['kode_produk'] ?? ''}'),
-                onTap: () => Navigator.of(context).pop(
-                  Map<String, dynamic>.from(item),
+      builder: (dialogContext) {
+        final cs = Theme.of(dialogContext).colorScheme;
+        final dataRows = <DataRow>[];
+        for (var i = 0; i < items.length; i++) {
+          final item = items[i] as Map<String, dynamic>;
+          final label =
+              item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '-';
+          final picked = Map<String, dynamic>.from(item);
+          dataRows.add(
+            DataRow(
+              color: WidgetStateProperty.resolveWith((s) {
+                if (s.contains(WidgetState.hovered)) {
+                  return cs.primary.withValues(alpha: 0.06);
+                }
+                return i.isOdd
+                    ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                    : null;
+              }),
+              onSelectChanged: (_) => Navigator.of(dialogContext).pop(picked),
+              cells: [
+                DataCell(Text(label.toString())),
+                DataCell(Text('${item['kode_produk'] ?? '—'}')),
+              ],
+            ),
+          );
+        }
+        return AlertDialog(
+          title: const Text('Pilih item dari nota'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: math.min(
+              360.0,
+              MediaQuery.sizeOf(dialogContext).height * 0.5,
+            ),
+            child: Material(
+              elevation: 0,
+              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.45),
                 ),
-              );
-            },
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: DataTable(
+                    headingRowColor: WidgetStateProperty.all(
+                      cs.surfaceContainerHigh,
+                    ),
+                    dataRowMinHeight: 40,
+                    columnSpacing: 12,
+                    horizontalMargin: 12,
+                    showCheckboxColumn: false,
+                    columns: [
+                      DataColumn(label: dataTableColumnLabel('Item')),
+                      DataColumn(label: dataTableColumnLabel('Kode')),
+                    ],
+                    rows: dataRows,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Batal'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Batal'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -913,7 +1006,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                         IconButton(
                                           icon: const Icon(Icons.search),
                                           onPressed: () =>
-                                              _lookupNotaLamaForService(controller),
+                                              _lookupNotaLamaForService(
+                                                controller,
+                                              ),
                                           tooltip: 'Cari berdasarkan nota lama',
                                         ),
                                         IconButton(
@@ -1093,6 +1188,68 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                         border: OutlineInputBorder(),
                         hintText: 'Contoh: 70%, 22K',
                       ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Estimasi Biaya'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _totalBiayaController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                        hintText: 'Contoh: 150000',
+                      ),
+                      validator: (value) {
+                        final raw = (value ?? '').trim();
+                        if (raw.isEmpty) return 'Estimasi biaya wajib diisi';
+                        final v = _parseMoney(raw);
+                        if (v < 0) return 'Estimasi biaya tidak valid';
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Uang Muka'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _uangMukaController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                        hintText: 'Opsional (boleh 0)',
+                      ),
+                      validator: (value) {
+                        final dp = _parseMoney(value ?? '');
+                        final total = _parseMoney(_totalBiayaController.text);
+                        if (dp < 0) return 'Uang muka tidak valid';
+                        if (dp > total) return 'Uang muka melebihi total biaya';
+                        return null;
+                      },
                     ),
                   ),
                 ],
@@ -1361,6 +1518,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     _kadarController.dispose();
     _keteranganServiceController.dispose();
     _estimasiSelesaiController.dispose();
+    _totalBiayaController.dispose();
+    _uangMukaController.dispose();
     super.dispose();
   }
 }

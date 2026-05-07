@@ -1,13 +1,15 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart'
     if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/surat_jalan_print.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 String _kurirLabelDariTransfer(Map<String, dynamic> t) {
   for (final k in <String>['courier', 'kurir']) {
@@ -62,6 +64,27 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
     );
   }
 
+  List<dynamic> _decodeJsonList(http.Response resp) {
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return <dynamic>[];
+    return decoded;
+  }
+
+  /// GET /branches lalu GET /api/branches jika status bukan 200 (proxy, skema DB, dll).
+  Future<http.Response> _fetchBranchesList(String baseUrl) async {
+    final primary = await http.get(
+      Uri.parse('$baseUrl/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (primary.statusCode == 200) return primary;
+    final fallback = await http.get(
+      Uri.parse('$baseUrl/api/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (fallback.statusCode == 200) return fallback;
+    return primary;
+  }
+
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -78,24 +101,30 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
         ),
         headers: NetworkConfig.defaultHeaders,
       );
-      final branchesResp = await http.get(
-        Uri.parse('$baseUrl/branches'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final branchesResp = await _fetchBranchesList(baseUrl);
 
-      if (transfersResp.statusCode != 200 || branchesResp.statusCode != 200) {
+      if (transfersResp.statusCode != 200) {
         setState(() {
-          _error = 'Gagal memuat data (${transfersResp.statusCode}/${branchesResp.statusCode})';
+          _error =
+              'Gagal memuat transfer (${transfersResp.statusCode}). Cabang: ${branchesResp.statusCode}.';
+          _isLoading = false;
+        });
+        return;
+      }
+      if (branchesResp.statusCode != 200) {
+        setState(() {
+          _error =
+              'Gagal memuat daftar cabang (${branchesResp.statusCode}). Transfer: ${transfersResp.statusCode}.';
           _isLoading = false;
         });
         return;
       }
 
       final transfersData = jsonDecode(transfersResp.body);
-      final branchesData = jsonDecode(branchesResp.body);
+      final branchesList = _decodeJsonList(branchesResp);
       setState(() {
         _transfers = (transfersData is List) ? transfersData : <dynamic>[];
-        _branches = (branchesData is List) ? branchesData : <dynamic>[];
+        _branches = branchesList;
         _isLoading = false;
       });
     } catch (e) {
@@ -225,12 +254,13 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
       // Fallback: load all items for the current branch.
       return fetch('$baseUrl/items?branch_id=$warehouseId&limit=200');
     }
+    final warehouseItemsFuture = loadWarehouseItems();
 
     showDialog(
       context: context,
       builder: (context) {
         return FutureBuilder<List<Map<String, dynamic>>>(
-          future: loadWarehouseItems(),
+          future: warehouseItemsFuture,
           builder: (context, snapshot) {
             final isLoading = snapshot.connectionState == ConnectionState.waiting;
             final items = snapshot.data ?? <Map<String, dynamic>>[];
@@ -313,200 +343,362 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
                           else
                             Column(
                               children: [
-                                ...lines.asMap().entries.map((entry) {
-                                  final idx = entry.key;
-                                  final line = entry.value;
-                                  final selected = line.selectedItem;
-
-                                  int? stockQty() {
-                                    final q = selected?['quantity'];
-                                    if (q is int) return q;
-                                    return int.tryParse(q?.toString() ?? '');
-                                  }
-
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 10),
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade300),
-                                      borderRadius: BorderRadius.circular(10),
+                                Row(
+                                  children: [
+                                    const Expanded(
+                                      child: Text(
+                                        'Daftar Item',
+                                        style: TextStyle(fontWeight: FontWeight.w700),
+                                      ),
                                     ),
-                                    child: Column(
-                                      children: [
-                                        Row(
+                                    TextButton.icon(
+                                      onPressed: () {
+                                        setDialogState(() => lines.add(_TransferLine()));
+                                      },
+                                      icon: const Icon(Icons.add),
+                                      label: const Text('Tambah item'),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey.shade300),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+                                  child: Column(
+                                    children: [
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(horizontal: 6),
+                                        child: Row(
                                           children: [
-                                            Expanded(
-                                              child: Text(
-                                                'Item ${idx + 1}',
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.w700,
-                                                ),
+                                            SizedBox(width: 28, child: Text('#')),
+                                            Expanded(child: Text('Item')),
+                                            SizedBox(
+                                              width: 74,
+                                              child: Align(
+                                                alignment: Alignment.center,
+                                                child: Text('Qty'),
                                               ),
                                             ),
-                                            if (lines.length > 1)
-                                              IconButton(
-                                                tooltip: 'Hapus item',
-                                                onPressed: () {
-                                                  setDialogState(() {
-                                                    line.dispose();
-                                                    lines.removeAt(idx);
-                                                  });
-                                                },
-                                                icon: const Icon(Icons.close),
-                                              ),
+                                            SizedBox(width: 38),
                                           ],
                                         ),
-                                        Autocomplete<Map<String, dynamic>>(
-                                          displayStringForOption: (it) => itemLabel(it),
-                                          optionsBuilder: (value) {
-                                            final q = value.text.trim().toLowerCase();
-                                            if (q.isEmpty) return items.take(30);
-                                            return items.where((it) {
-                                              final label = itemLabel(it).toLowerCase();
-                                              return label.contains(q);
-                                            }).take(30);
-                                          },
-                                          onSelected: (it) {
-                                            setDialogState(() {
-                                              line.selectedItem = it;
-                                              line.autocompleteTextController?.text =
-                                                  itemLabel(it);
-                                            });
-                                          },
-                                          fieldViewBuilder: (
-                                            context,
-                                            textEditingController,
-                                            focusNode,
-                                            onFieldSubmitted,
-                                          ) {
-                                            // Use controller provided by Autocomplete (it manages lifecycle).
-                                            line.autocompleteTextController ??=
-                                                textEditingController;
-                                            line.autocompleteFocusNode ??= focusNode;
-                                            return TextField(
-                                              controller: textEditingController,
-                                              focusNode: focusNode,
-                                              decoration: InputDecoration(
-                                                labelText: 'Item (stok warehouse)',
-                                                helperText: selected == null
-                                                    ? 'Ketik untuk cari item'
-                                                    : 'Stok tersedia: ${stockQty() ?? '-'}',
-                                                border: const OutlineInputBorder(),
-                                                isDense: true,
-                                                suffixIcon: IconButton(
-                                                  tooltip: 'Scan QR',
-                                                  icon: const Icon(Icons.qr_code_scanner),
-                                                  onPressed: () async {
-                                                    final scanned =
-                                                        await _scanQrCode(context);
-                                                    if (scanned == null ||
-                                                        scanned.trim().isEmpty) {
-                                                      return;
-                                                    }
+                                      ),
+                                      const Divider(height: 10),
+                                      ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          minHeight: 110,
+                                          maxHeight: 300,
+                                        ),
+                                        child: SingleChildScrollView(
+                                          child: Column(
+                                            children: [
+                                              ...lines.asMap().entries.map((entry) {
+                                                final idx = entry.key;
+                                                final line = entry.value;
+                                                final selected = line.selectedItem;
+                                                int? stockQty() {
+                                                  final q = selected?['quantity'];
+                                                  if (q is int) return q;
+                                                  return int.tryParse(q?.toString() ?? '');
+                                                }
 
-                                                    final raw = scanned.trim();
-                                                    final candidate = raw
-                                                        .split('\n')
-                                                        .first
-                                                        .trim()
-                                                        .split(
-                                                          RegExp(
-                                                            r'\s*[-–]\s*',
+                                                return Padding(
+                                                  padding: EdgeInsets.only(
+                                                    bottom:
+                                                        idx == lines.length - 1 ? 0 : 10,
+                                                  ),
+                                                  child: Column(
+                                                    children: [
+                                                      Row(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment.start,
+                                                        children: [
+                                                          SizedBox(
+                                                            width: 28,
+                                                            child: Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                top: 14,
+                                                              ),
+                                                              child: Text('${idx + 1}.'),
+                                                            ),
                                                           ),
-                                                        )
-                                                        .first
-                                                        .trim();
-                                                    final normalized =
-                                                        candidate.toLowerCase();
+                                                          Expanded(
+                                                            child: Autocomplete<
+                                                                Map<String, dynamic>>(
+                                                              displayStringForOption: (it) =>
+                                                                  itemLabel(it),
+                                                              optionsBuilder: (value) {
+                                                                final q = value.text
+                                                                    .trim()
+                                                                    .toLowerCase();
+                                                                if (q.isEmpty) {
+                                                                  return items.take(30);
+                                                                }
+                                                                return items.where((it) {
+                                                                  final label = itemLabel(it)
+                                                                      .toLowerCase();
+                                                                  return label.contains(q);
+                                                                }).take(30);
+                                                              },
+                                                              onSelected: (it) {
+                                                                setDialogState(() {
+                                                                  line.selectedItem = it;
+                                                                  line.autocompleteTextController
+                                                                          ?.text =
+                                                                      itemLabel(it);
+                                                                });
+                                                              },
+                                                              fieldViewBuilder: (
+                                                                context,
+                                                                textEditingController,
+                                                                focusNode,
+                                                                onFieldSubmitted,
+                                                              ) {
+                                                                line.autocompleteTextController =
+                                                                    textEditingController;
+                                                                line.autocompleteFocusNode =
+                                                                    focusNode;
+                                                                final selectedLabel =
+                                                                    selected == null
+                                                                    ? ''
+                                                                    : itemLabel(
+                                                                        selected,
+                                                                      );
+                                                                if (selectedLabel
+                                                                        .isNotEmpty &&
+                                                                    textEditingController
+                                                                            .text !=
+                                                                        selectedLabel &&
+                                                                    !focusNode.hasFocus) {
+                                                                  textEditingController
+                                                                      .value = textEditingController
+                                                                      .value
+                                                                      .copyWith(
+                                                                        text:
+                                                                            selectedLabel,
+                                                                        selection:
+                                                                            TextSelection.collapsed(
+                                                                          offset:
+                                                                              selectedLabel.length,
+                                                                        ),
+                                                                        composing:
+                                                                            TextRange.empty,
+                                                                      );
+                                                                }
+                                                                return TextField(
+                                                                  controller:
+                                                                      textEditingController,
+                                                                  focusNode: focusNode,
+                                                                  decoration:
+                                                                      InputDecoration(
+                                                                        hintText:
+                                                                            'Ketik item',
+                                                                        border:
+                                                                            const OutlineInputBorder(),
+                                                                        isDense: true,
+                                                                        suffixIcon:
+                                                                            IconButton(
+                                                                          tooltip:
+                                                                              'Scan QR',
+                                                                          icon: const Icon(
+                                                                            Icons.qr_code_scanner,
+                                                                          ),
+                                                                          onPressed:
+                                                                              () async {
+                                                                            final scanned = await _scanQrCode(
+                                                                              context,
+                                                                            );
+                                                                            if (scanned ==
+                                                                                    null ||
+                                                                                scanned
+                                                                                    .trim()
+                                                                                    .isEmpty) {
+                                                                              return;
+                                                                            }
 
-                                                    Map<String, dynamic>? match;
-                                                    for (final it in items) {
-                                                      final code =
-                                                          (it['item_code'] ??
-                                                                  it['kode_produk'] ??
-                                                                  '')
-                                                              .toString()
-                                                              .trim()
-                                                              .toLowerCase();
-                                                      if (code.isNotEmpty &&
-                                                          code == normalized) {
-                                                        match = it;
-                                                        break;
-                                                      }
-                                                    }
+                                                                            final raw = scanned
+                                                                                .trim();
+                                                                            final candidate = raw
+                                                                                .split(
+                                                                                  '\n',
+                                                                                )
+                                                                                .first
+                                                                                .trim()
+                                                                                .split(
+                                                                                  RegExp(
+                                                                                    r'\s*[-–]\s*',
+                                                                                  ),
+                                                                                )
+                                                                                .first
+                                                                                .trim();
+                                                                            final normalized =
+                                                                                candidate.toLowerCase();
 
-                                                    // Fallback: try match by label contains scanned
-                                                    match ??= items.cast<Map<String, dynamic>?>().firstWhere(
-                                                          (it) {
-                                                            if (it == null) {
-                                                              return false;
-                                                            }
-                                                            final label = itemLabel(
-                                                              it,
-                                                            ).toLowerCase();
-                                                            return label ==
-                                                                    raw.toLowerCase() ||
-                                                                label.contains(
-                                                                  normalized,
+                                                                            Map<String, dynamic>?
+                                                                            match;
+                                                                            for (final it
+                                                                                in items) {
+                                                                              final code =
+                                                                                  (it['item_code'] ??
+                                                                                          it['kode_produk'] ??
+                                                                                          '')
+                                                                                      .toString()
+                                                                                      .trim()
+                                                                                      .toLowerCase();
+                                                                              if (code
+                                                                                      .isNotEmpty &&
+                                                                                  code ==
+                                                                                      normalized) {
+                                                                                match = it;
+                                                                                break;
+                                                                              }
+                                                                            }
+
+                                                                            match ??= items
+                                                                                .cast<
+                                                                                    Map<String, dynamic>?>()
+                                                                                .firstWhere(
+                                                                                  (
+                                                                                    it,
+                                                                                  ) {
+                                                                                    if (it ==
+                                                                                        null) {
+                                                                                      return false;
+                                                                                    }
+                                                                                    final label =
+                                                                                        itemLabel(
+                                                                                          it,
+                                                                                        ).toLowerCase();
+                                                                                    return label ==
+                                                                                            raw.toLowerCase() ||
+                                                                                        label.contains(
+                                                                                          normalized,
+                                                                                        );
+                                                                                  },
+                                                                                  orElse:
+                                                                                      () =>
+                                                                                          null,
+                                                                                );
+
+                                                                            if (match ==
+                                                                                null) {
+                                                                              if (!context
+                                                                                  .mounted) {
+                                                                                return;
+                                                                              }
+                                                                              ScaffoldMessenger.of(
+                                                                                context,
+                                                                              ).showSnackBar(
+                                                                                SnackBar(
+                                                                                  content: Text(
+                                                                                    'Item tidak ditemukan di stok: $candidate',
+                                                                                  ),
+                                                                                ),
+                                                                              );
+                                                                              return;
+                                                                            }
+
+                                                                            setDialogState(() {
+                                                                              line.selectedItem =
+                                                                                  match;
+                                                                              textEditingController.text =
+                                                                                  itemLabel(
+                                                                                    match!,
+                                                                                  );
+                                                                            });
+                                                                            line.autocompleteFocusNode
+                                                                                ?.unfocus();
+                                                                          },
+                                                                        ),
+                                                                      ),
+                                                                  onChanged: (_) {
+                                                                    if (line
+                                                                            .selectedItem !=
+                                                                        null) {
+                                                                      setDialogState(
+                                                                        () => line.selectedItem = null,
+                                                                      );
+                                                                    }
+                                                                  },
                                                                 );
-                                                          },
-                                                          orElse: () => null,
-                                                        );
-
-                                                    if (match == null) {
-                                                      if (!context.mounted) return;
-                                                      ScaffoldMessenger.of(context)
-                                                          .showSnackBar(
-                                                        SnackBar(
-                                                          content: Text(
-                                                            'Item tidak ditemukan di stok: $candidate',
+                                                              },
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 6),
+                                                          SizedBox(
+                                                            width: 74,
+                                                            child: TextField(
+                                                              controller:
+                                                                  line.qtyController,
+                                                              textAlign:
+                                                                  TextAlign.center,
+                                                              keyboardType:
+                                                                  TextInputType.number,
+                                                              decoration:
+                                                                  const InputDecoration(
+                                                                hintText: '1',
+                                                                border:
+                                                                    OutlineInputBorder(),
+                                                                isDense: true,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 2),
+                                                          IconButton(
+                                                            tooltip: 'Hapus item',
+                                                            onPressed:
+                                                                lines.length <= 1
+                                                                ? null
+                                                                : () {
+                                                                    setDialogState(() {
+                                                                      line.dispose();
+                                                                      lines.removeAt(
+                                                                        idx,
+                                                                      );
+                                                                    });
+                                                                  },
+                                                            icon: const Icon(
+                                                              Icons.close,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      if (selected != null)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets.only(
+                                                            top: 4,
+                                                          ),
+                                                          child: Align(
+                                                            alignment:
+                                                                Alignment.centerLeft,
+                                                            child: Text(
+                                                              'Stok tersedia: ${stockQty() ?? '-'}',
+                                                              style: TextStyle(
+                                                                fontSize: 11,
+                                                                color:
+                                                                    Theme.of(context)
+                                                                        .colorScheme
+                                                                        .onSurfaceVariant,
+                                                              ),
+                                                            ),
                                                           ),
                                                         ),
-                                                      );
-                                                      return;
-                                                    }
-
-                                                    setDialogState(() {
-                                                      line.selectedItem = match;
-                                                      textEditingController.text =
-                                                          itemLabel(match!);
-                                                    });
-                                                    // Move focus to qty for faster entry
-                                                    line.autocompleteFocusNode
-                                                        ?.unfocus();
-                                                  },
-                                                ),
-                                              ),
-                                              onChanged: (_) {
-                                                if (line.selectedItem != null) {
-                                                  setDialogState(() => line.selectedItem = null);
-                                                }
-                                              },
-                                            );
-                                          },
-                                        ),
-                                        const SizedBox(height: 10),
-                                        TextField(
-                                          controller: line.qtyController,
-                                          keyboardType: TextInputType.number,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Qty',
-                                            border: OutlineInputBorder(),
-                                            isDense: true,
+                                                      if (idx != lines.length - 1)
+                                                        const Divider(height: 12),
+                                                    ],
+                                                  ),
+                                                );
+                                              }),
+                                            ],
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: TextButton.icon(
-                                    onPressed: () {
-                                      setDialogState(() => lines.add(_TransferLine()));
-                                    },
-                                    icon: const Icon(Icons.add),
-                                    label: const Text('Tambah item'),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -698,67 +890,212 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
                     ),
                   ),
                 )
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      Card(
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Card(
                         child: ListTile(
                           leading: const Icon(Icons.arrow_upward),
                           title: const Text('Menunggu diproses'),
                           trailing: Chip(label: Text('$outgoingPending')),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      if (_transfers.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 32),
-                          child: Center(child: Text('Belum ada transfer keluar')),
-                        )
-                      else
-                        ..._transfers.map((t) {
-                          final transfer = t as Map<String, dynamic>;
-                          final id = transfer['transfer_id']?.toString() ?? '-';
-                          final status = (transfer['status'] ?? '-').toString();
-                          final toName =
-                              (transfer['to_branch_name'] ?? '-').toString();
-                          final itemName =
-                              (transfer['item_name'] ?? transfer['nama_item'] ?? '-')
-                                  .toString();
-                          final qty = (transfer['quantity'] ?? transfer['qty'] ?? '-')
-                              .toString();
-                          final kurir = _kurirLabelDariTransfer(transfer);
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            child: ListTile(
-                              leading: const Icon(Icons.local_shipping_outlined),
-                              title: Text('Transfer #$id'),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    '$itemName • $qty • Ke: $toName • Kurir: $kurir',
-                                    maxLines: 4,
-                                    overflow: TextOverflow.ellipsis,
+                    ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadData,
+                        child: _transfers.isEmpty
+                            ? ListView(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.only(top: 48),
+                                children: const [
+                                  Center(
+                                    child: Text('Belum ada transfer keluar'),
                                   ),
-                                  if (status == 'completed' || status == 'rejected')
-                                    Text(
-                                      status == 'completed'
-                                          ? 'Diterima oleh: ${(transfer['approved_by_name'] ?? '-').toString()}'
-                                          : 'Ditolak oleh: ${(transfer['approved_by_name'] ?? '-').toString()}',
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
                                 ],
+                              )
+                            : LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final cs = Theme.of(context).colorScheme;
+final minW = math.max(
+                                    constraints.maxWidth,
+                                    920.0,
+                                  );
+                                  final dataRows = <DataRow>[];
+                                  for (var i = 0; i < _transfers.length; i++) {
+                                    final transfer =
+                                        _transfers[i] as Map<String, dynamic>;
+                                    final id = transfer['transfer_id']
+                                            ?.toString() ??
+                                        '-';
+                                    final status =
+                                        (transfer['status'] ?? '-').toString();
+                                    final toName =
+                                        (transfer['to_branch_name'] ?? '-')
+                                            .toString();
+                                    final itemName =
+                                        (transfer['item_name'] ??
+                                                transfer['nama_item'] ??
+                                                '-')
+                                            .toString();
+                                    final qty =
+                                        (transfer['quantity'] ??
+                                                transfer['qty'] ??
+                                                '-')
+                                            .toString();
+                                    final kurir =
+                                        _kurirLabelDariTransfer(transfer);
+                                    String? extra;
+                                    if (status == 'completed' ||
+                                        status == 'rejected') {
+                                      extra = status == 'completed'
+                                          ? 'Diterima: ${(transfer['approved_by_name'] ?? '-').toString()}'
+                                          : 'Ditolak: ${(transfer['approved_by_name'] ?? '-').toString()}';
+                                    }
+                                    dataRows.add(
+                                      DataRow(
+                                        color:
+                                            WidgetStateProperty.resolveWith(
+                                                (s) {
+                                          if (s.contains(
+                                            WidgetState.hovered,
+                                          )) {
+                                            return cs.primary
+                                                .withValues(alpha: 0.06);
+                                          }
+                                          return i.isOdd
+                                              ? cs.surfaceContainerHighest
+                                                  .withValues(alpha: 0.45)
+                                              : null;
+                                        }),
+                                        cells: [
+                                          DataCell(
+                                            Text(
+                                              '#$id',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(itemName),
+                                                if (extra != null)
+                                                  Text(
+                                                    extra,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: cs
+                                                          .onSurfaceVariant,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                          DataCell(Text(qty)),
+                                          DataCell(Text(toName)),
+                                          DataCell(Text(kurir)),
+                                          DataCell(
+                                            Chip(
+                                              label: Text(
+                                                status,
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                              materialTapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      12,
+                                    ),
+                                    child: Material(
+                                      elevation: 0,
+                                      color: cs.surfaceContainerLow
+                                          .withValues(alpha: 0.65),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        side: BorderSide(
+                                          color: cs.outlineVariant
+                                              .withValues(alpha: 0.45),
+                                        ),
+                                      ),
+                                      clipBehavior: Clip.antiAlias,
+                                      child: Scrollbar(
+                                        child: SingleChildScrollView(
+                                          physics:
+                                              const AlwaysScrollableScrollPhysics(),
+                                          scrollDirection: Axis.horizontal,
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints(
+                                              minWidth: minW,
+                                            ),
+                                            child: SingleChildScrollView(
+                                              physics:
+                                                  const AlwaysScrollableScrollPhysics(),
+                                              child: DataTable(
+                                                headingRowColor:
+                                                    WidgetStateProperty.all(
+                                                  cs.surfaceContainerHigh,
+                                                ),
+dataRowMinHeight: 48,
+                                                dataRowMaxHeight: 72,
+                                                columnSpacing: 10,
+                                                horizontalMargin: 8,
+                                                showCheckboxColumn: false,
+                                                dividerThickness: 0.5,
+                                                columns: [
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('ID'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Item'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Qty'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Ke'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Kurir'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Status'),
+                                                  ),
+                                                ],
+                                                rows: dataRows,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
-                              trailing: Chip(label: Text(status)),
-                            ),
-                          );
-                        }),
-                    ],
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateTransferDialog,

@@ -3,6 +3,13 @@ import 'package:flutter/foundation.dart';
 class NetworkConfig {
   static String? _authToken;
 
+  /// Di web (dart2js / DDC), [String.fromEnvironment] hanya valid sebagai **const**.
+  /// Jangan panggil dari getter biasa — akan crash sebelum UI tampil.
+  static const String _apiHostRaw = String.fromEnvironment(
+    'API_HOST',
+    defaultValue: '',
+  );
+
   // Local dev server (backend lokal) — **pilihan kedua**, hanya jika USE_LOCAL_API=true
   static const int _localPort = 3000;
   static const String _localHostAndroidEmulator = '10.0.2.2';
@@ -22,7 +29,7 @@ class NetworkConfig {
   /// `http://kumpulandoa.my.id:3000` yang tidak ada — timeout & login gagal.
   static bool get _apiOverridesApply {
     if (_useLocal) return true;
-    return String.fromEnvironment('API_HOST', defaultValue: '').trim().isNotEmpty;
+    return _apiHostRaw.trim().isNotEmpty;
   }
 
   // Timeout configurations for different platforms
@@ -33,8 +40,7 @@ class NetworkConfig {
   static const Duration receiveTimeout = Duration(seconds: 30);
 
   static String get _host {
-    var overrideHost =
-        String.fromEnvironment('API_HOST', defaultValue: '').trim();
+    var overrideHost = _apiHostRaw.trim();
     if (overrideHost.isNotEmpty) {
       // Emulator Android: 127.0.0.1 / localhost = loopback di dalam VM, bukan PC dev.
       // Pakai alias host → 10.0.2.2:3000. (HP fisik: set API_HOST=IP_LAN_PC, mis. 192.168.1.10)
@@ -104,6 +110,18 @@ class NetworkConfig {
   // Get appropriate headers for cross-platform requests
   static void setAuthToken(String? token) {
     _authToken = token;
+  }
+
+  /// Dipanggil dari ApiClient pada HTTP 401 setelah token dihapus.
+  /// Di-set dari root app agar state sesi pengguna ikut di-logout.
+  static void Function()? onUnauthorized;
+
+  static void notifyUnauthorized() {
+    try {
+      onUnauthorized?.call();
+    } catch (_) {
+      // Jangan biarkan callback mengganggu penanganan error HTTP.
+    }
   }
 
   static String? get authToken => _authToken;

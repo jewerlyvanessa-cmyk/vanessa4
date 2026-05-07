@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/providers/manager_dashboard_provider.dart';
 import 'package:vanessa3/routes/app_routes.dart' as routes;
 
@@ -106,17 +107,15 @@ class ManajerMainPage extends ConsumerWidget {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: GridView.count(
-                crossAxisCount: 4,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 0.75,
-                children: [
-                  _MenuButton(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: ModuleMenuGrid(
+                  minCrossAxisCount: 4,
+                  entries: [
+                  ModuleMenuEntry(
                     icon: Icons.bar_chart,
                     label: 'PERFORMA CABANG',
                     iconColor: Colors.blue,
@@ -127,7 +126,7 @@ class ManajerMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.trending_up,
                     label: 'LAPORAN PENJUALAN',
                     iconColor: Colors.orange,
@@ -138,8 +137,30 @@ class ManajerMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
-                    icon: Icons.inventory,
+                  ModuleMenuEntry(
+                    icon: Icons.currency_exchange,
+                    label: 'LAPORAN BUYBACK',
+                    iconColor: Colors.deepOrange,
+                    onTap: () {
+                      Navigator.pushNamed(
+                        context,
+                        routes.AppRoutes.manajerBuybackReport,
+                      );
+                    },
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.inventory_2_outlined,
+                    label: 'LAPORAN STOK',
+                    iconColor: Colors.teal,
+                    onTap: () {
+                      Navigator.pushNamed(
+                        context,
+                        routes.AppRoutes.manajerStockReport,
+                      );
+                    },
+                  ),
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.stokGlobal,
                     label: 'STOK GLOBAL',
                     iconColor: Colors.green,
                     onTap: () {
@@ -149,8 +170,8 @@ class ManajerMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
-                    icon: Icons.people,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.kelolaPengguna,
                     label: 'USER',
                     iconColor: Colors.purple,
                     onTap: () {
@@ -160,7 +181,7 @@ class ManajerMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.fact_check,
                     label: 'ORDER COMPLETED HARI INI',
                     iconColor: Colors.green,
@@ -171,8 +192,8 @@ class ManajerMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
-                    icon: Icons.settings,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.pelanggan,
                     label: 'PELANGGAN',
                     iconColor: Colors.cyan,
                     onTap: () {
@@ -183,6 +204,7 @@ class ManajerMainPage extends ConsumerWidget {
                     },
                   ),
                 ],
+                ),
               ),
             ),
           ),
@@ -202,62 +224,6 @@ class ManajerMainPage extends ConsumerWidget {
           onPressed: () {
             // Handle notification action
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final VoidCallback? onTap;
-
-  const _MenuButton({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    this.onTap,
-  });
-
-  String _twoLineLabel(String text) {
-    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.length <= 1) return text;
-    final mid = (words.length / 2).ceil();
-    final first = words.sublist(0, mid).join(' ');
-    final second = words.sublist(mid).join(' ');
-    if (second.isEmpty) return first;
-    return '$first\n$second';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 28, color: iconColor),
-            const SizedBox(height: 6),
-            Text(
-              _twoLineLabel(label),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
         ),
       ),
     );

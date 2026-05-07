@@ -1,27 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'core/state/user_state.dart' as core_state;
 import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
-import 'providers/customer_provider.dart';
 import 'providers/network_provider.dart';
+import 'providers/user_state_provider.dart';
 import 'utils/network_config.dart';
 import 'utils/network_connectivity.dart';
-
-final userStateProvider =
-    StateNotifierProvider<core_state.UserStateNotifier, core_state.UserState>((
-      ref,
-    ) {
-      return core_state.UserStateNotifier();
-    });
-
-final customerProvider = StateNotifierProvider<CustomerNotifier, CustomerState>(
-  (ref) {
-    return CustomerNotifier(NetworkConfig.baseUrl);
-  },
-);
+import 'providers/websocket_provider.dart';
 
 void main() async {
   // Ensure Flutter is initialized
@@ -45,11 +33,49 @@ void main() async {
   runApp(ProviderScope(child: const VanessaApp()));
 }
 
-class VanessaApp extends ConsumerWidget {
+class VanessaApp extends ConsumerStatefulWidget {
   const VanessaApp({super.key});
 
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VanessaApp> createState() => _VanessaAppState();
+}
+
+class _VanessaAppState extends ConsumerState<VanessaApp> {
+  @override
+  void initState() {
+    super.initState();
+    WebSocketNotifier.onAdminForceLogout = _onAdminForceLogout;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      NetworkConfig.onUnauthorized = () {
+        ref.read(userStateProvider.notifier).logout();
+      };
+    });
+  }
+
+  @override
+  void dispose() {
+    NetworkConfig.onUnauthorized = null;
+    WebSocketNotifier.onAdminForceLogout = null;
+    super.dispose();
+  }
+
+  void _onAdminForceLogout(String? reason) {
+    ref.read(userStateProvider.notifier).logout();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = VanessaApp.navigatorKey.currentContext;
+      if (ctx == null) return;
+      final text = (reason != null && reason.trim().isNotEmpty)
+          ? reason.trim()
+          : 'Anda dilogoutkan oleh administrator.';
+      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(text)));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Check user state for auto-login
     final userState = ref.watch(userStateProvider);
     NetworkConfig.setAuthToken(
@@ -60,78 +86,92 @@ class VanessaApp extends ConsumerWidget {
     final networkState = ref.watch(networkStatusProvider);
 
     return MaterialApp(
+      navigatorKey: VanessaApp.navigatorKey,
       title: 'Vanessa App',
       theme: AppTheme.lightTheme,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('id', 'ID'),
+        Locale('en', 'US'),
+      ],
+      locale: const Locale('id', 'ID'),
       routes: AppRoutes.routes,
       home: const _AppHomeGate(),
       builder: (context, child) {
-        // Add network status indicator overlay
-        return Stack(
-          children: [
-            child ?? const SizedBox.shrink(),
-            if (!networkState.isOnline || !networkState.isBackendReachable)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: GestureDetector(
-                  onTap: () async {
-                    // Manual refresh when tapped
-                    final networkNotifier = ref.read(
-                      networkStatusProvider.notifier,
-                    );
-                    await networkNotifier.refresh();
+        // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web
+        // tidak tertutup banner merah/oranye.
+        final showConnectionBanner =
+            !networkState.isOnline || !networkState.isBackendReachable;
+        final navigatorChild = child ?? const SizedBox.shrink();
 
-                    // Show snackbar with current status
-                    final statusMessage =
-                        await NetworkConnectivity.getDetailedNetworkStatus(
-                          NetworkConfig.baseUrl,
-                        );
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(statusMessage),
-                          duration: const Duration(seconds: 3),
-                        ),
+        if (!showConnectionBanner) return navigatorChild;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Material(
+              color: !networkState.isOnline ? Colors.red : Colors.orange,
+              child: InkWell(
+                onTap: () async {
+                  final networkNotifier = ref.read(
+                    networkStatusProvider.notifier,
+                  );
+                  await networkNotifier.refresh();
+
+                  final statusMessage =
+                      await NetworkConnectivity.getDetailedNetworkStatus(
+                        NetworkConfig.baseUrl,
                       );
-                    });
-                  },
-                  child: Container(
-                    color: !networkState.isOnline ? Colors.red : Colors.orange,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 16,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            !networkState.isOnline
-                                ? 'Offline - Tap to retry'
-                                : 'Backend Unreachable - Tap to retry',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                          ),
+                  if (!context.mounted) return;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(statusMessage),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 16,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          !networkState.isOnline
+                              ? 'Offline - Tap to retry'
+                              : 'Backend Unreachable - Tap to retry',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.white,
+                              ) ??
+                              const TextStyle(color: Colors.white),
                         ),
-                        const Icon(
-                          Icons.refresh,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                      ],
-                    ),
+                      ),
+                      const Icon(
+                        Icons.refresh,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ],
                   ),
                 ),
               ),
+            ),
+            Expanded(child: navigatorChild),
           ],
         );
       },
     );
   }
 }
+
 
 class _AppHomeGate extends ConsumerWidget {
   const _AppHomeGate();

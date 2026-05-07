@@ -2,16 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import 'dart:math' as math;
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'payment_queue_page.dart';
 import 'daily_payments_page.dart';
+import 'keuangan_toko_page.dart';
 import 'payment_page.dart';
-import 'reports_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import '../../../utils/network_config.dart';
+import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -121,8 +125,15 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final rawList = (data is List) ? data : <dynamic>[];
+        final normalized = rawList.map((e) {
+          if (e is! Map) return e;
+          final m = Map<String, dynamic>.from(e);
+          normalizeKasirOrderMap(m);
+          return m;
+        }).toList();
         setState(() {
-          _pendingOrders = data;
+          _pendingOrders = normalized;
           _isLoadingQueue = false;
         });
       } else {
@@ -135,6 +146,20 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
         _isLoadingQueue = false;
       });
     }
+  }
+
+  void _openPaymentPageForQueue(dynamic raw) {
+    if (raw is! Map) return;
+    final order = Map<String, dynamic>.from(raw);
+    normalizeKasirOrderMap(order);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PaymentPage(order: order),
+      ),
+    ).then((_) {
+      if (mounted) _loadPendingOrders();
+    });
   }
 
   @override
@@ -235,18 +260,13 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                   );
                 },
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: GridView.count(
-                  crossAxisCount: 4,
-                  shrinkWrap: true,
-                  mainAxisSpacing: 16,
-                  crossAxisSpacing: 16,
-                  childAspectRatio: 0.75,
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: [
-                    _MenuButton(
+                child: ModuleMenuGrid(
+                  minCrossAxisCount: 4,
+                  entries: [
+                    ModuleMenuEntry(
                       icon: Icons.queue,
                       label: 'Antri Bayar',
                       iconColor: Colors.orange,
@@ -257,7 +277,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                         ),
                       ),
                     ),
-                    _MenuButton(
+                    ModuleMenuEntry(
                       icon: Icons.receipt_long,
                       label: 'Bayar Today',
                       iconColor: Colors.green,
@@ -268,9 +288,20 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                         ),
                       ),
                     ),
-                    _MenuButton(
-                      icon: Icons.people,
-                      label: 'Customer',
+                    ModuleMenuEntry(
+                      icon: Icons.storefront_outlined,
+                      label: 'Keuangan Toko',
+                      iconColor: Colors.deepOrange,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const KeuanganTokoPage(),
+                        ),
+                      ),
+                    ),
+                    ModuleMenuEntry(
+                      icon: DashboardMenuIcons.pelanggan,
+                      label: 'Pelanggan',
                       iconColor: Colors.purple,
                       onTap: () => Navigator.push(
                         context,
@@ -279,21 +310,16 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                         ),
                       ),
                     ),
-                    _MenuButton(
-                      icon: Icons.analytics,
-                      label: 'Laporan',
-                      iconColor: Colors.blue,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const KasirReportsPage(),
-                        ),
-                      ),
+                    ModuleMenuEntry(
+                      icon: Icons.qr_code_scanner,
+                      label: 'Cek Stok',
+                      iconColor: Colors.teal,
+                      onTap: () => Navigator.pushNamed(context, '/cek_stok'),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               // Payment Queue Section
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -339,47 +365,137 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                                 style: TextStyle(color: Colors.grey),
                               ),
                             )
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(8),
-                              itemCount: _pendingOrders.length,
-                              itemBuilder: (context, index) {
-                                final order = _pendingOrders[index];
-                                return Card(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  child: ListTile(
-                                    dense: true,
-                                    title: Text(
-                                      'Order #${order['order_id']}',
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    subtitle: Text(
-                                      'Customer: ${order['customer_name'] ?? 'N/A'}\n'
-                                      'Item: ${order['nama_item'] ?? 'N/A'}\n'
-                                      'Total: Rp ${order['total']?.toString() ?? '0'}',
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                    trailing: ElevatedButton(
-                                      style: ElevatedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
+                          : LayoutBuilder(
+                              builder: (context, c) {
+                                final cs = Theme.of(context).colorScheme;
+final minW = math.max(c.maxWidth, 520.0);
+                                final rows = <DataRow>[];
+                                for (var i = 0;
+                                    i < _pendingOrders.length;
+                                    i++) {
+                                  final order = _pendingOrders[i];
+                                  rows.add(
+                                    DataRow(
+                                      color: WidgetStateProperty.resolveWith(
+                                        (s) {
+                                          if (s.contains(
+                                            WidgetState.hovered,
+                                          )) {
+                                            return cs.primary
+                                                .withValues(alpha: 0.06);
+                                          }
+                                          return i.isOdd
+                                              ? cs.surfaceContainerHighest
+                                                  .withValues(alpha: 0.4)
+                                              : null;
+                                        },
+                                      ),
+                                      onSelectChanged: (selected) {
+                                        if (selected == true) {
+                                          _openPaymentPageForQueue(order);
+                                        }
+                                      },
+                                      cells: [
+                                        DataCell(
+                                          Text(
+                                            '#${order['order_id']}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                          onTap: () =>
+                                              _openPaymentPageForQueue(order),
                                         ),
-                                        textStyle: const TextStyle(
-                                          fontSize: 12,
+                                        DataCell(
+                                          Text(
+                                            '${order['customer_name'] ?? 'N/A'}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          onTap: () =>
+                                              _openPaymentPageForQueue(order),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            kasirOrderItemTitle(order),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                          onTap: () =>
+                                              _openPaymentPageForQueue(order),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            'Rp ${order['total']?.toString() ?? '0'}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                              color: cs.primary,
+                                            ),
+                                          ),
+                                          onTap: () =>
+                                              _openPaymentPageForQueue(order),
+                                        ),
+                                        DataCell(
+                                          FilledButton.tonal(
+                                            style: FilledButton.styleFrom(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 10,
+                                                vertical: 4,
+                                              ),
+                                              minimumSize: Size.zero,
+                                              tapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                            onPressed: () =>
+                                                _openPaymentPageForQueue(order),
+                                            child: const Text(
+                                              'Bayar',
+                                              style: TextStyle(fontSize: 11),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                                return Scrollbar(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        minWidth: minW,
+                                      ),
+                                      child: SingleChildScrollView(
+                                        child: DataTable(
+                                          headingRowHeight: 34,
+                                          dataRowMinHeight: 40,
+                                          dataRowMaxHeight: 56,
+                                          headingRowColor:
+                                              WidgetStateProperty.all(
+                                            cs.surfaceContainerHigh,
+                                          ),
+columnSpacing: 8,
+                                          horizontalMargin: 8,
+                                          showCheckboxColumn: false,
+                                          dividerThickness: 0.5,
+                                          columns: [
+                                            DataColumn(label: dataTableColumnLabel('Order')),
+                                            DataColumn(label: dataTableColumnLabel('Customer')),
+                                            DataColumn(label: dataTableColumnLabel('Item')),
+                                            DataColumn(label: dataTableColumnLabel('Total')),
+                                            DataColumn(label: dataTableColumnLabel('Aksi')),
+                                          ],
+                                          rows: rows,
                                         ),
                                       ),
-                                      onPressed: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (context) =>
-                                                PaymentPage(order: order),
-                                          ),
-                                        ).then(
-                                          (_) => _loadPendingOrders(),
-                                        ); // Refresh after payment
-                                      },
-                                      child: const Text('Bayar'),
                                     ),
                                   ),
                                 );
@@ -393,61 +509,6 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
           ),
         );
       },
-    );
-  }
-}
-
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final VoidCallback? onTap;
-  const _MenuButton({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    this.onTap,
-  });
-
-  String _twoLineLabel(String text) {
-    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.length <= 1) return text;
-    final mid = (words.length / 2).ceil();
-    final first = words.sublist(0, mid).join(' ');
-    final second = words.sublist(mid).join(' ');
-    if (second.isEmpty) return first;
-    return '$first\n$second';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 28, color: iconColor),
-            const SizedBox(height: 6),
-            Text(
-              _twoLineLabel(label),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

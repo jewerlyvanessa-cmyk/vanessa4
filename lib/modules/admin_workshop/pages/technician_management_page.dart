@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class TechnicianManagementPage extends ConsumerStatefulWidget {
   const TechnicianManagementPage({super.key});
@@ -108,137 +109,280 @@ class _TechnicianManagementPageState
                 ],
               ),
             )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Summary Cards
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Total Teknisi',
-                          _technicians.length,
-                          Icons.engineering,
-                          Colors.blue,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Aktif',
-                          _technicians
-                              .where((t) => t['status'] == 'active')
-                              .length,
-                          Icons.check_circle,
-                          Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Sibuk',
-                          _technicians
-                              .where((t) => t['status'] == 'busy')
-                              .length,
-                          Icons.schedule,
-                          Colors.orange,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Tersedia',
-                          _technicians
-                              .where((t) => t['status'] == 'available')
-                              .length,
-                          Icons.check_circle_outline,
-                          Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Technicians List
-                  Text(
-                    'Daftar Teknisi (${_technicians.length})',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-
-                  if (_technicians.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: Text('Belum ada data teknisi'),
-                      ),
-                    )
-                  else
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _technicians.length,
-                      itemBuilder: (context, index) {
-                        final technician = _technicians[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: _getStatusColor(
-                                technician['status'],
-                              ),
-                              child: Icon(
-                                Icons.engineering,
-                                color: Colors.white,
-                              ),
-                            ),
-                            title: Text(technician['name'] ?? 'N/A'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      final narrow = c.maxWidth < 600;
+                      final g = narrow ? 8.0 : 16.0;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Text(
-                                  'Spesialisasi: ${technician['specialization'] ?? 'Umum'}',
+                                Expanded(
+                                  child: _buildSummaryCard(
+                                    'Total Teknisi',
+                                    _technicians.length,
+                                    Icons.engineering,
+                                    Colors.blue,
+                                  ),
                                 ),
-                                Text(
-                                  'Status: ${_getStatusLabel(technician['status'])}',
-                                  style: TextStyle(
-                                    color: _getStatusColor(
-                                      technician['status'],
-                                    ),
-                                    fontSize: 12,
+                                SizedBox(width: g),
+                                Expanded(
+                                  child: _buildSummaryCard(
+                                    'Aktif',
+                                    _technicians
+                                        .where((t) => t['status'] == 'active')
+                                        .length,
+                                    Icons.check_circle,
+                                    Colors.green,
                                   ),
                                 ),
                               ],
                             ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (action) =>
-                                  _handleTechnicianAction(technician, action),
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'view_workload',
-                                  child: Text('Lihat Beban Kerja'),
+                          ),
+                          SizedBox(height: g),
+                          IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: _buildSummaryCard(
+                                    'Sibuk',
+                                    _technicians
+                                        .where((t) => t['status'] == 'busy')
+                                        .length,
+                                    Icons.schedule,
+                                    Colors.orange,
+                                  ),
                                 ),
-                                const PopupMenuItem(
-                                  value: 'assign_order',
-                                  child: Text('Assign Order'),
+                                SizedBox(width: g),
+                                Expanded(
+                                  child: _buildSummaryCard(
+                                    'Tersedia',
+                                    _technicians
+                                        .where(
+                                          (t) => t['status'] == 'available',
+                                        )
+                                        .length,
+                                    Icons.check_circle_outline,
+                                    Colors.green,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
-                        );
-                      },
-                    ),
-                ],
-              ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Daftar teknisi (${_technicians.length})',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: _technicians.isEmpty
+                        ? const Center(
+                            child: Text('Belum ada data teknisi'),
+                          )
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final narrow = constraints.maxWidth < 600;
+                              final cs = Theme.of(context).colorScheme;
+const desktopW = 880.0;
+                              final w = constraints.maxWidth;
+                              final BoxConstraints box;
+                              if (narrow) {
+                                box = BoxConstraints.tightFor(width: w);
+                              } else if (w >= desktopW) {
+                                box = BoxConstraints.tightFor(width: desktopW);
+                              } else {
+                                box = const BoxConstraints(minWidth: desktopW);
+                              }
+
+                              final rows = <DataRow>[];
+                              for (var i = 0; i < _technicians.length; i++) {
+                                final t = _technicians[i];
+                                final name = (t['name'] ?? 'N/A').toString();
+                                final spec =
+                                    (t['specialization'] ?? 'Umum').toString();
+                                final st = t['status'];
+                                final stLabel = _getStatusLabel(st);
+                                final stColor = _getStatusColor(st);
+                                final menu = DataCell(
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: PopupMenuButton<String>(
+                                      icon: const Icon(Icons.more_vert),
+                                      tooltip: 'Tindakan',
+                                      onSelected: (action) =>
+                                          _handleTechnicianAction(t, action),
+                                      itemBuilder: (context) => const [
+                                        PopupMenuItem(
+                                          value: 'view_workload',
+                                          child: Text('Lihat beban kerja'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'assign_order',
+                                          child: Text('Assign order'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                                rows.add(
+                                  DataRow(
+                                    color: WidgetStateProperty.resolveWith(
+                                      (states) {
+                                        if (states.contains(
+                                          WidgetState.hovered,
+                                        )) {
+                                          return cs.primary
+                                              .withValues(alpha: 0.06);
+                                        }
+                                        return i.isOdd
+                                            ? cs.surfaceContainerHighest
+                                                .withValues(alpha: 0.45)
+                                            : null;
+                                      },
+                                    ),
+                                    cells: narrow
+                                        ? [
+                                            DataCell(
+                                              Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Text(
+                                                    name,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      fontSize: 13,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    '$spec · $stLabel',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: stColor,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            menu,
+                                          ]
+                                        : [
+                                            DataCell(Text(name)),
+                                            DataCell(Text(spec)),
+                                            DataCell(
+                                              Text(
+                                                stLabel,
+                                                style: TextStyle(
+                                                  color: stColor,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                            menu,
+                                          ],
+                                  ),
+                                );
+                              }
+
+                              return Material(
+                                elevation: 0,
+                                color: cs.surfaceContainerLow
+                                    .withValues(alpha: 0.65),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(
+                                    color: cs.outlineVariant
+                                        .withValues(alpha: 0.45),
+                                  ),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Scrollbar(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.vertical,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Align(
+                                        alignment: Alignment.topLeft,
+                                        child: ConstrainedBox(
+                                          constraints: box,
+                                          child: DataTable(
+                                            headingRowColor:
+                                                WidgetStateProperty.all(
+                                              cs.surfaceContainerHigh,
+                                            ),
+dataRowMinHeight: narrow ? 44 : 44,
+                                            dataRowMaxHeight: narrow ? 56 : 52,
+                                            columnSpacing: narrow ? 8 : 14,
+                                            horizontalMargin:
+                                                narrow ? 8 : 12,
+                                            showCheckboxColumn: false,
+                                            dividerThickness: 0.5,
+                                            columns: narrow
+                                                ? [
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Teknisi'),
+                                                    ),
+                                                    const DataColumn(
+                                                      label: SizedBox(width: 44),
+                                                    ),
+                                                  ]
+                                                : [
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Nama'),
+                                                    ),
+                                                    DataColumn(
+                                                      label:
+                                                          dataTableColumnLabel('Spesialisasi'),
+                                                    ),
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Status'),
+                                                    ),
+                                                    const DataColumn(
+                                                      label: SizedBox(width: 48),
+                                                    ),
+                                                  ],
+                                            rows: rows,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ),
+              ],
             ),
     );
   }

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/utils/kasir_report_print.dart';
 
 class DailyPaymentsPage extends ConsumerStatefulWidget {
   const DailyPaymentsPage({super.key});
@@ -41,6 +43,137 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
     final m = RegExp(r'^\s*Bukti:\s*(\S+)\s*$', multiLine: true).firstMatch(notes);
     if (m == null) return null;
     return m.group(1);
+  }
+
+  Widget _moneyRow(
+    BuildContext context, {
+    required String label,
+    required num value,
+    required Color color,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+        Text(
+          'Rp ${NumberFormat('#,###', 'id_ID').format(value)}',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w800,
+              ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+
+  Widget _paymentMethodBreakdownTable(
+    BuildContext context,
+    Map<String, dynamic> byMethod,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    final keys = byMethod.keys.toList()..sort();
+    num getNum(Map<String, dynamic>? m, String k) =>
+        m == null ? 0 : _toNum(m[k]);
+
+    Widget headerCell(String t, {TextAlign align = TextAlign.left}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          t,
+          textAlign: align,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+      );
+    }
+
+    Widget moneyCell(num v, {Color? c}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          NumberFormat('#,###', 'id_ID').format(v),
+          textAlign: TextAlign.right,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: c ?? cs.onSurface,
+                fontWeight: FontWeight.w700,
+              ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Table(
+        columnWidths: const {
+          0: FlexColumnWidth(1.2),
+          1: FlexColumnWidth(1),
+          2: FlexColumnWidth(1),
+          3: FlexColumnWidth(1),
+        },
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        children: [
+          TableRow(
+            children: [
+              headerCell('Metode'),
+              headerCell('Masuk', align: TextAlign.right),
+              headerCell('Keluar', align: TextAlign.right),
+              headerCell('Net', align: TextAlign.right),
+            ],
+          ),
+          for (final k in keys)
+            () {
+              final raw = byMethod[k];
+              final breakdown = raw is Map
+                  ? Map<String, dynamic>.from(raw)
+                  : null;
+              final income = breakdown != null ? getNum(breakdown, 'income') : _toNum(raw);
+              final expense = breakdown != null ? getNum(breakdown, 'expense') : 0;
+              final net = breakdown != null ? getNum(breakdown, 'net') : income;
+              return TableRow(
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+                  ),
+                ),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      _getPaymentMethodName(k),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  moneyCell(income, c: Colors.green.shade700),
+                  moneyCell(expense, c: Colors.red.shade700),
+                  moneyCell(net, c: cs.primary),
+                ],
+              );
+            }(),
+        ],
+      ),
+    );
   }
 
   void _showPaymentDetail(BuildContext context, Map<String, dynamic> payment) {
@@ -200,19 +333,34 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
               .where((e) => (e['status'] ?? '').toString() == 'completed')
               .toList();
           _summary = data['summary'] ?? {};
-          // Ringkasan metode pembayaran: NOMINAL dari field `amount` per metode.
-          final Map<String, num> byMethodAmount = {};
+          // Ringkasan metode pembayaran: pakai rule yang sama seperti total.
+          // - jual/service/custom = masuk
+          // - buyback = keluar
+          final Map<String, Map<String, num>> byMethodBreakdown = {};
           for (final tx in _dailyPayments) {
             if (tx is! Map) continue;
             final method = (tx['payment_method'] ?? '').toString().trim();
             if (method.isEmpty) continue;
+            final orderType = (tx['order_type'] ?? '').toString().trim();
             final rawAmount = tx['amount'];
             final amount = rawAmount is num
                 ? rawAmount
                 : num.tryParse(rawAmount?.toString() ?? '') ?? 0;
-            byMethodAmount[method] = (byMethodAmount[method] ?? 0) + amount;
+
+            final bucket = byMethodBreakdown.putIfAbsent(method, () {
+              return {'income': 0, 'expense': 0, 'net': 0};
+            });
+
+            final isExpense = orderType == 'buyback';
+            if (isExpense) {
+              bucket['expense'] = (bucket['expense'] ?? 0) + amount;
+            } else {
+              // Default: treat as income (jual/service/custom)
+              bucket['income'] = (bucket['income'] ?? 0) + amount;
+            }
+            bucket['net'] = (bucket['income'] ?? 0) - (bucket['expense'] ?? 0);
           }
-          _summary['payment_methods'] = byMethodAmount;
+          _summary['payment_methods'] = byMethodBreakdown;
           _isLoading = false;
         });
       } else {
@@ -257,6 +405,51 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
     }
   }
 
+  String _branchLabel() {
+    final s = ref.read(userStateProvider);
+    for (final b in s.branches) {
+      if (b['branch_id']?.toString() == s.branch.toString()) {
+        return (b['name'] ?? b['branch_id']).toString();
+      }
+    }
+    return s.branch.toString();
+  }
+
+  Future<void> _printDailyPaymentsReport() async {
+    final us = ref.read(userStateProvider);
+    final dateLabel =
+        DateFormat('EEEE, dd MMMM yyyy', 'id_ID').format(_selectedDate);
+    final dateSlug = DateFormat('yyyy-MM-dd').format(_selectedDate);
+    final paymentRows = _dailyPayments
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final totalPayments =
+        int.tryParse(_summary['total_payments']?.toString() ?? '') ?? 0;
+    final income = _toNum(_summary['income_amount']).toDouble();
+    final expense = _toNum(_summary['expense_amount']).toDouble();
+    final net = _toNum(_summary['net_amount']).toDouble();
+    final methodsRaw = _summary['payment_methods'];
+    final methods = methodsRaw is Map
+        ? Map<String, dynamic>.from(methodsRaw)
+        : <String, dynamic>{};
+
+    await printKasirDailyPaymentsReport(
+      context,
+      reportDateLabel: dateLabel,
+      reportDateSlug: dateSlug,
+      branchLabel: '${_branchLabel()} (${us.branch})',
+      cashierLabel:
+          '${us.username.isEmpty ? 'Kasir' : us.username}${us.userId != null ? ' · ID ${us.userId}' : ''}',
+      paymentTransactionCount: totalPayments,
+      incomeAmount: income,
+      expenseAmount: expense,
+      netAmount: net,
+      paymentMethods: methods,
+      paymentRows: paymentRows,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isServerHealthy = ref.watch(healthCheckProvider);
@@ -282,6 +475,12 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
             onPressed: _selectDate,
             tooltip: 'Pilih Tanggal',
           ),
+          if (!_isLoading && _error.isEmpty)
+            IconButton(
+              icon: const Icon(Icons.print),
+              onPressed: _printDailyPaymentsReport,
+              tooltip: 'Cetak Laporan Harian',
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadDailyPayments,
@@ -330,49 +529,96 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                 // Summary Cards
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              children: [
-                                const Text('Total Transaksi'),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '${_summary['total_payments'] ?? 0}',
-                                  style: Theme.of(
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          flex: 4,
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Total Transaksi',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: Colors.grey.shade700,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${_summary['total_payments'] ?? 0}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 8,
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    'Pendapatan / Pengeluaran',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: Colors.grey.shade700,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Net: Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(_summary['net_amount']))}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall
+                                        ?.copyWith(color: Colors.blueGrey),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  _moneyRow(
                                     context,
-                                  ).textTheme.headlineSmall,
-                                ),
-                              ],
+                                    label: 'Masuk',
+                                    value: _toNum(_summary['income_amount']),
+                                    color: Colors.green.shade700,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  _moneyRow(
+                                    context,
+                                    label: 'Keluar',
+                                    value: _toNum(_summary['expense_amount']),
+                                    color: Colors.red.shade700,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              children: [
-                                const Text('Total Pendapatan'),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(_summary['total_amount']))}',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineSmall
-                                      ?.copyWith(color: Colors.green),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
 
@@ -388,24 +634,12 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                           children: [
                             const Text('Ringkasan Metode Pembayaran'),
                             const SizedBox(height: 12),
-                            ...(_summary['payment_methods']
-                                    as Map<String, dynamic>)
-                                .entries
-                                .map((entry) {
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(_getPaymentMethodName(entry.key)),
-                                        Text(
-                                          'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(entry.value))}',
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
+                            _paymentMethodBreakdownTable(
+                              context,
+                              Map<String, dynamic>.from(
+                                _summary['payment_methods'] as Map,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -418,39 +652,118 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                       ? const Center(
                           child: Text('Tidak ada pembayaran pada tanggal ini'),
                         )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _dailyPayments.length,
-                          itemBuilder: (context, index) {
-                            final payment = _dailyPayments[index];
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                title: Text('Order #${payment['order_id']}'),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Customer: ${payment['customer_name'] ?? 'N/A'}',
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final cs = Theme.of(context).colorScheme;
+                            final minW = constraints.maxWidth;
+                            final rows = <DataRow>[];
+                            for (var i = 0; i < _dailyPayments.length; i++) {
+                              final payment = _dailyPayments[i];
+                              final m = Map<String, dynamic>.from(
+                                payment as Map,
+                              );
+                              rows.add(
+                                DataRow(
+                                  color: WidgetStateProperty.resolveWith((s) {
+                                    if (s.contains(WidgetState.hovered)) {
+                                      return cs.primary.withValues(alpha: 0.06);
+                                    }
+                                    return i.isOdd
+                                        ? cs.surfaceContainerHighest
+                                            .withValues(alpha: 0.45)
+                                        : null;
+                                  }),
+                                  onSelectChanged: (_) => _showPaymentDetail(
+                                    context,
+                                    m,
+                                  ),
+                                  cells: [
+                                    DataCell(
+                                      Text(
+                                        '#${m['order_id'] ?? '—'}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                    Text(
-                                      'Metode: ${_getPaymentMethodName(payment['payment_method'])}',
+                                    DataCell(
+                                      Text(
+                                        (m['order_type'] ?? '—').toString(),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                    Text(
-                                      'Waktu: ${DateFormat('HH:mm').format(DateTime.parse(payment['created_at']))}',
+                                    DataCell(
+                                      Text(
+                                        '${m['customer_name'] ?? 'N/A'}',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      Text(
+                                        _getPaymentMethodName(
+                                          (m['payment_method'] ?? '')
+                                              .toString(),
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    DataCell(
+                                      Text(
+                                        'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(m['amount']))}',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: cs.primary,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
                                   ],
                                 ),
-                                trailing: Text(
-                                  'Rp ${NumberFormat('#,###', 'id_ID').format(_toNum(payment['amount']))}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green,
+                              );
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              child: Material(
+                                elevation: 0,
+                                color: cs.surfaceContainerLow
+                                    .withValues(alpha: 0.65),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(
+                                    color: cs.outlineVariant
+                                        .withValues(alpha: 0.45),
                                   ),
                                 ),
-                                onTap: () => _showPaymentDetail(
-                                  context,
-                                  Map<String, dynamic>.from(payment as Map),
+                                clipBehavior: Clip.antiAlias,
+                                child: Scrollbar(
+                                  child: SingleChildScrollView(
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(minWidth: minW),
+                                      child: DataTable(
+                                        headingRowColor: WidgetStateProperty.all(
+                                          cs.surfaceContainerHigh,
+                                        ),
+dataRowMinHeight: 44,
+                                        dataRowMaxHeight: 64,
+                                        columnSpacing: 10,
+                                        horizontalMargin: 10,
+                                        showCheckboxColumn: false,
+                                        dividerThickness: 0.5,
+                                        columns: [
+                                          DataColumn(label: dataTableColumnLabel('Order')),
+                                          DataColumn(label: dataTableColumnLabel('Jenis')),
+                                          DataColumn(label: dataTableColumnLabel('Customer')),
+                                          DataColumn(label: dataTableColumnLabel('Metode')),
+                                          DataColumn(
+                                            label: dataTableColumnLabel('Nominal'),
+                                            numeric: true,
+                                          ),
+                                        ],
+                                        rows: rows,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             );

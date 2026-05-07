@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class EmployeeManagementPage extends ConsumerStatefulWidget {
   const EmployeeManagementPage({super.key});
@@ -15,8 +16,7 @@ class EmployeeManagementPage extends ConsumerStatefulWidget {
 
 class _EmployeeManagementPageState
     extends ConsumerState<EmployeeManagementPage> {
-  List<dynamic> _allEmployees = []; // Store all employees for summary
-  List<dynamic> _employees = []; // Filtered list for display
+  List<dynamic> _allEmployees = []; // Store all employees for summary + table
   bool _isLoading = true;
   String _error = '';
 
@@ -112,14 +112,8 @@ class _EmployeeManagementPageState
         final data = jsonDecode(response.body);
         // Store all employees for summary cards
         final allEmployees = List<dynamic>.from(data);
-        // Filter to only show active employees in the list
-        final activeEmployees = allEmployees
-            .where((employee) => employee['status'] == 'active')
-            .toList();
-
         setState(() {
           _allEmployees = allEmployees;
-          _employees = activeEmployees;
           _isLoading = false;
         });
       } else {
@@ -172,236 +166,479 @@ class _EmployeeManagementPageState
                     .where((e) => (e['status'] ?? '').toString() == 'active')
                     .toList();
 
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Summary Cards
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'Total Karyawan',
-                              _countUniqueUsers(allRows),
-                              Icons.people,
-                              Colors.blue,
-                            ),
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    final narrow = constraints.maxWidth < 600;
+                    final pad = narrow ? 12.0 : 16.0;
+                    const desktopTableW = 880.0;
+                    final panelW = constraints.maxWidth;
+                    final BoxConstraints tableBoxConstraints;
+                    if (narrow) {
+                      tableBoxConstraints =
+                          BoxConstraints.tightFor(width: panelW - pad * 2);
+                    } else if (panelW - pad * 2 >= desktopTableW) {
+                      tableBoxConstraints =
+                          BoxConstraints.tightFor(width: desktopTableW);
+                    } else {
+                      tableBoxConstraints =
+                          const BoxConstraints(minWidth: desktopTableW);
+                    }
+                    final cs = Theme.of(context).colorScheme;
+                    final groups = _groupByUser(activeRows);
+
+final rows = <DataRow>[];
+                    for (var i = 0; i < groups.length; i++) {
+                      final group = groups[i];
+                      final user = group.user;
+                      final username = (user['username'] ?? 'N/A').toString();
+                      final status = (user['status'] ?? 'active').toString();
+                      final assignments = group.assignments;
+                      final roles = assignments
+                          .map((a) => (a['role'] ?? '').toString().trim())
+                          .where((r) => r.isNotEmpty)
+                          .toSet()
+                          .toList()
+                        ..sort();
+                      final primaryRole = roles.isNotEmpty
+                          ? roles.first
+                          : (user['role'] ?? '');
+                      final actionTarget = <String, dynamic>{
+                        ...user,
+                        if (primaryRole.toString().isNotEmpty)
+                          'role': primaryRole,
+                      };
+                      final roleText = roles.isEmpty
+                          ? _getRoleLabel(primaryRole.toString())
+                          : roles.map(_getRoleLabel).join(', ');
+                      final statusLabel =
+                          status == 'active' ? 'Aktif' : 'Tidak aktif';
+
+                      final menu = <PopupMenuEntry<String>>[
+                        const PopupMenuItem(
+                          value: 'detail',
+                          child: Text('Detail penugasan'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Edit'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'toggle_status',
+                          child: Text('Ubah status'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Hapus'),
+                        ),
+                      ];
+
+                      final actionCell = DataCell(
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: PopupMenuButton<String>(
+                            tooltip: 'Tindakan',
+                            icon: const Icon(Icons.more_vert),
+                            onSelected: (v) {
+                              if (v == 'detail') {
+                                _showAssignmentsSheet(
+                                  context,
+                                  username,
+                                  status,
+                                  assignments,
+                                );
+                              } else {
+                                _handleEmployeeAction(actionTarget, v);
+                              }
+                            },
+                            itemBuilder: (context) => menu,
                           ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'Aktif',
-                              _countUniqueUsersByStatus(allRows, 'active'),
-                              Icons.check_circle,
-                              Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      );
 
-                      const SizedBox(height: 16),
-
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'Tidak Aktif',
-                              _countUniqueUsersByStatus(allRows, 'inactive'),
-                              Icons.cancel,
-                              Colors.red,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'CS',
-                              _countUniqueUsersWithRole(activeRows, 'cs'),
-                              Icons.support_agent,
-                              Colors.purple,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Employees List
-                      Text(
-                        'Daftar Karyawan Aktif (${_countUniqueUsers(activeRows)})',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 16),
-
-                      if (_employees.isEmpty)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(32),
-                            child: Text('Belum ada data karyawan'),
-                          ),
-                        )
-                      else
-                        Builder(
-                          builder: (context) {
-                            final groups = _groupByUser(activeRows);
-
-                            return ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: groups.length,
-                              itemBuilder: (context, index) {
-                                final group = groups[index];
-                                final user = group.user;
-                                final username =
-                                    (user['username'] ?? 'N/A').toString();
-                                final status =
-                                    (user['status'] ?? 'active').toString();
-                                final assignments = group.assignments;
-
-                                final roles = assignments
-                                    .map(
-                                      (a) =>
-                                          (a['role'] ?? '').toString().trim(),
-                                    )
-                                    .where((r) => r.isNotEmpty)
-                                    .toSet()
-                                    .toList()
-                                  ..sort();
-
-                                final primaryRole = roles.isNotEmpty
-                                    ? roles.first
-                                    : (user['role'] ?? '');
-                                final actionTarget = <String, dynamic>{
-                                  ...user,
-                                  if (primaryRole.toString().isNotEmpty)
-                                    'role': primaryRole,
-                                };
-
-                                return Card(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  child: ExpansionTile(
-                                    leading: CircleAvatar(
-                                      backgroundColor: _getRoleColor(
-                                        primaryRole.toString(),
-                                      ),
-                                      child: Text(
-                                        username.isNotEmpty
-                                            ? username
-                                                .substring(0, 1)
-                                                .toUpperCase()
-                                            : '?',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                        ),
+                      rows.add(
+                        DataRow(
+                          color: WidgetStateProperty.resolveWith((states) {
+                            if (states.contains(WidgetState.hovered)) {
+                              return cs.primary.withValues(alpha: 0.06);
+                            }
+                            return i.isOdd
+                                ? cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.45)
+                                : null;
+                          }),
+                          cells: narrow
+                              ? [
+                                  DataCell(
+                                    Text(
+                                      username,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
                                       ),
                                     ),
-                                    title: Text(username),
-                                    subtitle: Column(
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      statusLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                  actionCell,
+                                ]
+                              : [
+                                  DataCell(
+                                    Text(
+                                      username,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(Text(statusLabel)),
+                                  DataCell(
+                                    Text(
+                                      roleText,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  actionCell,
+                                ],
+                        ),
+                      );
+                    }
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(pad, pad, pad, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              narrow
+                                  ? Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.stretch,
                                       children: [
-                                        Text(
-                                          'Status: ${status == 'active' ? 'Aktif' : 'Tidak Aktif'}',
+                                        IntrinsicHeight(
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              Expanded(
+                                                child: _buildSummaryCard(
+                                                  context,
+                                                  _countUniqueUsers(allRows),
+                                                  Icons.people,
+                                                  Colors.blue,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: _buildSummaryCard(
+                                                  context,
+                                                  _countUniqueUsersByStatus(
+                                                    allRows,
+                                                    'active',
+                                                  ),
+                                                  Icons.check_circle,
+                                                  Colors.green,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                        Text(
-                                          'Role: ${roles.isEmpty ? _getRoleLabel(primaryRole.toString()) : roles.map(_getRoleLabel).join(', ')}',
+                                        const SizedBox(height: 8),
+                                        IntrinsicHeight(
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              Expanded(
+                                                child: _buildSummaryCard(
+                                                  context,
+                                                  _countUniqueUsersByStatus(
+                                                    allRows,
+                                                    'inactive',
+                                                  ),
+                                                  Icons.cancel,
+                                                  Colors.red,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: _buildSummaryCard(
+                                                  context,
+                                                  _countUniqueUsersWithRole(
+                                                    activeRows,
+                                                    'cs',
+                                                  ),
+                                                  Icons.support_agent,
+                                                  Colors.purple,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ],
-                                    ),
-                                    trailing: PopupMenuButton<String>(
-                                      onSelected: (action) =>
-                                          _handleEmployeeAction(
-                                            actionTarget,
-                                            action,
-                                          ),
-                                      itemBuilder: (context) => const [
-                                        PopupMenuItem(
-                                          value: 'edit',
-                                          child: Text('Edit'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'toggle_status',
-                                          child: Text('Ubah Status'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'delete',
-                                          child: Text('Hapus'),
-                                        ),
-                                      ],
-                                    ),
-                                    children: [
-                                      const Divider(height: 1),
-                                      ...assignments.map((a) {
-                                        final role =
-                                            (a['role'] ?? '').toString();
-                                        final roleLabel = _getRoleLabel(role);
-                                        final rowStatus =
-                                            (a['status'] ?? status).toString();
-                                        final userId = (a['user_id'] ??
-                                                user['user_id'] ??
-                                                '')
-                                            .toString();
-                                        return ListTile(
-                                          leading: Icon(
-                                            Icons.badge,
-                                            color: _getRoleColor(role),
-                                          ),
-                                          title: Text(roleLabel),
-                                          subtitle: Text('User ID: $userId'),
-                                          trailing: Text(
-                                            rowStatus == 'active'
-                                                ? 'aktif'
-                                                : 'nonaktif',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              color: rowStatus == 'active'
-                                                  ? Colors.green
-                                                  : Colors.red,
+                                    )
+                                  : IntrinsicHeight(
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Expanded(
+                                            child: _buildSummaryCard(
+                                              context,
+                                              _countUniqueUsers(allRows),
+                                              Icons.people,
+                                              Colors.blue,
                                             ),
                                           ),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
+                                          SizedBox(width: narrow ? 8 : 16),
+                                          Expanded(
+                                            child: _buildSummaryCard(
+                                              context,
+                                              _countUniqueUsersByStatus(
+                                                allRows,
+                                                'active',
+                                              ),
+                                              Icons.check_circle,
+                                              Colors.green,
+                                            ),
+                                          ),
+                                          SizedBox(width: narrow ? 8 : 16),
+                                          Expanded(
+                                            child: _buildSummaryCard(
+                                              context,
+                                              _countUniqueUsersByStatus(
+                                                allRows,
+                                                'inactive',
+                                              ),
+                                              Icons.cancel,
+                                              Colors.red,
+                                            ),
+                                          ),
+                                          SizedBox(width: narrow ? 8 : 16),
+                                          Expanded(
+                                            child: _buildSummaryCard(
+                                              context,
+                                              _countUniqueUsersWithRole(
+                                                activeRows,
+                                                'cs',
+                                              ),
+                                              Icons.support_agent,
+                                              Colors.purple,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Daftar karyawan aktif (${_countUniqueUsers(activeRows)})',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
                         ),
-                    ],
-                  ),
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(pad, 0, pad, 8),
+                            child: groups.isEmpty
+                                ? const Center(
+                                    child: Text('Belum ada data karyawan'),
+                                  )
+                                : Material(
+                                    elevation: 0,
+                                    color: cs.surfaceContainerLow
+                                        .withValues(alpha: 0.65),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      side: BorderSide(
+                                        color: cs.outlineVariant
+                                            .withValues(alpha: 0.45),
+                                      ),
+                                    ),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: Scrollbar(
+                                      child: SingleChildScrollView(
+                                        scrollDirection: Axis.vertical,
+                                        child: SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: Align(
+                                            alignment: Alignment.topLeft,
+                                            child: ConstrainedBox(
+                                              constraints: tableBoxConstraints,
+                                              child: DataTable(
+                                                headingRowColor:
+                                                    WidgetStateProperty.all(
+                                                  cs.surfaceContainerHigh,
+                                                ),
+dataRowMinHeight:
+                                                    narrow ? 40 : 44,
+                                                dataRowMaxHeight:
+                                                    narrow ? 52 : 60,
+                                                columnSpacing:
+                                                    narrow ? 8 : 14,
+                                                horizontalMargin:
+                                                    narrow ? 8 : 12,
+                                                showCheckboxColumn: false,
+                                                dividerThickness: 0.5,
+                                                columns: narrow
+                                                    ? [
+                                                        DataColumn(
+                                                          label: dataTableColumnLabel(
+                                                            'Nama',
+                                                          ),
+                                                        ),
+                                                        DataColumn(
+                                                          label: dataTableColumnLabel(
+                                                            'Status',
+                                                          ),
+                                                        ),
+                                                        const DataColumn(
+                                                          label: SizedBox(
+                                                            width: 44,
+                                                          ),
+                                                        ),
+                                                      ]
+                                                    : [
+                                                        DataColumn(
+                                                          label: dataTableColumnLabel('Nama'),
+                                                        ),
+                                                        DataColumn(
+                                                          label:
+                                                              dataTableColumnLabel('Status'),
+                                                        ),
+                                                        DataColumn(
+                                                          label: dataTableColumnLabel('Role'),
+                                                        ),
+                                                        const DataColumn(
+                                                          label: SizedBox(
+                                                            width: 48,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                rows: rows,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             ),
     );
   }
 
+  void _showAssignmentsSheet(
+    BuildContext context,
+    String username,
+    String defaultStatus,
+    List<Map<String, dynamic>> assignments,
+  ) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                Text(
+                  username,
+                  style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Penugasan role',
+                  style: Theme.of(ctx).textTheme.titleSmall,
+                ),
+                const Divider(height: 24),
+                if (assignments.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Text('Tidak ada baris penugasan'),
+                  )
+                else
+                  ...assignments.map((a) {
+                    final role = (a['role'] ?? '').toString();
+                    final rowStatus =
+                        (a['status'] ?? defaultStatus).toString();
+                    final userId = (a['user_id'] ?? '').toString();
+                    return ListTile(
+                      leading: Icon(
+                        Icons.badge,
+                        color: _getRoleColor(role),
+                      ),
+                      title: Text(_getRoleLabel(role)),
+                      subtitle: Text('User ID: $userId'),
+                      trailing: Text(
+                        rowStatus == 'active' ? 'aktif' : 'nonaktif',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: rowStatus == 'active'
+                              ? Colors.green
+                              : Colors.red,
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildSummaryCard(
-    String title,
+    BuildContext context,
     int count,
     IconData icon,
     Color color,
   ) {
+    final tt = Theme.of(context).textTheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
           children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
+            Icon(icon, color: color, size: 22),
+            const Spacer(),
             Text(
               count.toString(),
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+              style: tt.titleMedium?.copyWith(
                 color: color,
+                fontWeight: FontWeight.w800,
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
             ),
           ],
         ),

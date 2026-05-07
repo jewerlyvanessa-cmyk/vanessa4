@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math' as math;
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 final customersProvider =
     StateNotifierProvider<CustomersNotifier, CustomersState>(
@@ -16,22 +18,30 @@ class CustomersState {
   final List<Map<String, dynamic>> customers;
   final bool isLoading;
   final String? error;
+  /// Cabang terakhir yang dipakai saat `fetchCustomers(branchId: …)` (untuk refresh CRUD).
+  final String? filterBranchId;
 
   const CustomersState({
     required this.customers,
     this.isLoading = false,
     this.error,
+    this.filterBranchId,
   });
 
   CustomersState copyWith({
     List<Map<String, dynamic>>? customers,
     bool? isLoading,
     String? error,
+    String? filterBranchId,
+    bool clearFilterBranchId = false,
   }) {
     return CustomersState(
       customers: customers ?? this.customers,
       isLoading: isLoading ?? this.isLoading,
       error: error,
+      filterBranchId: clearFilterBranchId
+          ? null
+          : (filterBranchId ?? this.filterBranchId),
     );
   }
 }
@@ -40,10 +50,18 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
   CustomersNotifier() : super(const CustomersState(customers: []));
 
   Future<void> fetchCustomers({String? branchId}) async {
-    state = state.copyWith(isLoading: true, error: null);
+    state = state.copyWith(
+      isLoading: true,
+      error: null,
+      filterBranchId: branchId,
+      clearFilterBranchId: branchId == null,
+    );
 
     final uri = Uri.parse('${NetworkConfig.baseUrl}/api/customers').replace(
-      queryParameters: branchId != null ? {'branch_id': branchId} : null,
+      queryParameters:
+          branchId != null && branchId.toString().trim().isNotEmpty
+              ? {'branch_id': branchId.toString()}
+              : null,
     );
     Logger.logInfo('DEBUG: Fetching customers from: $uri');
     try {
@@ -114,7 +132,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       if (response.statusCode == 201) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(); // This will set loading to false
+          await fetchCustomers(branchId: state.filterBranchId);
         } else {
           state = state.copyWith(
             isLoading: false,
@@ -157,7 +175,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(); // This will set loading to false
+          await fetchCustomers(branchId: state.filterBranchId);
           return true;
         } else {
           state = state.copyWith(
@@ -189,7 +207,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(); // This will set loading to false
+          await fetchCustomers(branchId: state.filterBranchId);
         } else {
           state = state.copyWith(
             isLoading: false,
@@ -214,7 +232,160 @@ class CustomersPage extends ConsumerWidget {
 
   bool _canSeeGlobalTransactions(String roleRaw) {
     final role = roleRaw.trim().toLowerCase();
-    return role == 'manajer' || role == 'admin_toko';
+    return role == 'manajer' ||
+        role == 'admin_toko' ||
+        role == 'superadmin';
+  }
+
+  bool _canEditCustomer(String roleRaw) {
+    final r = roleRaw.trim().toLowerCase();
+    return r == 'cs' ||
+        r == 'kasir' ||
+        r == 'admin_toko' ||
+        r == 'manajer' ||
+        r == 'superadmin';
+  }
+
+  /// Hapus pelanggan: peran manajemen cabang / superadmin.
+  bool _canDeleteCustomer(String roleRaw) {
+    final r = roleRaw.trim().toLowerCase();
+    return r == 'admin_toko' || r == 'manajer' || r == 'superadmin';
+  }
+
+  String _cellStr(dynamic v) {
+    final s = v?.toString().trim();
+    if (s == null || s.isEmpty) return '—';
+    return s;
+  }
+
+  TextStyle _mobileRowTextStyle(BuildContext context) {
+    final base = Theme.of(context).textTheme.bodyMedium;
+    return (base ?? const TextStyle()).copyWith(
+      fontWeight: FontWeight.w500,
+      height: 1.25,
+    );
+  }
+
+  TextStyle _desktopRowTextStyle(BuildContext context) {
+    final base = Theme.of(context).textTheme.bodyMedium;
+    return (base ?? const TextStyle()).copyWith(height: 1.25);
+  }
+
+  List<PopupMenuEntry<String>> _customerMenuEntries(
+    BuildContext context,
+    String role,
+  ) {
+    final items = <PopupMenuEntry<String>>[];
+    if (_canSeeGlobalTransactions(role)) {
+      items.add(
+        const PopupMenuItem(
+          value: 'transactions',
+          child: Text('Riwayat transaksi'),
+        ),
+      );
+    }
+    if (_canEditCustomer(role)) {
+      items.add(const PopupMenuItem(value: 'edit', child: Text('Edit')));
+    }
+    if (_canDeleteCustomer(role)) {
+      if (items.isNotEmpty) {
+        items.add(const PopupMenuDivider());
+      }
+      items.add(
+        PopupMenuItem(
+          value: 'delete',
+          child: Text(
+            'Hapus',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      );
+    }
+    return items;
+  }
+
+  Widget _summaryMetricCard(
+    BuildContext context, {
+    required IconData icon,
+    required Color accent,
+    required String label,
+    required String value,
+    bool compact = false,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final iconSize = compact ? 20.0 : 24.0;
+    final iconInset = compact ? 8.0 : 10.0;
+    final gap = compact ? 8.0 : 12.0;
+    final radius = compact ? 14.0 : 16.0;
+    final iconBoxRadius = compact ? 10.0 : 12.0;
+
+    return Material(
+      elevation: 0,
+      color: cs.surfaceContainerLow.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(radius),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 14,
+          vertical: compact ? 10 : 12,
+        ),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: Color.alphaBlend(
+                  accent.withValues(alpha: 0.22),
+                  cs.surfaceContainerHigh,
+                ),
+                borderRadius: BorderRadius.circular(iconBoxRadius),
+              ),
+              child: Padding(
+                padding: EdgeInsets.all(iconInset),
+                child: Icon(icon, size: iconSize, color: accent),
+              ),
+            ),
+            SizedBox(width: gap),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                          fontSize: compact ? 11 : null,
+                          height: 1.15,
+                        ),
+                  ),
+                  SizedBox(height: compact ? 2 : 4),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      style: compact
+                          ? Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.35,
+                              )
+                          : Theme.of(context).textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.4,
+                              ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<List<Map<String, dynamic>>> _fetchCustomerTransactions({
@@ -250,6 +421,15 @@ class CustomersPage extends ConsumerWidget {
     );
   }
 
+  num _sumTransactionAmounts(List<Map<String, dynamic>> rows) {
+    return rows.fold<num>(0, (sum, r) {
+      final v = r['jumlah'] ?? r['total'];
+      if (v == null) return sum;
+      if (v is num) return sum + v;
+      return sum + (num.tryParse(v.toString()) ?? 0);
+    });
+  }
+
   String _fmtDateTime(dynamic v) {
     try {
       final dt = DateTime.tryParse(v?.toString() ?? '');
@@ -274,7 +454,9 @@ class CustomersPage extends ConsumerWidget {
     if (!_canSeeGlobalTransactions(userState.role)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Riwayat transaksi hanya untuk Manajer & Admin Toko'),
+          content: Text(
+            'Riwayat transaksi hanya untuk Superadmin, Manajer & Admin Toko',
+          ),
         ),
       );
       return;
@@ -362,80 +544,163 @@ class CustomersPage extends ConsumerWidget {
                         }
 
                         final rows = snap.data ?? const [];
-                        if (rows.isEmpty) {
-                          return const Center(
-                            child: Text('Belum ada transaksi untuk pelanggan ini'),
-                          );
-                        }
+                        final totalNilai = _sumTransactionAmounts(rows);
+                        final cs = Theme.of(context).colorScheme;
+                        final tt = Theme.of(context).textTheme;
 
-                        return ListView.separated(
-                          itemCount: rows.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 8),
-                          itemBuilder: (context, i) {
-                            final r = rows[i];
-                            final orderId = (r['order_id'] ?? 'N/A').toString();
-                            final orderType = (r['order_type'] ?? '').toString();
-                            final orderStatus =
-                                (r['order_status'] ?? '').toString();
-                            final paymentStatus =
-                                (r['payment_status'] ?? '').toString();
-                            final method =
-                                (r['payment_method'] ?? '').toString();
-                            final amount = r['jumlah'] ?? r['total'] ?? 0;
-
-                            final paidLabel = paymentStatus.isEmpty
-                                ? 'Belum bayar'
-                                : paymentStatus;
-
-                            return Card(
-                              child: ListTile(
-                                title: Text(
-                                  'Order #$orderId'
-                                  '${orderType.isNotEmpty ? ' • $orderType' : ''}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const SizedBox(height: 4),
-                                    Text('Tanggal: ${_fmtDateTime(r['created_at'])}'),
-                                    Text('Status order: ${orderStatus.isEmpty ? '-' : orderStatus}'),
-                                    Text(
-                                      'Pembayaran: $paidLabel'
-                                      '${method.isNotEmpty ? ' • $method' : ''}',
-                                    ),
-                                    if ((r['payment_date'] ?? '').toString().isNotEmpty)
-                                      Text(
-                                        'Tgl bayar: ${_fmtDateTime(r['payment_date'])}',
-                                      ),
-                                  ],
-                                ),
-                                trailing: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      'Rp ${_fmtRp(amount)}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Total',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Total nilai transaksi: Rp ${_fmtRp(totalNilai)}',
+                              style: tt.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: cs.primary,
                               ),
-                            );
-                          },
+                            ),
+                            const SizedBox(height: 10),
+                            Expanded(
+                              child: rows.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'Belum ada transaksi untuk pelanggan ini',
+                                      ),
+                                    )
+                                  : LayoutBuilder(
+                                      builder: (context, c) {
+                                        final minW =
+                                            math.max(c.maxWidth, 400.0);
+                                        final dataRows = <DataRow>[];
+                                        for (var i = 0;
+                                            i < rows.length;
+                                            i++) {
+                                          final r = rows[i];
+                                          final orderType = (r['order_type'] ??
+                                                  '')
+                                              .toString()
+                                              .trim();
+                                          final jenis = orderType.isEmpty
+                                              ? '—'
+                                              : orderType;
+                                          final amount =
+                                              r['jumlah'] ?? r['total'] ?? 0;
+
+                                          dataRows.add(
+                                            DataRow(
+                                              color:
+                                                  WidgetStateProperty.resolveWith(
+                                                      (s) {
+                                                if (s.contains(
+                                                  WidgetState.hovered,
+                                                )) {
+                                                  return cs.primary
+                                                      .withValues(alpha: 0.06);
+                                                }
+                                                return i.isOdd
+                                                    ? cs.surfaceContainerHighest
+                                                        .withValues(
+                                                        alpha: 0.45,
+                                                      )
+                                                    : null;
+                                              }),
+                                              cells: [
+                                                DataCell(
+                                                  Text(
+                                                    _fmtDateTime(
+                                                      r['created_at'],
+                                                    ),
+                                                    style: tt.bodyMedium,
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    jenis,
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: tt.bodyMedium,
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    'Rp ${_fmtRp(amount)}',
+                                                    style: tt.titleSmall
+                                                        ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: cs.primary,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        }
+                                        return Material(
+                                          elevation: 0,
+                                          color: cs.surfaceContainerLow
+                                              .withValues(alpha: 0.65),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            side: BorderSide(
+                                              color: cs.outlineVariant
+                                                  .withValues(alpha: 0.45),
+                                            ),
+                                          ),
+                                          clipBehavior: Clip.antiAlias,
+                                          child: Scrollbar(
+                                            child: SingleChildScrollView(
+                                              scrollDirection:
+                                                  Axis.horizontal,
+                                              child: ConstrainedBox(
+                                                constraints: BoxConstraints(
+                                                  minWidth: minW,
+                                                ),
+                                                child: SingleChildScrollView(
+                                                  child: DataTable(
+                                                    headingRowColor:
+                                                        WidgetStateProperty.all(
+                                                      cs.surfaceContainerHigh,
+                                                    ),
+                                                    dataRowMinHeight: 40,
+                                                    dataRowMaxHeight: 56,
+                                                    columnSpacing: 12,
+                                                    horizontalMargin: 10,
+                                                    showCheckboxColumn: false,
+                                                    dividerThickness: 0.5,
+                                                    columns: [
+                                                      DataColumn(
+                                                        label:
+                                                            dataTableColumnLabel(
+                                                          'Tanggal',
+                                                        ),
+                                                      ),
+                                                      DataColumn(
+                                                        label:
+                                                            dataTableColumnLabel(
+                                                          'Jenis',
+                                                        ),
+                                                      ),
+                                                      DataColumn(
+                                                        label:
+                                                            dataTableColumnLabel(
+                                                          'Total',
+                                                          numeric: true,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                    rows: dataRows,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
                         );
                       },
                     ),
@@ -491,39 +756,6 @@ class CustomersPage extends ConsumerWidget {
     return null;
   }
 
-  Widget _buildSummaryCard(
-    String title,
-    int count,
-    IconData icon,
-    Color color,
-  ) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
-            Text(
-              count.toString(),
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _handleCustomerAction(
     BuildContext context,
     Map<String, dynamic> customer,
@@ -531,6 +763,9 @@ class CustomersPage extends ConsumerWidget {
     WidgetRef ref,
   ) {
     switch (action) {
+      case 'transactions':
+        _showCustomerTransactions(context, ref, customer);
+        break;
       case 'edit':
         _showEditCustomerDialog(context, customer, ref);
         break;
@@ -538,6 +773,271 @@ class CustomersPage extends ConsumerWidget {
         _showDeleteConfirmation(context, customer, ref);
         break;
     }
+  }
+
+  Widget _buildCustomersDataTable(
+    BuildContext context,
+    WidgetRef ref,
+    CustomersState customersState,
+    String role,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    final withEmail = customersState.customers
+        .where(
+          (c) =>
+              c['email'] != null && c['email'].toString().trim().isNotEmpty,
+        )
+        .length;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 600;
+        /// Lebar konten tabel desktop (tidak dipaksa melebar mengikuti layar penuh).
+        const desktopTableWidth = 840.0;
+        final panelW = constraints.maxWidth;
+        final BoxConstraints tableBoxConstraints;
+        if (narrow) {
+          tableBoxConstraints = BoxConstraints.tightFor(width: panelW);
+        } else if (panelW >= desktopTableWidth) {
+          tableBoxConstraints =
+              BoxConstraints.tightFor(width: desktopTableWidth);
+        } else {
+          // Layar desktop sempit: geser horizontal, lebar konten tetap.
+          tableBoxConstraints =
+              const BoxConstraints(minWidth: desktopTableWidth);
+        }
+        final mobileStyle = _mobileRowTextStyle(context);
+        final desktopStyle = _desktopRowTextStyle(context);
+
+        final columns = narrow
+            ? <DataColumn>[
+                DataColumn(label: dataTableColumnLabel('Nama')),
+                DataColumn(label: dataTableColumnLabel('Alamat')),
+                DataColumn(label: dataTableColumnLabel('Telepon')),
+                const DataColumn(label: SizedBox(width: 44)),
+              ]
+            : <DataColumn>[
+                DataColumn(label: dataTableColumnLabel('Nama')),
+                DataColumn(label: dataTableColumnLabel('Email')),
+                DataColumn(label: dataTableColumnLabel('Telepon')),
+                DataColumn(label: dataTableColumnLabel('Alamat')),
+                const DataColumn(label: SizedBox(width: 48)),
+              ];
+
+        final menuEntries = _customerMenuEntries(context, role);
+        final rows = <DataRow>[];
+        for (var i = 0; i < customersState.customers.length; i++) {
+          final customer = customersState.customers[i];
+          final name = _cellStr(customer['name']);
+          final email = _cellStr(customer['email']);
+          final phone = _cellStr(customer['phone']);
+          final address = _cellStr(customer['address']);
+
+          final actionCell = menuEntries.isEmpty
+              ? DataCell(
+                  Text(
+                    '—',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
+                  ),
+                )
+              : DataCell(
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: PopupMenuButton<String>(
+                      tooltip: 'Tindakan',
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (action) => _handleCustomerAction(
+                        context,
+                        customer,
+                        action,
+                        ref,
+                      ),
+                      itemBuilder: (context) => menuEntries,
+                    ),
+                  ),
+                );
+
+          final cells = narrow
+              ? <DataCell>[
+                  DataCell(
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: mobileStyle.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      address,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: mobileStyle,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      phone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: mobileStyle,
+                    ),
+                  ),
+                  actionCell,
+                ]
+              : <DataCell>[
+                  DataCell(
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: desktopStyle.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      email,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: desktopStyle.copyWith(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      phone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: desktopStyle,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      address,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: desktopStyle.copyWith(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 12,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  actionCell,
+                ];
+
+          rows.add(
+            DataRow(
+              color: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.hovered)) {
+                  return cs.primary.withValues(alpha: 0.06);
+                }
+                return i.isOdd
+                    ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                    : null;
+              }),
+              cells: cells,
+            ),
+          );
+        }
+
+        final pad = narrow ? 12.0 : 16.0;
+        final cardGap = narrow ? 8.0 : 12.0;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(pad, 0, pad, 12),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: _summaryMetricCard(
+                        context,
+                        compact: narrow,
+                        icon: Icons.people_rounded,
+                        accent: cs.primary,
+                        label: 'Total pelanggan',
+                        value: '${customersState.customers.length}',
+                      ),
+                    ),
+                    SizedBox(width: cardGap),
+                    Expanded(
+                      child: _summaryMetricCard(
+                        context,
+                        compact: narrow,
+                        icon: Icons.mark_email_read_rounded,
+                        accent: Colors.green.shade700,
+                        label: 'Dengan email',
+                        value: '$withEmail',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(pad, 0, pad, 8),
+              child: Text(
+                'Daftar pelanggan (${customersState.customers.length})',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(pad, 0, pad, 4),
+                child: Material(
+                  elevation: 0,
+                  color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: cs.outlineVariant.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Scrollbar(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: ConstrainedBox(
+                            constraints: tableBoxConstraints,
+                            child: DataTable(
+                              headingRowColor: WidgetStateProperty.all(
+                                cs.surfaceContainerHigh,
+                              ),
+dataRowMinHeight: narrow ? 40 : 44,
+                              dataRowMaxHeight: narrow ? 62 : 60,
+                              columnSpacing: narrow ? 8 : 12,
+                              horizontalMargin: narrow ? 8 : 10,
+                              showCheckboxColumn: false,
+                              dividerThickness: 0.5,
+                              columns: columns,
+                              rows: rows,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showEditCustomerDialog(
@@ -715,7 +1215,9 @@ class CustomersPage extends ConsumerWidget {
               Text('Error: ${customersState.error}'),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: () => customersNotifier.fetchCustomers(),
+                onPressed: () => customersNotifier.fetchCustomers(
+                  branchId: userState.branch,
+                ),
                 child: const Text('Coba Lagi'),
               ),
             ],
@@ -730,196 +1232,106 @@ class CustomersPage extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => customersNotifier.fetchCustomers(),
+            onPressed: () => customersNotifier.fetchCustomers(
+              branchId: userState.branch,
+            ),
             tooltip: 'Refresh',
           ),
         ],
       ),
       body: customersState.customers.isEmpty
           ? const Center(child: Text('Belum ada data pelanggan'))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Summary Cards
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Total Pelanggan',
-                          customersState.customers.length,
-                          Icons.people,
-                          Colors.blue,
-                        ),
-                      ),
-                      Expanded(
-                        child: _buildSummaryCard(
-                          'Dengan Email',
-                          customersState.customers
-                              .where(
-                                (c) =>
-                                    c['email'] != null &&
-                                    c['email'].toString().isNotEmpty,
-                              )
-                              .length,
-                          Icons.email,
-                          Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Customers List
-                  Text(
-                    'Daftar Pelanggan (${customersState.customers.length})',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: customersState.customers.length,
-                    itemBuilder: (context, index) {
-                      final customer = customersState.customers[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ListTile(
-                          onTap: _canSeeGlobalTransactions(
-                            (ref.read(userStateProvider).role),
-                          )
-                              ? () => _showCustomerTransactions(
-                                    context,
-                                    ref,
-                                    customer,
-                                  )
-                              : null,
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            child: Text(
-                              customer['name']?.substring(0, 1).toUpperCase() ??
-                                  '?',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          title: Text(customer['name'] ?? 'N/A'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Telepon: ${customer['phone'] ?? 'N/A'}'),
-                              Text('Email: ${customer['email'] ?? 'N/A'}'),
-                              Text('Alamat: ${customer['address'] ?? 'N/A'}'),
-                            ],
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (action) => _handleCustomerAction(
-                              context,
-                              customer,
-                              action,
-                              ref,
-                            ),
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Edit'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Hapus'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+          : Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _buildCustomersDataTable(
+                context,
+                ref,
+                customersState,
+                userState.role,
               ),
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          final nameController = TextEditingController();
-          final emailController = TextEditingController();
-          final phoneController = TextEditingController();
-          final addressController = TextEditingController();
+      floatingActionButton: _canEditCustomer(userState.role)
+          ? FloatingActionButton(
+              onPressed: () {
+                final nameController = TextEditingController();
+                final emailController = TextEditingController();
+                final phoneController = TextEditingController();
+                final addressController = TextEditingController();
 
-          showDialog(
-            context: context,
-            builder: (context) {
-              final formKey = GlobalKey<FormState>();
-              return AlertDialog(
-                title: const Text('Tambah Pelanggan'),
-                content: SingleChildScrollView(
-                  child: Form(
-                    key: formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextFormField(
-                          controller: nameController,
-                          decoration: const InputDecoration(labelText: 'Nama'),
-                          validator: _validateName,
-                        ),
-                        TextFormField(
-                          controller: emailController,
-                          decoration: const InputDecoration(labelText: 'Email'),
-                          validator: _validateEmail,
-                          keyboardType: TextInputType.emailAddress,
-                        ),
-                        TextFormField(
-                          controller: phoneController,
-                          decoration: const InputDecoration(
-                            labelText: 'Nomor Telepon',
+                showDialog(
+                  context: context,
+                  builder: (context) {
+                    final formKey = GlobalKey<FormState>();
+                    return AlertDialog(
+                      title: const Text('Tambah Pelanggan'),
+                      content: SingleChildScrollView(
+                        child: Form(
+                          key: formKey,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextFormField(
+                                controller: nameController,
+                                decoration:
+                                    const InputDecoration(labelText: 'Nama'),
+                                validator: _validateName,
+                              ),
+                              TextFormField(
+                                controller: emailController,
+                                decoration:
+                                    const InputDecoration(labelText: 'Email'),
+                                validator: _validateEmail,
+                                keyboardType: TextInputType.emailAddress,
+                              ),
+                              TextFormField(
+                                controller: phoneController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Nomor Telepon',
+                                ),
+                                validator: _validatePhone,
+                                keyboardType: TextInputType.phone,
+                              ),
+                              TextFormField(
+                                controller: addressController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Alamat',
+                                ),
+                                validator: _validateAddress,
+                                maxLines: 3,
+                              ),
+                            ],
                           ),
-                          validator: _validatePhone,
-                          keyboardType: TextInputType.phone,
                         ),
-                        TextFormField(
-                          controller: addressController,
-                          decoration: const InputDecoration(
-                            labelText: 'Alamat',
-                          ),
-                          validator: _validateAddress,
-                          maxLines: 3,
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Batal'),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            if (formKey.currentState?.validate() ?? false) {
+                              await customersNotifier.addCustomer(
+                                nameController.text.trim(),
+                                emailController.text.trim(),
+                                phoneController.text.trim(),
+                                addressController.text.trim(),
+                              );
+                              if (context.mounted) {
+                                Navigator.of(context).pop();
+                              }
+                            }
+                          },
+                          child: const Text('Tambah'),
                         ),
                       ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Batal'),
-                  ),
-                  TextButton(
-                    onPressed: () async {
-                      if (formKey.currentState?.validate() ?? false) {
-                        await customersNotifier.addCustomer(
-                          nameController.text.trim(),
-                          emailController.text.trim(),
-                          phoneController.text.trim(),
-                          addressController.text.trim(),
-                        );
-                        if (context.mounted) {
-                          Navigator.of(context).pop();
-                        }
-                      }
-                    },
-                    child: const Text('Tambah'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-        child: const Icon(Icons.add),
-      ),
+                    );
+                  },
+                );
+              },
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 }

@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart'; // Import for userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 
 // Model untuk Manager Dashboard Data

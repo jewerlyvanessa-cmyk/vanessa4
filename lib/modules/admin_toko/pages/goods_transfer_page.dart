@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 class GoodsTransferPage extends ConsumerStatefulWidget {
@@ -24,6 +24,20 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     _loadData();
   }
 
+  Future<http.Response> _fetchBranchesList(String baseUrl) async {
+    final primary = await http.get(
+      Uri.parse('$baseUrl/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (primary.statusCode == 200) return primary;
+    final fallback = await http.get(
+      Uri.parse('$baseUrl/api/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (fallback.statusCode == 200) return fallback;
+    return primary;
+  }
+
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
@@ -40,18 +54,21 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
         headers: NetworkConfig.defaultHeaders,
       );
 
-      // Load branches for dropdown
-      final branchesResponse = await http.get(
-        Uri.parse('$baseUrl/branches'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final branchesResponse = await _fetchBranchesList(baseUrl);
 
       if (transfersResponse.statusCode == 200 && branchesResponse.statusCode == 200) {
         final transfersData = jsonDecode(transfersResponse.body);
         final branchesData = jsonDecode(branchesResponse.body);
+        final filteredTransfers = (transfersData is List)
+            ? transfersData.where((e) {
+                if (e is! Map) return false;
+                final status = (e['status'] ?? '').toString().toLowerCase();
+                return status != 'completed';
+              }).toList()
+            : <dynamic>[];
 
         setState(() {
-          _transferRequests = transfersData;
+          _transferRequests = filteredTransfers;
           _branches = branchesData;
           _isLoading = false;
         });
@@ -73,6 +90,399 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
         _isLoading = false;
       });
     }
+  }
+
+  /// Kode & nama: field API jika ada, atau parse "KODE - Nama" dari `item_name`.
+  (String code, String name) _transferCodeAndName(Map<dynamic, dynamic> t) {
+    for (final k in const ['item_code', 'kode_produk', 'product_code']) {
+      final c = t[k]?.toString().trim();
+      if (c != null && c.isNotEmpty) {
+        final n =
+            (t['item_name'] ?? t['nama_item'] ?? '-').toString().trim();
+        return (c, n.isEmpty ? '-' : n);
+      }
+    }
+    final raw = (t['item_name'] ?? t['nama_item'] ?? '-').toString().trim();
+    final sep = raw.indexOf(' - ');
+    if (sep > 0) {
+      final a = raw.substring(0, sep).trim();
+      final b = raw.substring(sep + 3).trim();
+      return (a.isEmpty ? '-' : a, b.isEmpty ? '-' : b);
+    }
+    return ('-', raw.isEmpty ? '-' : raw);
+  }
+
+  int _transferQty(Map<dynamic, dynamic> t) {
+    final q = t['quantity'] ?? t['qty'];
+    if (q is int) return q;
+    return int.tryParse(q?.toString() ?? '') ?? 0;
+  }
+
+  String _transferStatusLabel(dynamic s) {
+    switch ((s ?? '').toString().toLowerCase()) {
+      case 'pending':
+        return 'Pending';
+      case 'completed':
+        return 'Selesai';
+      case 'rejected':
+        return 'Ditolak';
+      default:
+        return (s ?? '-').toString();
+    }
+  }
+
+  Color _transferStatusColor(dynamic s) {
+    switch ((s ?? '').toString().toLowerCase()) {
+      case 'completed':
+        return Colors.green.shade700;
+      case 'pending':
+        return Colors.orange.shade800;
+      case 'rejected':
+        return Colors.red.shade700;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _formatTransferDateTime(dynamic raw) {
+    if (raw == null) return '-';
+    final parsed = DateTime.tryParse(raw.toString());
+    if (parsed == null) return raw.toString();
+    final d = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  void _showTransferHistoryDetail(
+    Map<String, dynamic> transfer,
+    String currentBranchIdStr,
+  ) {
+    final isIncoming = transfer['to_branch_id']?.toString() == currentBranchIdStr;
+    final (code, name) = _transferCodeAndName(transfer);
+    final qty = _transferQty(transfer);
+    final status = transfer['status'];
+    final fromBranch =
+        transfer['from_branch_name']?.toString() ??
+        transfer['from_branch_id']?.toString() ??
+        '-';
+    final toBranch =
+        transfer['to_branch_name']?.toString() ??
+        transfer['to_branch_id']?.toString() ??
+        '-';
+    final createdAt = _formatTransferDateTime(transfer['created_at']);
+    final updatedAt = _formatTransferDateTime(transfer['updated_at']);
+    final notes = (transfer['notes'] ?? '').toString().trim();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final cs = Theme.of(context).colorScheme;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Detail / Riwayat Transfer',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  _detailRow('ID Transfer', '#${transfer['transfer_id'] ?? '-'}'),
+                  _detailRow('Arah', isIncoming ? 'Masuk' : 'Keluar'),
+                  _detailRow('Kode Barang', code),
+                  _detailRow('Nama Barang', name),
+                  _detailRow('Qty', '$qty'),
+                  _detailRow('Dari', fromBranch),
+                  _detailRow('Ke', toBranch),
+                  _detailRow('Status', _transferStatusLabel(status)),
+                  if (notes.isNotEmpty) _detailRow('Catatan', notes),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Riwayat',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: cs.surfaceContainerLow,
+                      border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.5)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Dibuat: $createdAt'),
+                        const SizedBox(height: 4),
+                        Text('Update terakhir: $updatedAt'),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Status saat ini: ${_transferStatusLabel(status)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: _transferStatusColor(status),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(value.isEmpty ? '-' : value)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransferDataTable(
+    BuildContext context,
+    bool narrow,
+    String currentBranchIdStr,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    final extraCompact = narrow && MediaQuery.sizeOf(context).width < 420;
+    final rows = <DataRow>[];
+
+    for (var i = 0; i < _transferRequests.length; i++) {
+      final t = _transferRequests[i] as Map<dynamic, dynamic>;
+      final transfer = Map<String, dynamic>.from(t);
+      final isIncoming =
+          transfer['to_branch_id']?.toString() == currentBranchIdStr;
+      final transferIdRaw = transfer['transfer_id'];
+      final transferId = transferIdRaw is int
+          ? transferIdRaw
+          : int.tryParse(transferIdRaw?.toString() ?? '');
+      final (code, name) = _transferCodeAndName(transfer);
+      final qty = _transferQty(transfer);
+      final status = transfer['status'];
+      final branchLine = isIncoming
+          ? 'Dari: ${transfer['from_branch_name'] ?? transfer['from_branch_id'] ?? '-'}'
+          : 'Ke: ${transfer['to_branch_name'] ?? transfer['to_branch_id'] ?? '-'}';
+
+      Widget actionsCell() {
+        if (isIncoming && status == 'pending' && transferId != null) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                tooltip: 'Terima',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: extraCompact ? 30 : 36,
+                  minHeight: extraCompact ? 30 : 36,
+                ),
+                onPressed: () => _approveTransfer(transferId),
+              ),
+              IconButton(
+                icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                tooltip: 'Tolak',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: extraCompact ? 30 : 36,
+                  minHeight: extraCompact ? 30 : 36,
+                ),
+                onPressed: () => _rejectTransfer(transferId),
+              ),
+            ],
+          );
+        }
+        if (status == 'pending' && !isIncoming) {
+          return Text(
+            'Menunggu',
+            style: TextStyle(
+              fontSize: extraCompact ? 11 : 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.orange.shade800,
+            ),
+          );
+        }
+        return const SizedBox.shrink();
+      }
+
+      rows.add(
+        DataRow(
+          onSelectChanged: (_) =>
+              _showTransferHistoryDetail(transfer, currentBranchIdStr),
+          color: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.hovered)) {
+              return cs.primary.withValues(alpha: 0.06);
+            }
+            return i.isOdd
+                ? cs.surfaceContainerHighest.withValues(alpha: 0.35)
+                : null;
+          }),
+          cells: [
+            if (!narrow) ...[
+              DataCell(
+                Text(
+                  '#${transfer['transfer_id'] ?? '-'}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: extraCompact ? 12 : 13,
+                  ),
+                ),
+              ),
+              DataCell(
+                Text(
+                  isIncoming ? 'Masuk' : 'Keluar',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: extraCompact ? 11 : 12,
+                    color: isIncoming ? Colors.blue.shade800 : Colors.orange.shade800,
+                  ),
+                ),
+              ),
+            ],
+            DataCell(
+              Tooltip(
+                message: code,
+                child: Text(
+                  code,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: extraCompact ? 12 : 13),
+                ),
+              ),
+            ),
+            DataCell(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    maxLines: narrow ? 2 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: extraCompact ? 12 : 13),
+                  ),
+                  if (narrow) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '${isIncoming ? 'Masuk' : 'Keluar'} · ${_transferStatusLabel(status)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: extraCompact ? 9 : 10,
+                        fontWeight: FontWeight.w600,
+                        color: _transferStatusColor(status),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            DataCell(
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  '$qty',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: extraCompact ? 12 : 13,
+                  ),
+                ),
+              ),
+            ),
+            if (!narrow) ...[
+              DataCell(
+                Text(
+                  branchLine,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+              ),
+              DataCell(
+                Text(
+                  _transferStatusLabel(status),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    color: _transferStatusColor(status),
+                  ),
+                ),
+              ),
+            ],
+            DataCell(actionsCell()),
+          ],
+        ),
+      );
+    }
+
+    final columns = <DataColumn>[
+      if (!narrow) ...[
+        const DataColumn(
+          label: Text('#', style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        const DataColumn(
+          label: Text('Arah', style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+      ],
+      const DataColumn(
+        label: Text('Kode', style: TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      const DataColumn(
+        label: Text('Nama barang', style: TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      const DataColumn(
+        numeric: true,
+        label: Text('Qty', style: TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      if (!narrow) ...[
+        const DataColumn(
+          label: Text('Cabang', style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        const DataColumn(
+          label: Text('Status', style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+      ],
+      DataColumn(label: SizedBox(width: extraCompact ? 74 : (narrow ? 88 : 100))),
+    ];
+
+    return DataTable(
+      headingRowColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
+      dataRowMinHeight: extraCompact ? 34 : (narrow ? 40 : 44),
+      dataRowMaxHeight: extraCompact ? 52 : (narrow ? 60 : 64),
+      columnSpacing: extraCompact ? 6 : (narrow ? 8 : 14),
+      horizontalMargin: extraCompact ? 6 : (narrow ? 8 : 12),
+      showCheckboxColumn: false,
+      dividerThickness: 0.5,
+      columns: columns,
+      rows: rows,
+    );
   }
 
   @override
@@ -112,20 +522,20 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                     ],
                   ),
                 )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Summary Cards
-                      Row(
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Row(
                         children: [
                           Expanded(
                             child: _buildSummaryCard(
                               'Permintaan Masuk',
                               _transferRequests
                                   .where((t) =>
-                                      t['to_branch_id']?.toString() == currentBranchIdStr &&
+                                      t['to_branch_id']?.toString() ==
+                                          currentBranchIdStr &&
                                       t['status'] == 'pending')
                                   .length,
                               Icons.arrow_downward,
@@ -138,7 +548,8 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                               'Permintaan Keluar',
                               _transferRequests
                                   .where((t) =>
-                                      t['from_branch_id']?.toString() == currentBranchIdStr &&
+                                      t['from_branch_id']?.toString() ==
+                                          currentBranchIdStr &&
                                       t['status'] == 'pending')
                                   .length,
                               Icons.arrow_upward,
@@ -147,96 +558,54 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                           ),
                         ],
                       ),
-
-                      const SizedBox(height: 24),
-
-                      // Transfer Requests List
-                      Text('Daftar Transfer', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 16),
-
-                      if (_transferRequests.isEmpty)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(32),
-                            child: Text('Belum ada permintaan transfer'),
-                          ),
-                        )
-                      else
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _transferRequests.length,
-                          itemBuilder: (context, index) {
-                            final transfer = _transferRequests[index];
-                            final isIncoming =
-                                transfer['to_branch_id']?.toString() == currentBranchIdStr;
-                            final transferIdRaw = transfer['transfer_id'];
-                            final transferId = transferIdRaw is int
-                                ? transferIdRaw
-                                : int.tryParse(transferIdRaw?.toString() ?? '');
-
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: ListTile(
-                                leading: Icon(
-                                  isIncoming ? Icons.arrow_downward : Icons.arrow_upward,
-                                  color: isIncoming ? Colors.blue : Colors.orange,
-                                ),
-                                title: Text('Transfer #${transfer['transfer_id']}'),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('${transfer['item_name']} (${transfer['quantity']} pcs)'),
-                                    Text(
-                                      isIncoming
-                                          ? 'Dari: ${transfer['from_branch_name']}'
-                                          : 'Ke: ${transfer['to_branch_name']}',
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                    Text(
-                                      'Status: ${transfer['status']}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: transfer['status'] == 'completed' ? Colors.green :
-                                               transfer['status'] == 'pending' ? Colors.orange : Colors.red,
-                                      ),
-                                    ),
-                                    if (isIncoming &&
-                                        (transfer['status'] == 'completed' ||
-                                            transfer['status'] == 'rejected'))
-                                      Text(
-                                        transfer['status'] == 'completed'
-                                            ? 'Diterima oleh: ${(transfer['approved_by_name'] ?? '-').toString()}'
-                                            : 'Ditolak oleh: ${(transfer['approved_by_name'] ?? '-').toString()}',
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                  ],
-                                ),
-                                trailing: isIncoming && transfer['status'] == 'pending'
-                                    ? Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.check, color: Colors.green),
-                                            onPressed: transferId == null ? null : () => _approveTransfer(transferId),
-                                            tooltip: 'Terima',
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.close, color: Colors.red),
-                                            onPressed: transferId == null ? null : () => _rejectTransfer(transferId),
-                                            tooltip: 'Tolak',
-                                          ),
-                                        ],
-                                      )
-                                    : transfer['status'] == 'pending'
-                                        ? const Text('Menunggu', style: TextStyle(color: Colors.orange))
-                                        : null,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                      child: Text(
+                        'Daftar Transfer',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _transferRequests.isEmpty
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(32),
+                                child: Text('Belum ada permintaan transfer'),
                               ),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
+                            )
+                          : LayoutBuilder(
+                              builder: (context, constraints) {
+                                final narrow = constraints.maxWidth < 600;
+                                final minW = narrow
+                                    ? constraints.maxWidth
+                                    : 920.0;
+                                return Scrollbar(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.vertical,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          minWidth: minW > constraints.maxWidth
+                                              ? minW
+                                              : constraints.maxWidth,
+                                        ),
+                                        child: _buildTransferDataTable(
+                                          context,
+                                          narrow,
+                                          currentBranchIdStr,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateTransferDialog,
@@ -247,26 +616,51 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
   }
 
   Widget _buildSummaryCard(String title, int count, IconData icon, Color color) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final narrow = screenW < 600;
+    final extraCompact = screenW < 420;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+        padding: EdgeInsets.symmetric(
+          vertical: extraCompact ? 8 : (narrow ? 9 : 10),
+          horizontal: extraCompact ? 8 : 10,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
+            Container(
+              width: extraCompact ? 30 : 34,
+              height: extraCompact ? 30 : 34,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: extraCompact ? 18 : 20,
+              ),
+            ),
+            SizedBox(width: extraCompact ? 8 : 10),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: extraCompact ? 11 : 12,
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            SizedBox(width: extraCompact ? 6 : 10),
             Text(
               count.toString(),
               style: TextStyle(
-                fontSize: 24,
+                fontSize: extraCompact ? 18 : (narrow ? 20 : 22),
                 fontWeight: FontWeight.bold,
                 color: color,
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -419,7 +813,20 @@ class _CreateTransferDialogState extends State<CreateTransferDialog> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final status = _selectedSourceType == 'buyback' ? 'buyback' : 'ready';
+      String status;
+      switch (_selectedSourceType) {
+        case 'buyback':
+          status = 'buyback';
+          break;
+        case 'service':
+          status = 'on-service';
+          break;
+        case 'custom':
+          status = 'on-custom';
+          break;
+        default:
+          status = 'ready';
+      }
       final uri = Uri.parse(
         '$baseUrl/items?branch_id=${widget.fromBranchId}&status=$status&limit=200',
       );
@@ -532,9 +939,12 @@ class _CreateTransferDialogState extends State<CreateTransferDialog> {
                       controller: textEditingController,
                       focusNode: focusNode,
                       decoration: InputDecoration(
-                        labelText: _selectedSourceType == 'buyback'
-                            ? 'Item (buyback)'
-                            : 'Item (stok)',
+                        labelText: switch (_selectedSourceType) {
+                          'buyback' => 'Item (buyback)',
+                          'service' => 'Item (order service)',
+                          'custom' => 'Item (order custom)',
+                          _ => 'Item (stok)',
+                        },
                         helperText: _selectedItem == null
                             ? 'Ketik untuk cari item'
                             : 'Stok tersedia: ${_selectedItemStock()}',
@@ -588,6 +998,8 @@ class _CreateTransferDialogState extends State<CreateTransferDialog> {
                 items: const [
                   DropdownMenuItem(value: 'stok', child: Text('Dari stok')),
                   DropdownMenuItem(value: 'buyback', child: Text('Dari buyback')),
+                  DropdownMenuItem(value: 'service', child: Text('Order service')),
+                  DropdownMenuItem(value: 'custom', child: Text('Order custom')),
                 ],
                 onChanged: (v) {
                   if (v == null) return;

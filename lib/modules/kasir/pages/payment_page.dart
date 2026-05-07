@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/data/offline_queue.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/utils/file_uploader.dart';
+import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -37,7 +38,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     super.initState();
     // Amount that will be recorded as payment amount.
     // For cash, we will record the order total as amount, while capturing "uang diterima" separately.
-    _amountController.text = widget.order['total']?.toString() ?? '0';
+    _amountController.text = (widget.order['remaining_amount'] ?? widget.order['total'])
+            ?.toString() ??
+        '0';
     _cashReceivedController.text = _amountController.text;
   }
 
@@ -79,7 +82,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   }
 
   double _orderTotal() {
-    final raw = widget.order['total'];
+    final raw = widget.order['remaining_amount'] ?? widget.order['total'];
     final v = raw is num ? raw.toDouble() : double.tryParse(raw?.toString() ?? '');
     return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
   }
@@ -252,11 +255,15 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                       Text(
                         'Customer: ${widget.order['customer_name'] ?? 'N/A'}',
                       ),
-                      Text('Item: ${widget.order['nama_item'] ?? 'N/A'}'),
-                      Text('Berat: ${widget.order['berat'] ?? 'N/A'} gram'),
+                      Text('Item: ${kasirOrderItemTitle(widget.order)}'),
                       Text(
-                        'Total Tagihan: Rp ${widget.order['total']?.toString() ?? '0'}',
+                        'Berat: ${kasirOrderWeightGramsLabel(widget.order)} gram',
                       ),
+                      Text('Total Tagihan: Rp ${widget.order['total']?.toString() ?? '0'}'),
+                      if ((widget.order['paid_amount'] ?? 0) != 0)
+                        Text('Uang Muka: Rp ${widget.order['paid_amount']?.toString() ?? '0'}'),
+                      if ((widget.order['remaining_amount'] ?? 0) != 0)
+                        Text('Sisa Tagihan: Rp ${widget.order['remaining_amount']?.toString() ?? '0'}'),
                     ],
                   ),
                 ),

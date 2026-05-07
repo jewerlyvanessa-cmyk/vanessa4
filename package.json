@@ -1,5 +1,7 @@
 {
   "scripts": {
+    "lint": "eslint backend --ext .js",
+    "lint:fix": "eslint backend --ext .js --fix",
     "migrate:create": "node-pg-migrate create --migrations-dir backend/migrations_js",
     "migrate:up": "node-pg-migrate up --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
     "migrate:down": "node-pg-migrate down --config backend/migrate.config.cjs --migrations-dir backend/migrations_js"
@@ -20,6 +22,8 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "eslint": "^9.37.0",
+    "globals": "^16.4.0",
     "node-pg-migrate": "^8.0.4"
   }
 }

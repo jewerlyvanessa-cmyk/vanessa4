@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS branches (
     initials TEXT,
     address TEXT,
     phone_number TEXT,
+    logo_url TEXT,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now()
 );
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS items (
     photo_produk TEXT,
     source TEXT DEFAULT 'manual',
     metadata JSONB,
+    created_by BIGINT REFERENCES users(user_id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(branch_id, kode_produk) -- pastikan kode unik per branch

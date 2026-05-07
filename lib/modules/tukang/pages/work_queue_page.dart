@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/data/api_service.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class WorkQueuePage extends ConsumerStatefulWidget {
   const WorkQueuePage({super.key});
@@ -78,47 +79,260 @@ class _WorkQueuePageState extends ConsumerState<WorkQueuePage> {
                     ),
                   )
                 : _workQueue.isEmpty
-                ? const Center(
-                    child: Text('Tidak ada order dalam antrian kerja'),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
-                    itemCount: _workQueue.length,
-                    itemBuilder: (context, index) {
-                      final order = _workQueue[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: _getStatusColor(order['status']),
-                            child: Text('${index + 1}'),
-                          ),
-                          title: Text('Order #${order['order_id']}'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Jenis: ${_getOrderTypeText(order['order_type'])}',
+                    ? const Center(
+                        child: Text('Tidak ada order dalam antrian kerja'),
+                      )
+                    : Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final narrow = constraints.maxWidth < 560;
+                            final cs = Theme.of(context).colorScheme;
+const desktopW = 900.0;
+                            final w = constraints.maxWidth;
+                            final BoxConstraints box;
+                            if (narrow) {
+                              box = BoxConstraints.tightFor(width: w);
+                            } else if (w >= desktopW) {
+                              box = BoxConstraints.tightFor(width: desktopW);
+                            } else {
+                              box = const BoxConstraints(minWidth: desktopW);
+                            }
+
+                            final rows = <DataRow>[];
+                            for (var i = 0; i < _workQueue.length; i++) {
+                              final order = _workQueue[i];
+                              final oid =
+                                  (order['order_id'] ?? '—').toString();
+                              final item =
+                                  (order['item_name'] ?? 'N/A').toString();
+                              final cust =
+                                  (order['customer_name'] ?? 'N/A')
+                                      .toString();
+                              final type = _getOrderTypeText(
+                                order['order_type']?.toString() ?? '',
+                              );
+                              final pri =
+                                  _getPriorityText(order['priority']?.toString() ?? '');
+                              final est =
+                                  (order['estimated_time'] ?? '—').toString();
+                              final idxColor =
+                                  _getStatusColor(order['status']?.toString() ?? '');
+
+                              final startCell = DataCell(
+                                FilledButton.tonal(
+                                  onPressed: () => _startWork(order),
+                                  child: const Text('Mulai'),
+                                ),
+                              );
+
+                              final detailCell = DataCell(
+                                IconButton(
+                                  tooltip: 'Detail',
+                                  icon: const Icon(Icons.info_outline),
+                                  onPressed: () =>
+                                      _showWorkDetails(context, order),
+                                ),
+                              );
+
+                              rows.add(
+                                DataRow(
+                                  color: WidgetStateProperty.resolveWith(
+                                    (states) {
+                                      if (states.contains(
+                                        WidgetState.hovered,
+                                      )) {
+                                        return cs.primary
+                                            .withValues(alpha: 0.06);
+                                      }
+                                      return i.isOdd
+                                          ? cs.surfaceContainerHighest
+                                              .withValues(alpha: 0.45)
+                                          : null;
+                                    },
+                                  ),
+                                  cells: narrow
+                                      ? [
+                                          DataCell(
+                                            Row(
+                                              children: [
+                                                CircleAvatar(
+                                                  radius: 14,
+                                                  backgroundColor: idxColor,
+                                                  child: Text(
+                                                    '${i + 1}',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Text(
+                                                        '#$oid · $type',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: const TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                          fontSize: 12,
+                                                        ),
+                                                      ),
+                                                      Text(
+                                                        '$item · $cust',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: cs
+                                                              .onSurfaceVariant,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          startCell,
+                                          detailCell,
+                                        ]
+                                      : [
+                                          DataCell(
+                                            CircleAvatar(
+                                              backgroundColor: idxColor,
+                                              child: Text(
+                                                '${i + 1}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          DataCell(Text('#$oid')),
+                                          DataCell(Text(type)),
+                                          DataCell(
+                                            Text(
+                                              item,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              cust,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          DataCell(Text(pri)),
+                                          DataCell(
+                                            Text(
+                                              est,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          startCell,
+                                          detailCell,
+                                        ],
+                                ),
+                              );
+                            }
+
+                            return Material(
+                              elevation: 0,
+                              color: cs.surfaceContainerLow
+                                  .withValues(alpha: 0.65),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(
+                                  color: cs.outlineVariant
+                                      .withValues(alpha: 0.45),
+                                ),
                               ),
-                              Text('Item: ${order['item_name'] ?? 'N/A'}'),
-                              Text(
-                                'Customer: ${order['customer_name'] ?? 'N/A'}',
+                              clipBehavior: Clip.antiAlias,
+                              child: Scrollbar(
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.vertical,
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Align(
+                                      alignment: Alignment.topLeft,
+                                      child: ConstrainedBox(
+                                        constraints: box,
+                                        child: DataTable(
+                                          headingRowColor:
+                                              WidgetStateProperty.all(
+                                            cs.surfaceContainerHigh,
+                                          ),
+dataRowMinHeight: narrow ? 52 : 48,
+                                          dataRowMaxHeight: narrow ? 64 : 52,
+                                          columnSpacing: narrow ? 6 : 10,
+                                          horizontalMargin: narrow ? 6 : 10,
+                                          showCheckboxColumn: false,
+                                          dividerThickness: 0.5,
+                                          columns: narrow
+                                              ? [
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Antrian'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Aksi'),
+                                                  ),
+                                                  const DataColumn(
+                                                    label: SizedBox(width: 40),
+                                                  ),
+                                                ]
+                                              : [
+                                                  DataColumn(label: dataTableColumnLabel('#')),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Order'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Jenis'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Item'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Pelanggan'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Prioritas'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Estimasi'),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel('Mulai'),
+                                                  ),
+                                                  const DataColumn(
+                                                    label: SizedBox(width: 44),
+                                                  ),
+                                                ],
+                                          rows: rows,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                              Text(
-                                'Prioritas: ${_getPriorityText(order['priority'])}',
-                              ),
-                              Text('Estimasi: ${order['estimated_time']}'),
-                            ],
-                          ),
-                          trailing: ElevatedButton(
-                            onPressed: () => _startWork(order),
-                            child: const Text('Mulai'),
-                          ),
-                          onTap: () => _showWorkDetails(context, order),
+                            );
+                          },
                         ),
-                      );
-                    },
-                  ),
+                      ),
           ),
         ],
       ),

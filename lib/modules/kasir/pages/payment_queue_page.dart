@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'dart:math' as math;
+import 'package:mobile_scanner/mobile_scanner.dart'
+    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'payment_page.dart';
-import '../../../utils/network_config.dart';
+import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exceptions.dart';
 import '../../../utils/logger.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class PaymentQueuePage extends ConsumerStatefulWidget {
   const PaymentQueuePage({super.key});
@@ -19,11 +24,74 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
   List<dynamic> _pendingOrders = [];
   bool _isLoading = true;
   String _error = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  String _orderNota(Map<String, dynamic> order) {
+    final n = order['order_number']?.toString().trim() ?? '';
+    return n.isEmpty ? '—' : n;
+  }
+
+  bool _paymentQueueOrderMatchesSearch(Map<String, dynamic> o, String q) {
+    if (q.isEmpty) return true;
+    if ('${o['order_id']}'.toLowerCase().contains(q)) return true;
+    final nota = _orderNota(o);
+    if (nota != '—' && nota.toLowerCase().contains(q)) return true;
+    if ((o['customer_name'] ?? '').toString().toLowerCase().contains(q)) {
+      return true;
+    }
+    final phone = (o['customer_phone'] ?? o['phone'] ?? '').toString();
+    if (phone.toLowerCase().contains(q)) return true;
+    if (kasirOrderItemTitle(o).toLowerCase().contains(q)) return true;
+    if ((o['order_type'] ?? '').toString().toLowerCase().contains(q)) {
+      return true;
+    }
+    return false;
+  }
+
+  List<Map<String, dynamic>> _filteredPaymentQueue() {
+    final q = _searchController.text.trim().toLowerCase();
+    final out = <Map<String, dynamic>>[];
+    for (final raw in _pendingOrders) {
+      if (raw is! Map) continue;
+      final o = Map<String, dynamic>.from(raw);
+      normalizeKasirOrderMap(o);
+      if (_paymentQueueOrderMatchesSearch(o, q)) out.add(o);
+    }
+    return out;
+  }
+
+  Future<void> _scanAndFillSearch() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: const Text('Scan QR')),
+          body: MobileScanner(
+            onDetect: (capture) {
+              final barcodes = capture.barcodes;
+              if (barcodes.isEmpty) return;
+              final value = barcodes.first.rawValue ?? '';
+              if (value.trim().isEmpty) return;
+              Navigator.of(context).pop();
+              _searchController.text = value.trim();
+              if (mounted) setState(() {});
+            },
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _loadPendingOrders();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPendingOrders() async {
@@ -44,11 +112,9 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
         return;
       }
 
-      final response = await http.get(
-        Uri.parse(
-          '${NetworkConfig.baseUrl}/orders/pending-payment?branch_id=${userState.branch}',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/orders/pending-payment',
+        query: {'branch_id': userState.branch},
       );
 
       Logger.logInfo('Response status: ${response.statusCode}');
@@ -61,22 +127,7 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
         final normalized = rawList.map((e) {
           if (e is! Map) return e;
           final m = Map<String, dynamic>.from(e);
-          // Normalize backend keys -> keys used by UI/PaymentPage
-          if (!m.containsKey('nama_item') || (m['nama_item']?.toString().isEmpty ?? true)) {
-            m['nama_item'] = m['item_name'] ?? m['name'];
-          }
-          if (!m.containsKey('berat') || (m['berat']?.toString().isEmpty ?? true)) {
-            m['berat'] = m['weight'];
-          }
-          if (!m.containsKey('qty') || (m['qty']?.toString().isEmpty ?? true)) {
-            m['qty'] = m['quantity'];
-          }
-          if (!m.containsKey('customer_phone') || (m['customer_phone']?.toString().isEmpty ?? true)) {
-            m['customer_phone'] = m['phone'];
-          }
-          if (!m.containsKey('customer_address') || (m['customer_address']?.toString().isEmpty ?? true)) {
-            m['customer_address'] = m['address'];
-          }
+          normalizeKasirOrderMap(m);
           return m;
         }).toList();
         setState(() {
@@ -86,6 +137,13 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
       } else {
         setState(() {
           _error = 'Gagal memuat antrian pembayaran: ${response.statusCode}';
+          _isLoading = false;
+        });
+      }
+    } on UnauthorizedException catch (_) {
+      // ApiClient sudah memicu logout; tidak perlu pesan tambahan.
+      if (mounted) {
+        setState(() {
           _isLoading = false;
         });
       }
@@ -151,40 +209,364 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                 ],
               ),
             )
-          : _pendingOrders.isEmpty
-          ? const Center(child: Text('Tidak ada order yang perlu dibayar'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _pendingOrders.length,
-              itemBuilder: (context, index) {
-                final order = _pendingOrders[index];
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    title: Text('Order #${order['order_id']}'),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Customer: ${order['customer_name'] ?? 'N/A'}'),
-                        Text('Item: ${order['nama_item'] ?? 'N/A'}'),
-                        Text('Total: Rp ${order['total']?.toString() ?? '0'}'),
-                        Text('Status: ${order['status']}'),
-                      ],
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: TextField(
+                    controller: _searchController,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText:
+                          'Cari id order, nota, pelanggan, no. HP, item…',
+                      prefixIcon: const Icon(Icons.search, size: 22),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_searchController.text.trim().isNotEmpty)
+                            IconButton(
+                              tooltip: 'Hapus',
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {});
+                              },
+                            ),
+                          IconButton(
+                            tooltip: 'Scan QR',
+                            icon: const Icon(Icons.qr_code_scanner),
+                            onPressed: _scanAndFillSearch,
+                          ),
+                        ],
+                      ),
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                     ),
-                    trailing: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => PaymentPage(order: order),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                Expanded(
+                  child: _pendingOrders.isEmpty
+                      ? const Center(
+                          child: Text('Tidak ada order yang perlu dibayar'),
+                        )
+                      : Builder(
+                          builder: (context) {
+                            final filtered = _filteredPaymentQueue();
+                            if (filtered.isEmpty) {
+                              return const Center(
+                                child: Text('Tidak ada hasil pencarian'),
+                              );
+                            }
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final cs = Theme.of(context).colorScheme;
+                                  final isNarrow =
+                                      constraints.maxWidth < 600;
+                                  final minW = math.max(
+                                    constraints.maxWidth,
+                                    780.0,
+                                  );
+
+                                  void goPay(Map<String, dynamic> order) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            PaymentPage(order: order),
+                                      ),
+                                    );
+                                  }
+
+                  if (isNarrow) {
+                    return ListView.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 6),
+                      itemBuilder: (context, i) {
+                        final order = filtered[i];
+                        if (order.isNotEmpty) normalizeKasirOrderMap(order);
+                        final nota = _orderNota(order);
+                        return Material(
+                          color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(
+                              color: cs.outlineVariant.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: order.isEmpty ? null : () => goPay(order),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '#${order['order_id'] ?? '—'}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelLarge
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w800,
+                                                    letterSpacing: -0.2,
+                                                    fontSize:
+                                                        AppTypography.bodySmall,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              'Nota: $nota',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .labelSmall
+                                                  ?.copyWith(
+                                                    color: cs.onSurfaceVariant,
+                                                    fontSize: 11,
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: cs.surfaceContainerHighest
+                                              .withValues(alpha: 0.7),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                          border: Border.all(
+                                            color: cs.outlineVariant
+                                                .withValues(alpha: 0.35),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${order['status'] ?? '—'}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 11,
+                                              ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${order['customer_name'] ?? 'N/A'}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: AppTypography.bodySmall,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    kasirOrderItemTitle(order),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: cs.onSurfaceVariant,
+                                          fontSize: 12,
+                                          height: 1.2,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'Rp ${order['total']?.toString() ?? '0'}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelLarge
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w900,
+                                                color: cs.primary,
+                                                fontSize:
+                                                    AppTypography.body,
+                                              ),
+                                        ),
+                                      ),
+                                      FilledButton(
+                                        style: FilledButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 8,
+                                          ),
+                                          minimumSize: const Size(0, 34),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        onPressed:
+                                            order.isEmpty ? null : () => goPay(order),
+                                        child: const Text(
+                                          'Bayar',
+                                          style: TextStyle(fontSize: 13),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         );
                       },
-                      child: const Text('Bayar'),
+                    );
+                  }
+                  final rows = <DataRow>[];
+                  for (var i = 0; i < filtered.length; i++) {
+                    final order = filtered[i];
+                    if (order.isNotEmpty) normalizeKasirOrderMap(order);
+                    rows.add(
+                      DataRow(
+                        color: WidgetStateProperty.resolveWith((s) {
+                          if (s.contains(WidgetState.hovered)) {
+                            return cs.primary.withValues(alpha: 0.06);
+                          }
+                          return i.isOdd
+                              ? cs.surfaceContainerHighest
+                                  .withValues(alpha: 0.45)
+                              : null;
+                        }),
+                        cells: [
+                          DataCell(
+                            Text(
+                              '#${order['order_id'] ?? '—'}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: AppTypography.tableCell,
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            Text(
+                              _orderNota(order),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: AppTypography.tableCell,
+                              ),
+                            ),
+                          ),
+                          DataCell(
+                            Text('${order['customer_name'] ?? 'N/A'}'),
+                          ),
+                          DataCell(
+                            Text(
+                              kasirOrderItemTitle(order),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          DataCell(
+                            Text(
+                              'Rp ${order['total']?.toString() ?? '0'}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: cs.primary,
+                              ),
+                            ),
+                          ),
+                          DataCell(Text('${order['status'] ?? '—'}')),
+                          DataCell(
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: order.isEmpty
+                                    ? null
+                                    : () => goPay(order),
+                                child: const Text('Bayar'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  return Material(
+                    elevation: 0,
+                    color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                        color: cs.outlineVariant.withValues(alpha: 0.45),
+                      ),
                     ),
-                  ),
-                );
-              },
+                    clipBehavior: Clip.antiAlias,
+                    child: Scrollbar(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minWidth: minW),
+                          child: SingleChildScrollView(
+                            child: DataTable(
+                              headingRowColor: WidgetStateProperty.all(
+                                cs.surfaceContainerHigh,
+                              ),
+                              dataRowMinHeight: 40,
+                              dataRowMaxHeight: 56,
+                              columnSpacing: 10,
+                              horizontalMargin: 8,
+                              showCheckboxColumn: false,
+                              dividerThickness: 0.5,
+                              columns: [
+                                DataColumn(label: dataTableColumnLabel('Order')),
+                                DataColumn(label: dataTableColumnLabel('Nota')),
+                                DataColumn(label: dataTableColumnLabel('Customer')),
+                                DataColumn(label: dataTableColumnLabel('Item')),
+                                DataColumn(label: dataTableColumnLabel('Total')),
+                                DataColumn(label: dataTableColumnLabel('Status')),
+                                DataColumn(label: dataTableColumnLabel('Aksi')),
+                              ],
+                              rows: rows,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
     );
   }

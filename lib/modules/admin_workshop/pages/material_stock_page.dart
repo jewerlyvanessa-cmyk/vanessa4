@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/data/api_service.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class MaterialStockPage extends ConsumerStatefulWidget {
   const MaterialStockPage({super.key});
@@ -139,20 +140,105 @@ class _MaterialStockPageState extends ConsumerState<MaterialStockPage> {
                         ),
                       )
                     : filteredStock.isEmpty
-                        ? const Center(child: Text('Tidak ada data stok material'))
-                        : ListView.builder(
-                            itemCount: filteredStock.length,
-                            itemBuilder: (context, index) {
-                              final item = filteredStock[index];
-                              return Card(
-                                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                child: ListTile(
-                                  title: Text(item['material'] ?? 'Unknown'),
-                                  subtitle: Text('Stok: ${item['quantity'] ?? 0}'),
-                                  trailing: Text('Cabang: ${item['branch'] ?? 'Unknown'}'),
-                                ),
-                              );
-                            },
+                        ? const Center(
+                            child: Text('Tidak ada data stok material'),
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final cs = Theme.of(context).colorScheme;
+final rows = <DataRow>[];
+                                for (var i = 0; i < filteredStock.length; i++) {
+                                  final item = filteredStock[i];
+                                  rows.add(
+                                    DataRow(
+                                      color: WidgetStateProperty.resolveWith(
+                                        (states) {
+                                          if (states.contains(
+                                            WidgetState.hovered,
+                                          )) {
+                                            return cs.primary
+                                                .withValues(alpha: 0.06);
+                                          }
+                                          return i.isOdd
+                                              ? cs.surfaceContainerHighest
+                                                  .withValues(alpha: 0.45)
+                                              : null;
+                                        },
+                                      ),
+                                      cells: [
+                                        DataCell(
+                                          Text(
+                                            item['material']?.toString() ??
+                                                'Unknown',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            '${item['quantity'] ?? 0}',
+                                          ),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            item['branch']?.toString() ??
+                                                'Unknown',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: cs.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                                return Material(
+                                  elevation: 0,
+                                  color: cs.surfaceContainerLow
+                                      .withValues(alpha: 0.65),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(
+                                      color: cs.outlineVariant
+                                          .withValues(alpha: 0.45),
+                                    ),
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Scrollbar(
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          minWidth: constraints.maxWidth,
+                                        ),
+                                        child: DataTable(
+                                          headingRowColor:
+                                              WidgetStateProperty.all(
+                                            cs.surfaceContainerHigh,
+                                          ),
+dataRowMinHeight: 44,
+                                          dataRowMaxHeight: 52,
+                                          columnSpacing: 14,
+                                          horizontalMargin: 12,
+                                          showCheckboxColumn: false,
+                                          dividerThickness: 0.5,
+                                          columns: [
+                                            DataColumn(label: dataTableColumnLabel('Material')),
+                                            DataColumn(label: dataTableColumnLabel('Stok')),
+                                            DataColumn(label: dataTableColumnLabel('Cabang')),
+                                          ],
+                                          rows: rows,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
           ),
         ],

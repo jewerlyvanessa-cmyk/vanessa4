@@ -52,6 +52,13 @@ function extractKurirFromTransferNotes(notes) {
   return m ? m[1].trim() : null;
 }
 
+function extractTransferSourceTypeFromNotes(notes) {
+  if (notes == null) return null;
+  const s = String(notes);
+  const m = s.match(/^\s*Sumber asli:\s*([^\n\r]+)/im);
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
 function roundUpToNearest5000(amount) {
   const n = typeof amount === 'number' ? amount : parseFloat(amount);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -132,6 +139,166 @@ async function paymentsHasValidatedByColumn(client) {
   return _cachedPaymentsValidatedByColumnExists;
 }
 
+let _cachedOrdersPickedUpAtColumnExists = null; // boolean | null (unknown)
+async function ordersHasPickedUpAtColumn(client) {
+  if (_cachedOrdersPickedUpAtColumnExists !== null) {
+    return _cachedOrdersPickedUpAtColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'orders'
+          AND column_name = 'picked_up_at'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedOrdersPickedUpAtColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedOrdersPickedUpAtColumnExists = false;
+  }
+  return _cachedOrdersPickedUpAtColumnExists;
+}
+
+let _cachedOrdersMetadataColumnExists = null; // boolean | null (unknown)
+async function ordersHasMetadataColumn(client) {
+  if (_cachedOrdersMetadataColumnExists !== null) {
+    return _cachedOrdersMetadataColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'orders'
+          AND column_name = 'metadata'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedOrdersMetadataColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedOrdersMetadataColumnExists = false;
+  }
+  return _cachedOrdersMetadataColumnExists;
+}
+
+let _cachedOrdersSupportsWorkshopStatuses = null; // boolean | null (unknown)
+async function ordersSupportsWorkshopStatuses(client) {
+  if (_cachedOrdersSupportsWorkshopStatuses !== null) {
+    return _cachedOrdersSupportsWorkshopStatuses;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT pg_get_constraintdef(c.oid) AS def
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = c.connamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = 'orders'
+          AND c.conname = 'orders_status_check'
+        LIMIT 1
+      `,
+      []
+    );
+    const def = (r.rows?.[0]?.def ?? '').toString().toLowerCase();
+    _cachedOrdersSupportsWorkshopStatuses =
+      def.includes('sent-to-workshop') ||
+      def.includes('in_workshop') ||
+      def.includes('ready_for_pickup');
+  } catch (_) {
+    _cachedOrdersSupportsWorkshopStatuses = false;
+  }
+  return _cachedOrdersSupportsWorkshopStatuses;
+}
+
+let _cachedOrdersEstimateColumns = null; // { estimate_amount, estimate_due_at, estimate_duration_text, estimate_notes }
+async function ordersEstimateColumns(client) {
+  if (_cachedOrdersEstimateColumns !== null) {
+    return _cachedOrdersEstimateColumns;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'orders'
+          AND column_name IN (
+            'estimate_amount',
+            'estimate_due_at',
+            'estimate_duration_text',
+            'estimate_notes'
+          )
+      `,
+      []
+    );
+    const set = new Set((r.rows ?? []).map((row) => String(row.column_name)));
+    _cachedOrdersEstimateColumns = {
+      estimate_amount: set.has('estimate_amount'),
+      estimate_due_at: set.has('estimate_due_at'),
+      estimate_duration_text: set.has('estimate_duration_text'),
+      estimate_notes: set.has('estimate_notes'),
+    };
+  } catch (_) {
+    _cachedOrdersEstimateColumns = {
+      estimate_amount: false,
+      estimate_due_at: false,
+      estimate_duration_text: false,
+      estimate_notes: false,
+    };
+  }
+  return _cachedOrdersEstimateColumns;
+}
+
+let _cachedOrderCostBreakdownsTableExists = null; // boolean | null (unknown)
+async function orderCostBreakdownsTableExists(client) {
+  if (_cachedOrderCostBreakdownsTableExists !== null) {
+    return _cachedOrderCostBreakdownsTableExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'order_cost_breakdowns'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedOrderCostBreakdownsTableExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedOrderCostBreakdownsTableExists = false;
+  }
+  return _cachedOrderCostBreakdownsTableExists;
+}
+
+let _cachedItemConditionsColumns = null; // Set<string> | null
+async function getItemConditionsColumns(client) {
+  if (_cachedItemConditionsColumns !== null) return _cachedItemConditionsColumns;
+  try {
+    const r = await client.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'item_conditions'
+      `,
+      []
+    );
+    _cachedItemConditionsColumns = new Set(r.rows.map((x) => x.column_name));
+  } catch (_) {
+    _cachedItemConditionsColumns = new Set();
+  }
+  return _cachedItemConditionsColumns;
+}
+
 let _cachedUsersRoleColumnExists = null; // boolean | null (unknown)
 let _cachedUsersBranchIdColumnExists = null; // boolean | null (unknown)
 async function usersHasRoleAndBranchColumns(client) {
@@ -168,7 +335,7 @@ async function usersHasRoleAndBranchColumns(client) {
   };
 }
 
-async function getOrdersJumlahColumnMode(client) {
+async function _getOrdersJumlahColumnMode(client) {
   // Returns: 'generated' | 'plain' | 'missing'
   try {
     const r = await client.query(
@@ -188,6 +355,28 @@ async function getOrdersJumlahColumnMode(client) {
     // If introspection fails, assume plain so we keep values consistent.
     return 'plain';
   }
+}
+
+let _cachedItemsCreatedByExists = null;
+async function itemsHasCreatedByColumn() {
+  if (_cachedItemsCreatedByExists !== null) return _cachedItemsCreatedByExists;
+  try {
+    const r = await db.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'items'
+          AND column_name = 'created_by'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedItemsCreatedByExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedItemsCreatedByExists = false;
+  }
+  return _cachedItemsCreatedByExists;
 }
 
 const authRequired = authenticateToken(SECRET_KEY);
@@ -240,6 +429,31 @@ function getActivePresenceSnapshot() {
     String(a.username).localeCompare(String(b.username)),
   );
   return { users, total_connections: wsPresenceBySocket.size };
+}
+
+/** Tutup semua WebSocket presence untuk [targetUserId]; kirim `force_logout` lalu close. */
+function disconnectPresenceSessionsForUser(targetUserId, reason) {
+  const uid = parseInt(String(targetUserId), 10);
+  if (!Number.isFinite(uid)) return { closed: 0 };
+  const toClose = [];
+  for (const [ws, meta] of wsPresenceBySocket.entries()) {
+    if (meta.user_id === uid) toClose.push(ws);
+  }
+  const msg = JSON.stringify({
+    type: 'force_logout',
+    reason: reason || 'Anda dilogoutkan oleh administrator.',
+  });
+  for (const ws of toClose) {
+    try {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(msg);
+      }
+    } catch (_) {}
+    try {
+      ws.close();
+    } catch (_) {}
+  }
+  return { closed: toClose.length };
 }
 
 const loginLimiter = rateLimit({
@@ -328,6 +542,7 @@ app.use('/api/branches', authRequired, (req, res, next) => {
   return requireRoles('superadmin')(req, res, next);
 });
 app.use('/orders', authRequired);
+app.use('/store-operational', authRequired);
 app.use('/payments', authRequired);
 app.use('/transfers', authRequired);
 app.use('/items', authRequired);
@@ -348,17 +563,42 @@ app.get('/api/admin/active-sessions', requireRoles('superadmin'), (req, res) => 
   res.json(getActivePresenceSnapshot());
 });
 
-app.use('/workshop-orders', authRequired, requireRoles('superadmin', 'admin_workshop', 'tukang'));
+// Superadmin: logout paksa semua koneksi Live (WebSocket) milik user — klien menerima force_logout.
+app.post('/api/admin/active-sessions/:userId/kick', requireRoles('superadmin'), (req, res) => {
+  try {
+    const targetId = parseInt(String(req.params.userId), 10);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ error: 'userId tidak valid' });
+    }
+    const adminId = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
+    if (Number.isFinite(adminId) && adminId === targetId) {
+      return res.status(400).json({
+        error: 'Tidak dapat melogoutkan diri sendiri dari panel ini (gunakan logout).',
+      });
+    }
+    const reasonRaw = req.body && req.body.reason != null ? String(req.body.reason) : '';
+    const reason = reasonRaw.trim().slice(0, 500) || undefined;
+    const { closed } = disconnectPresenceSessionsForUser(targetId, reason);
+    res.json({ ok: true, closed, user_id: String(targetId) });
+  } catch (error) {
+    console.error('Error kicking active sessions:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.use('/workshop-orders', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang'));
 app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
 app.use('/test-db', authRequired, requireRoles('superadmin'));
-app.use(['/orders', '/payments', '/transfers', '/items', '/stock-history', '/stock-mutations', '/employees', '/branches', '/users'], writeApiLimiter);
+app.use(['/orders', '/payments', '/transfers', '/items', '/stock-history', '/stock-mutations', '/employees', '/branches', '/users', '/store-operational'], writeApiLimiter);
 
 // Sample data
 let orders = [];
 let items = [];
-let users = [];
+let users = []; // eslint-disable-line no-unused-vars
 let stockHistory = [];
-let payments = []; // Tambahkan array untuk menyimpan data pembayaran
+// Legacy placeholder (sample data)
+// eslint-disable-next-line no-unused-vars
+let payments = [];
 
 // CRUD for Orders
 // app.get('/orders', (req, res) => {
@@ -513,6 +753,9 @@ app.get('/orders', async (req, res) => {
         photo_produk: row.photo_produk || row.item_photo_produk,
         material: row.material || row.item_material,
         purity: row.purity || row.item_purity,
+        // Keep explicit fallbacks so clients can decide precedence
+        item_material: row.item_material,
+        item_purity: row.item_purity,
         kategori: row.kategori || row.item_kategori,
         jenis: row.jenis || row.item_jenis,
         tipe: row.tipe || row.item_tipe,
@@ -559,6 +802,486 @@ app.get('/orders', async (req, res) => {
   }
 });
 
+// Payment summary for a single order (used by Ambil Barang)
+app.get('/orders/payment-summary', async (req, res) => {
+  try {
+    const orderIdRaw = (req.query.order_id ?? '').toString().trim();
+    const orderId = parseInt(orderIdRaw, 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'order_id harus berupa angka' });
+    }
+
+    const ordRes = await db.query(
+      `SELECT order_id, order_type, status, total, branch_id
+       FROM orders
+       WHERE order_id = $1
+       LIMIT 1`,
+      [orderId]
+    );
+    if (ordRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    }
+
+    const total = parseFloat(ordRes.rows[0].total || 0);
+
+    const sumRes = await db.query(
+      `
+        SELECT
+          COALESCE(SUM(CASE WHEN status = 'pending' THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS dp_amount,
+          COALESCE(SUM(CASE WHEN status = 'completed' THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS paid_completed_amount,
+          COALESCE(SUM(CASE WHEN status IN ('pending','completed') THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS paid_amount
+        FROM payments
+        WHERE order_id = $1
+      `,
+      [orderId]
+    );
+    const row = sumRes.rows[0] || {};
+    const dpAmount = parseFloat(row.dp_amount || 0);
+    const paidAmount = parseFloat(row.paid_amount || 0);
+    const remaining = Math.max(total - paidAmount, 0);
+
+    return res.status(200).json({
+      order_id: orderId,
+      total,
+      dp_amount: dpAmount,
+      paid_amount: paidAmount,
+      remaining_amount: remaining,
+    });
+  } catch (e) {
+    console.error('Error fetching order payment summary:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Mark service/custom order as picked up (ambil barang)
+app.post('/orders/pickup', async (req, res) => {
+  const client = await db.getClient();
+  try {
+    const { order_id, order_number, branch_id, notes, photo_url } = req.body ?? {};
+
+    const branchIdRaw = (branch_id ?? req.user?.branch_id ?? '').toString().trim();
+    if (!branchIdRaw) {
+      return res.status(400).json({ error: 'branch_id is required' });
+    }
+    const branchId = parseInt(branchIdRaw, 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id must be a number' });
+    }
+
+    let orderId = order_id != null ? parseInt(order_id, 10) : null;
+    const orderNumber = (order_number ?? '').toString().trim();
+    if (!Number.isFinite(orderId) && !orderNumber) {
+      return res.status(400).json({ error: 'order_id atau order_number wajib diisi' });
+    }
+
+    await client.query('BEGIN');
+
+    const whereSql = Number.isFinite(orderId)
+      ? 'o.order_id = $1'
+      : 'o.order_number = $1';
+    const whereVal = Number.isFinite(orderId) ? orderId : orderNumber;
+
+    const ordRes = await client.query(
+      `
+        SELECT o.order_id, o.order_number, o.order_type, o.status, o.branch_id
+        FROM orders o
+        WHERE ${whereSql}
+        LIMIT 1
+      `,
+      [whereVal]
+    );
+    if (ordRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    }
+
+    const ord = ordRes.rows[0];
+    if (parseInt(ord.branch_id, 10) !== branchId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Order bukan milik branch ini' });
+    }
+    const ot = (ord.order_type ?? '').toString().trim().toLowerCase();
+    if (ot !== 'service' && ot !== 'custom') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Hanya order service/custom yang bisa diambil' });
+    }
+    const st = (ord.status ?? '').toString().trim().toLowerCase();
+    if (st !== 'ready_for_pickup' && st !== 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Order belum siap diambil customer' });
+    }
+
+    const payRes = await client.query(
+      `
+        SELECT
+          COALESCE(o.total, 0)::float8 AS total,
+          COALESCE((
+            SELECT SUM(COALESCE(p.amount, 0))::float8
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status IN ('pending', 'completed')
+          ), 0)::float8 AS paid_amount
+        FROM orders o
+        WHERE o.order_id = $1
+        LIMIT 1
+      `,
+      [ord.order_id]
+    );
+    const total = parseFloat(payRes.rows[0]?.total || 0);
+    const paidAmount = parseFloat(payRes.rows[0]?.paid_amount || 0);
+    const remaining = Math.max(total - paidAmount, 0);
+    const nextStatus = remaining > 0 ? 'pending' : 'completed';
+
+    const pickedBy = req.user?.user_id ?? req.user?.id ?? null;
+    await client.query(
+      `
+        UPDATE orders
+        SET status = $1,
+            picked_up_at = COALESCE(picked_up_at, NOW()),
+            picked_up_by = $2,
+            picked_up_notes = $3,
+            picked_up_photo_url = $4,
+            updated_at = NOW()
+        WHERE order_id = $5
+      `,
+      [
+        nextStatus,
+        pickedBy,
+        (notes ?? '').toString(),
+        (photo_url ?? '').toString() || null,
+        ord.order_id,
+      ]
+    );
+
+    await client.query('COMMIT');
+    sendNotificationToClients(`Order ${ord.order_id} (${ot}) telah diambil customer, status ${nextStatus}`);
+    return res.status(200).json({
+      message: 'Barang berhasil diambil',
+      order_id: ord.order_id,
+      order_number: ord.order_number,
+      next_status: nextStatus,
+      remaining_amount: remaining,
+    });
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
+    console.error('Error pickup order:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    try {
+      client.release?.();
+    } catch (_) {}
+  }
+});
+
+/**
+ * Cabang aktif di aplikasi bisa diganti (Switch Branch) tanpa JWT baru.
+ * Jangan bandingkan hanya ke req.user.branch_id dari token — cek assignment DB.
+ */
+async function assertUserCanAccessStoreOperationalBranch(req, res, branchId) {
+  const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+  if (role === 'superadmin') return true;
+
+  const userId =
+    req.user?.user_id != null ? parseInt(String(req.user.user_id), 10) : null;
+  if (!Number.isFinite(userId) || userId <= 0) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+
+  const check = await db.query(
+    `SELECT 1 FROM user_branch_roles WHERE user_id = $1 AND branch_id = $2 LIMIT 1`,
+    [userId, branchId]
+  );
+  if (check.rows.length === 0) {
+    res.status(403).json({
+      error: 'Tidak punya akses ke cabang ini',
+      details:
+        'Pastikan user punya assignment di user_branch_roles untuk branch_id yang dipilih.',
+    });
+    return false;
+  }
+  return true;
+}
+
+// Pengeluaran operasional toko (Keuangan Toko — kasir)
+app.get('/store-operational', async (req, res) => {
+  try {
+    const branchIdRaw = (req.query.branch_id ?? '').toString().trim();
+    if (!branchIdRaw) {
+      return res.status(400).json({ error: 'branch_id is required' });
+    }
+    const branchId = parseInt(branchIdRaw, 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id must be a number' });
+    }
+    if (!(await assertUserCanAccessStoreOperationalBranch(req, res, branchId))) {
+      return;
+    }
+
+    const datePat = /^\d{4}-\d{2}-\d{2}$/;
+    const dateRaw = (req.query.date ?? '').toString().trim();
+    const fromRaw = (req.query.date_from ?? '').toString().trim();
+    const toRaw = (req.query.date_to ?? '').toString().trim();
+
+    let result;
+    if (datePat.test(fromRaw) && datePat.test(toRaw)) {
+      if (fromRaw > toRaw) {
+        return res.status(400).json({
+          error: 'date_from tidak boleh lebih besar dari date_to',
+        });
+      }
+      result = await db.query(
+        `
+        SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
+        FROM store_operational_entries
+        WHERE branch_id = $1
+          AND created_at >= ($2::date AT TIME ZONE 'Asia/Jakarta')
+          AND created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Jakarta')
+        ORDER BY created_at DESC
+      `,
+        [branchId, fromRaw, toRaw]
+      );
+    } else {
+      const targetDate = datePat.test(dateRaw)
+        ? dateRaw
+        : new Date().toISOString().split('T')[0];
+      result = await db.query(
+        `
+        SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
+        FROM store_operational_entries
+        WHERE branch_id = $1
+          AND created_at >= ($2::date AT TIME ZONE 'Asia/Jakarta')
+          AND created_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Jakarta')
+        ORDER BY created_at DESC
+      `,
+        [branchId, targetDate]
+      );
+    }
+
+    const rows = result.rows.map((r) => ({
+      entry_id: r.entry_id != null ? String(r.entry_id) : null,
+      branch_id: r.branch_id != null ? String(r.branch_id) : null,
+      user_id: r.user_id != null ? String(r.user_id) : null,
+      amount: parseFloat(r.amount || 0),
+      category: r.category,
+      notes: r.notes,
+      entry_kind: r.entry_kind === 'income' ? 'income' : 'expense',
+      proof_photo_url: r.proof_photo_url,
+      created_at: r.created_at,
+    }));
+
+    return res.status(200).json(rows);
+  } catch (e) {
+    console.error('Error listing store-operational:', e);
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Tabel belum tersedia di database',
+        details:
+          'Jalankan migrasi backend/migrations/20260507_store_operational_entries.sql dan 20260508_store_operational_entry_kind.sql lalu restart server.',
+      });
+    }
+    if (e && e.code === '42703' && /entry_kind/i.test(String(e.message || ''))) {
+      return res.status(503).json({
+        error: 'Skema perlu diperbarui (entry_kind)',
+        details:
+          'Jalankan backend/migrations/20260508_store_operational_entry_kind.sql lalu restart server.',
+      });
+    }
+    if (
+      e &&
+      e.code === '42703' &&
+      /proof_photo_url/i.test(String(e.message || ''))
+    ) {
+      return res.status(503).json({
+        error: 'Skema perlu diperbarui (proof_photo_url)',
+        details:
+          'Jalankan backend/migrations/20260509_store_operational_proof_photo_url.sql lalu restart server.',
+      });
+    }
+    return res.status(500).json({
+      error: 'Internal server error',
+      detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+    });
+  }
+});
+
+app.post('/store-operational', async (req, res) => {
+  try {
+    const { branch_id, amount, category, notes, entry_kind, proof_photo_url } =
+      req.body ?? {};
+    const branchIdRaw = (branch_id ?? '').toString().trim();
+    if (!branchIdRaw) {
+      return res.status(400).json({ error: 'branch_id is required' });
+    }
+    const branchId = parseInt(branchIdRaw, 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id must be a number' });
+    }
+    if (!(await assertUserCanAccessStoreOperationalBranch(req, res, branchId))) {
+      return;
+    }
+
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'amount harus angka positif' });
+    }
+    const cat = (category ?? '').toString().trim();
+    if (!cat) {
+      return res.status(400).json({ error: 'category wajib diisi' });
+    }
+    const notesVal = (notes ?? '').toString().trim() || null;
+    const kindRaw = (entry_kind ?? '').toString().trim().toLowerCase();
+    const entryKind = kindRaw === 'income' ? 'income' : 'expense';
+    const proofUrl =
+      proof_photo_url != null && String(proof_photo_url).trim().length > 0
+        ? String(proof_photo_url).trim()
+        : null;
+    const userId = req.user?.user_id != null
+      ? parseInt(String(req.user.user_id), 10)
+      : null;
+
+    const ins = await db.query(
+      `
+        INSERT INTO store_operational_entries (branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
+      `,
+      [
+        branchId,
+        Number.isFinite(userId) ? userId : null,
+        amt,
+        cat,
+        notesVal,
+        entryKind,
+        proofUrl,
+      ]
+    );
+    const r = ins.rows[0];
+    return res.status(201).json({
+      entry_id: r.entry_id != null ? String(r.entry_id) : null,
+      branch_id: r.branch_id != null ? String(r.branch_id) : null,
+      user_id: r.user_id != null ? String(r.user_id) : null,
+      amount: parseFloat(r.amount || 0),
+      category: r.category,
+      notes: r.notes,
+      entry_kind: r.entry_kind === 'income' ? 'income' : 'expense',
+      proof_photo_url: r.proof_photo_url,
+      created_at: r.created_at,
+    });
+  } catch (e) {
+    console.error('Error creating store-operational:', e);
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Tabel belum tersedia di database',
+        details:
+          'Jalankan migrasi backend/migrations/20260508_store_operational_entry_kind.sql (dan 20260507 jika tabel belum ada) lalu restart server.',
+      });
+    }
+    if (e && e.code === '42703' && /entry_kind/i.test(String(e.message || ''))) {
+      return res.status(503).json({
+        error: 'Skema perlu diperbarui (entry_kind)',
+        details:
+          'Jalankan backend/migrations/20260508_store_operational_entry_kind.sql lalu restart server.',
+      });
+    }
+    if (
+      e &&
+      e.code === '42703' &&
+      /proof_photo_url/i.test(String(e.message || ''))
+    ) {
+      return res.status(503).json({
+        error: 'Skema perlu diperbarui (proof_photo_url)',
+        details:
+          'Jalankan backend/migrations/20260509_store_operational_proof_photo_url.sql lalu restart server.',
+      });
+    }
+    return res.status(500).json({
+      error: 'Internal server error',
+      detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+    });
+  }
+});
+
+// Upload / update foto bukti untuk entri tertentu
+app.post('/store-operational/:entry_id/proof-photo', async (req, res) => {
+  try {
+    const entryIdRaw = (req.params.entry_id ?? '').toString().trim();
+    const entryId = parseInt(entryIdRaw, 10);
+    if (!Number.isFinite(entryId) || entryId <= 0) {
+      return res.status(400).json({ error: 'entry_id tidak valid' });
+    }
+
+    const { branch_id, proof_photo_url } = req.body ?? {};
+    const branchIdRaw = (branch_id ?? '').toString().trim();
+    const branchId = parseInt(branchIdRaw, 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id tidak valid' });
+    }
+    if (!(await assertUserCanAccessStoreOperationalBranch(req, res, branchId))) {
+      return;
+    }
+
+    const proofUrl =
+      proof_photo_url != null && String(proof_photo_url).trim().length > 0
+        ? String(proof_photo_url).trim()
+        : null;
+    if (!proofUrl) {
+      return res.status(400).json({ error: 'proof_photo_url wajib diisi' });
+    }
+
+    const upd = await db.query(
+      `
+        UPDATE store_operational_entries
+        SET proof_photo_url = $1
+        WHERE entry_id = $2 AND branch_id = $3
+        RETURNING entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
+      `,
+      [proofUrl, entryId, branchId]
+    );
+    if (upd.rows.length === 0) {
+      return res.status(404).json({ error: 'Entri tidak ditemukan' });
+    }
+    const r = upd.rows[0];
+    return res.status(200).json({
+      entry_id: r.entry_id != null ? String(r.entry_id) : null,
+      branch_id: r.branch_id != null ? String(r.branch_id) : null,
+      user_id: r.user_id != null ? String(r.user_id) : null,
+      amount: parseFloat(r.amount || 0),
+      category: r.category,
+      notes: r.notes,
+      entry_kind: r.entry_kind === 'income' ? 'income' : 'expense',
+      proof_photo_url: r.proof_photo_url,
+      created_at: r.created_at,
+    });
+  } catch (e) {
+    console.error('Error updating store-operational proof photo:', e);
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Tabel belum tersedia di database',
+        details:
+          'Jalankan migrasi backend/migrations/20260507_store_operational_entries.sql lalu restart server.',
+      });
+    }
+    if (
+      e &&
+      e.code === '42703' &&
+      /proof_photo_url/i.test(String(e.message || ''))
+    ) {
+      return res.status(503).json({
+        error: 'Skema perlu diperbarui (proof_photo_url)',
+        details:
+          'Jalankan backend/migrations/20260509_store_operational_proof_photo_url.sql lalu restart server.',
+      });
+    }
+    return res.status(500).json({
+      error: 'Internal server error',
+      detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+    });
+  }
+});
+
 app.post('/orders', upload.single('photo'), async (req, res) => {
   const client = await db.getClient();
 
@@ -578,6 +1301,99 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       uploadedPhotoPath = `/uploads/${req.file.filename}`;
     }
 
+    const toObject = (raw) => {
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') {
+        const s = raw.trim();
+        if (!s) return {};
+        try {
+          const parsed = JSON.parse(s);
+          return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed
+            : {};
+        } catch (_) {
+          return {};
+        }
+      }
+      return {};
+    };
+
+    const toNumberLoose = (raw) => {
+      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+      const s0 = String(raw ?? '').trim();
+      if (!s0) return NaN;
+      const s = s0.replace(/\s+/g, '');
+      if (/^-?\d+$/.test(s)) return Number(s);
+      let normalized = s;
+      if (s.includes(',') && s.includes('.')) {
+        if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+          // 1.234,56 -> 1234.56
+          normalized = s.replace(/\./g, '').replace(',', '.');
+        } else {
+          // 1,234.56 -> 1234.56
+          normalized = s.replace(/,/g, '');
+        }
+      } else if (s.includes(',')) {
+        // 1234,56 or 1.234,56
+        normalized = s.replace(/\./g, '').replace(',', '.');
+      } else {
+        // 1.234.567 (thousands) vs 1234.56 (decimal)
+        const dotCount = (s.match(/\./g) || []).length;
+        if (dotCount > 1) normalized = s.replace(/\./g, '');
+      }
+      const n = Number(normalized);
+      return Number.isFinite(n) ? n : NaN;
+    };
+
+    const firstFiniteNumber = (...vals) => {
+      for (const v of vals) {
+        const n = toNumberLoose(v);
+        if (Number.isFinite(n)) return n;
+      }
+      return 0;
+    };
+
+    // Order jual dari stok: hanya status yang boleh di etalase (bukan buyback / servis / custom / sold).
+    // Buyback harus lewat gudang (transfer) sampai status layak jual di cabang tujuan.
+    {
+      const ot = orderData.order_type;
+      const ois = orderData.order_items;
+      if (ot === 'jual' && Array.isArray(ois)) {
+        const itemIds = [];
+        for (const row of ois) {
+          if (!row || row.item_id == null || row.item_id === '') continue;
+          const n = parseInt(row.item_id, 10);
+          if (Number.isFinite(n)) itemIds.push(n);
+        }
+        const uniqueIds = [...new Set(itemIds)];
+        if (uniqueIds.length > 0) {
+          const vr = await db.query(
+            `SELECT item_id, status, kode_produk, name FROM items WHERE item_id = ANY($1::bigint[])`,
+            [uniqueIds]
+          );
+          const found = new Set(vr.rows.map((r) => parseInt(r.item_id, 10)));
+          for (const id of uniqueIds) {
+            if (!found.has(id)) {
+              return res.status(400).json({
+                error: 'item_id tidak ditemukan',
+                detail: String(id),
+              });
+            }
+          }
+          const allowed = new Set(['ready', 'available', 'reserved']);
+          for (const row of vr.rows) {
+            const st = (row.status ?? '').toString().trim().toLowerCase();
+            if (!allowed.has(st)) {
+              return res.status(400).json({
+                error: 'Item tidak boleh dijual dalam status ini',
+                detail: `item_id ${row.item_id} (${row.kode_produk || row.name || ''}) memiliki status "${row.status}". Barang buyback atau yang belum siap etalase harus diproses/ditransfer ke gudang dulu.`,
+              });
+            }
+          }
+        }
+      }
+    }
+
     await client.query('BEGIN');
 
     // Backward-compatible: DB may have items.photo_url (old) or items.photo_produk (new)
@@ -585,7 +1401,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     const itemsPhotoColName = itemsPhotoCol || 'photo_url';
 
   // Persist upload metadata (safe: filename is server-generated)
-  let uploadId = null;
+  let _uploadId = null;
   if (req.file) {
     const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
     const urlPath = `/uploads/${req.file.filename}`;
@@ -608,10 +1424,10 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           Number.isFinite(uploaderUserId) ? uploaderUserId : null,
         ]
       );
-      uploadId = upRes.rows[0]?.upload_id ?? null;
+      _uploadId = upRes.rows[0]?.upload_id ?? null;
       await client.query('RELEASE SAVEPOINT uploads_insert');
     } catch (_) {
-      uploadId = null;
+      _uploadId = null;
       await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
       await client.query('RELEASE SAVEPOINT uploads_insert');
     }
@@ -626,10 +1442,52 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       customer_id,
       diskon = 0,
       order_items,
+      status: requestedStatus,
+      service_estimated_total,
+      service_dp_amount,
       // For backward compatibility
-      item_id,
-      item_data,
+      item_id: _item_id,
+      item_data: _item_data,
     } = orderData;
+    const refOrderNumberRaw = String(
+      orderData.reference_order_number ??
+      orderData.nota_lama ??
+      ''
+    ).trim();
+    const estimateAmountRaw = parseFloat(
+      orderData.estimate_amount ??
+      service_estimated_total ??
+      orderData.custom_estimated_total ??
+      0
+    );
+    const estimateAmount = Number.isFinite(estimateAmountRaw) && estimateAmountRaw > 0
+      ? estimateAmountRaw
+      : null;
+    const estimateDueCandidate = String(
+      orderData.estimate_due_at ??
+      orderData.estimasi_selesai ??
+      orderData.estimated_finish_at ??
+      orderData.estimated_completion_date ??
+      ''
+    ).trim();
+    let estimateDueAtIso = null;
+    if (estimateDueCandidate) {
+      const parsedDue = new Date(estimateDueCandidate);
+      if (!Number.isNaN(parsedDue.getTime())) {
+        estimateDueAtIso = parsedDue.toISOString();
+      }
+    }
+    const estimateDurationText = String(
+      orderData.estimate_duration_text ??
+      orderData.estimasi_waktu ??
+      ''
+    ).trim() || null;
+    const estimateNotes = String(
+      orderData.estimate_notes ??
+      orderData.keterangan ??
+      orderData.catatan_service ??
+      ''
+    ).trim() || null;
 
     // Validate order_type
     const validOrderTypes = ['jual', 'buyback', 'service', 'custom'];
@@ -657,15 +1515,99 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     }
 
     // Create order
+    const rawRequestedStatus = (requestedStatus ?? '')
+      .toString()
+      .trim()
+      .toLowerCase();
+    const workflowEst = parseFloat(service_estimated_total ?? orderData.custom_estimated_total ?? 0);
+    const workflowDp = parseFloat(service_dp_amount ?? orderData.custom_dp_amount ?? 0);
+    const hasWorkflowCost =
+      Number.isFinite(workflowEst) && workflowEst > 0 &&
+      Number.isFinite(workflowDp) && workflowDp > 0;
+    let initialStatus = 'pending';
+    if (order_type === 'service' || order_type === 'custom') {
+      const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
+      const workshopEntryStatus = supportsWorkshopStatuses
+        ? 'sent-to-workshop'
+        : 'pending';
+      initialStatus = hasWorkflowCost ? 'pending' : workshopEntryStatus;
+      if (rawRequestedStatus === 'pending') {
+        initialStatus = 'pending';
+      } else if (rawRequestedStatus === 'sent-to-workshop') {
+        initialStatus = workshopEntryStatus;
+      }
+    } else if (rawRequestedStatus) {
+      initialStatus = rawRequestedStatus;
+    }
+
     const orderResult = await client.query(
       `INSERT INTO orders (
         order_type, customer_id, status, order_number, branch_id, user_id, diskon, mode, total
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *`,
-      [order_type, customer_id, 'pending', nota_order, branch_id, user_id, diskon, mode, 0] // total will be calculated later
+      [order_type, customer_id, initialStatus, nota_order, branch_id, user_id, diskon, mode, 0] // total will be calculated later
     );
 
     const order = orderResult.rows[0];
+
+    // Persist estimate fields to dedicated order columns when available.
+    if (
+      (estimateAmount !== null || estimateDueAtIso || estimateDurationText || estimateNotes) &&
+      order?.order_id
+    ) {
+      const estCols = await ordersEstimateColumns(client);
+      const setClauses = [];
+      const values = [];
+      if (estCols.estimate_amount) {
+        setClauses.push(`estimate_amount = $${values.length + 1}`);
+        values.push(estimateAmount);
+      }
+      if (estCols.estimate_due_at) {
+        setClauses.push(`estimate_due_at = $${values.length + 1}`);
+        values.push(estimateDueAtIso);
+      }
+      if (estCols.estimate_duration_text) {
+        setClauses.push(`estimate_duration_text = $${values.length + 1}`);
+        values.push(estimateDurationText);
+      }
+      if (estCols.estimate_notes) {
+        setClauses.push(`estimate_notes = $${values.length + 1}`);
+        values.push(estimateNotes);
+      }
+      if (setClauses.length > 0) {
+        values.push(order.order_id);
+        await client.query(
+          `
+            UPDATE orders
+            SET ${setClauses.join(', ')}, updated_at = NOW()
+            WHERE order_id = $${values.length}
+          `,
+          values
+        );
+      }
+    }
+
+    // Persist reference order number (nota lama) for future reprints.
+    if ((order_type === 'buyback' || order_type === 'service') && refOrderNumberRaw) {
+      const hasOrdersMetadata = await ordersHasMetadataColumn(client);
+      if (hasOrdersMetadata) {
+        await client.query(
+          `
+            UPDATE orders
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+            WHERE order_id = $2
+          `,
+          [
+            JSON.stringify({
+              reference_order_number: refOrderNumberRaw,
+              nota_lama: refOrderNumberRaw,
+              nota_jual: refOrderNumberRaw,
+            }),
+            order.order_id,
+          ]
+        );
+      }
+    }
 
     // Process order items
     let computedOrderItemsTotal = 0;
@@ -694,8 +1636,15 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             nama_item: dbItem.name,
             kode_produk: dbItem.kode_produk,
             weight: dbItem.weight,
-            material: dbItem.material,
-            purity: dbItem.purity,
+            // Keep material/kadar from request (order_items) if provided; fallback to items table.
+            material:
+              (itemData.material != null && String(itemData.material).trim().length > 0)
+                ? itemData.material
+                : dbItem.material,
+            purity:
+              (itemData.purity != null && String(itemData.purity).trim().length > 0)
+                ? itemData.purity
+                : dbItem.purity,
             kategori: dbItem.kategori,
             jenis: dbItem.jenis,
             tipe: dbItem.tipe,
@@ -722,11 +1671,16 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         // Create new item
         // Try inserting item; if kode_produk already exists, reuse existing item
         try {
+          // Buyback stock should be added only when payment is completed.
+          // Start from 0 to avoid double count (default DB quantity is 1).
+          const initialItemQty = order_type === 'buyback'
+            ? 0
+            : (parseInt(itemData.quantity, 10) || 1);
           const itemResult = await client.query(
             `INSERT INTO items (
               name, kode_produk, weight, material, purity, kategori, jenis, tipe,
-              ownership, stock_type, status, is_quick_registered, branch_id, source, ${itemsPhotoColName}
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+              ownership, stock_type, status, is_quick_registered, branch_id, source, quantity, ${itemsPhotoColName}
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING item_id`,
             [
               itemData.nama_item,
@@ -743,6 +1697,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
               itemData.is_quick_registered || false,
               branch_id,
               'manual',
+              initialItemQty,
               itemData.photo_produk,
             ]
           );
@@ -797,6 +1752,10 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             break;
         }
 
+        const statusBeforeOrderUpdate = (
+          itemData.status || 'unregistered'
+        ).toString();
+
         await client.query(
           `UPDATE items SET
             status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
@@ -804,50 +1763,154 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           [newItemStatus, newOwnership, newStockType, final_item_id]
         );
 
-        // Record in stock_history (use 'unknown' as fallback for old_status to satisfy schema constraints)
+        // Riwayat status: dari status baris setelah INSERT (bukan placeholder 'unknown')
         await client.query(
           `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
            VALUES ($1, $2, $3, $4, $5)`,
-          [final_item_id, 'unknown', newItemStatus, user_id, `Order ${order_type} created`]
+          [
+            final_item_id,
+            statusBeforeOrderUpdate,
+            newItemStatus,
+            user_id,
+            `Order ${order_type} created`,
+          ]
         );
 
-        // Save item condition for buyback orders
-        if (order_type === 'buyback' && itemData.kondisi_barang) {
-          await client.query(
-            `INSERT INTO item_conditions (
-              item_id, order_id, kondisi_fisik, kerusakan, berat_awal, berat_akhir,
-              penyesuaian_berat, harga_per_gram, potongan_kondisi, nilai_resale,
-              harga_beli, untung_rugi, catatan_kondisi, foto_kondisi, dinilai_oleh
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-            [
-              final_item_id,
-              order.order_id,
-              itemData.kondisi_barang.kondisi_fisik || 'BAIK',
-              itemData.kondisi_barang.kerusakan || [],
-              parseFloat(itemData.kondisi_barang.berat_awal) || parseFloat(itemData.weight) || 0,
-              parseFloat(itemData.kondisi_barang.berat_akhir) || parseFloat(itemData.weight) || 0,
-              parseFloat(itemData.kondisi_barang.penyesuaian_berat) || 0,
-              parseFloat(itemData.kondisi_barang.harga_per_gram) || parseFloat(itemData.harga_per_gram) || 0,
-              parseFloat(itemData.kondisi_barang.potongan_kondisi) || 0,
-              parseFloat(itemData.kondisi_barang.nilai_resale) || 0,
-              parseFloat(itemData.kondisi_barang.harga_beli) || parseFloat(itemData.subtotal) || 0,
-              itemData.kondisi_barang.untung_rugi || 'UNTUNG',
-              itemData.kondisi_barang.catatan_kondisi || '',
-              itemData.kondisi_barang.foto_kondisi || (itemData.photo_produk ? [itemData.photo_produk] : []),
-              user_id
-            ]
-          );
+      }
+
+      // Save item condition for buyback orders (works for existing and new items)
+      if (order_type === 'buyback' && final_item_id) {
+        const kondisiBarang = toObject(itemData.kondisi_barang ?? itemData.kondisiBarang);
+        const itemRefOrderNumber = String(
+          kondisiBarang.nota_jual ??
+          refOrderNumberRaw ??
+          ''
+        ).trim();
+        const catatanRaw = String(
+          kondisiBarang.catatan_kondisi ??
+          itemData.catatan_kondisi ??
+          itemData.catatanKondisi ??
+          ''
+        ).trim();
+        const catatanWithReference = (() => {
+          if (!itemRefOrderNumber) return catatanRaw;
+          if (/nota_jual_ref\s*:/i.test(catatanRaw)) return catatanRaw;
+          return catatanRaw
+            ? `${catatanRaw}\nnota_jual_ref: ${itemRefOrderNumber}`
+            : `nota_jual_ref: ${itemRefOrderNumber}`;
+        })();
+        const itemConditionCols = await getItemConditionsColumns(client);
+        const insertCols = ['item_id', 'order_id'];
+        const insertParams = [final_item_id, order.order_id];
+        const tipeBarang = String(
+          kondisiBarang.tipe ??
+            itemData.tipe ??
+            itemDetails.tipe ??
+            ''
+        )
+          .trim()
+          .toLowerCase();
+        const penyesuaianBerat = firstFiniteNumber(
+          kondisiBarang.penyesuaian_berat,
+          itemData.penyesuaian_berat,
+          0
+        );
+        const hargaPerGramBuyback = firstFiniteNumber(
+          kondisiBarang.harga_per_gram,
+          itemData.harga_per_gram,
+          itemDetails.harga_per_gram,
+          0
+        );
+        const potonganKondisi = firstFiniteNumber(
+          kondisiBarang.potongan_kondisi,
+          itemData.potongan_kondisi,
+          0
+        );
+        const untungRugiNormalized = String(
+          kondisiBarang.untung_rugi ??
+            itemData.untung_rugi ??
+            itemData.untungRugi ??
+            'UNTUNG'
+        )
+          .trim()
+          .toUpperCase();
+        let nilaiUntungRugiFormula = NaN;
+        const coef =
+          tipeBarang === 'biasa' ? 10000 :
+          tipeBarang === 'gress' ? 12000 :
+          0;
+        if (coef > 0) {
+          if (untungRugiNormalized === 'UNTUNG') {
+            nilaiUntungRugiFormula = coef * penyesuaianBerat;
+          } else if (untungRugiNormalized === 'RUGI') {
+            nilaiUntungRugiFormula = -coef * penyesuaianBerat;
+          } else {
+            nilaiUntungRugiFormula = 0;
+          }
         }
+        const nilaiUntungRugiFinal = Number.isFinite(nilaiUntungRugiFormula)
+          ? nilaiUntungRugiFormula
+          : firstFiniteNumber(
+              kondisiBarang.nilai_untung_rugi,
+              itemData.nilai_untung_rugi,
+              itemData.nilaiUntungRugi,
+              0
+            );
+        const nilaiResaleRaw =
+          (hargaPerGramBuyback * penyesuaianBerat) +
+          nilaiUntungRugiFinal -
+          potonganKondisi;
+        const nilaiResaleRounded = roundUpToNearest5000(Math.ceil(nilaiResaleRaw));
+        const optionalFields = {
+          kondisi_fisik:
+            (kondisiBarang.kondisi_fisik ??
+              itemData.kondisi_fisik ??
+              itemData.kondisiFisik ??
+              'BAIK'),
+          penyesuaian_berat: penyesuaianBerat,
+          harga_per_gram: hargaPerGramBuyback,
+          potongan_kondisi: potonganKondisi,
+          nilai_resale: nilaiResaleRounded,
+          untung_rugi: untungRugiNormalized || 'UNTUNG',
+          nilai_untung_rugi: nilaiUntungRugiFinal,
+          catatan_kondisi:
+            catatanWithReference,
+          foto_kondisi:
+            kondisiBarang.foto_kondisi ||
+            (itemData.photo_produk ? [itemData.photo_produk] : []),
+        };
+        for (const [col, val] of Object.entries(optionalFields)) {
+          if (!itemConditionCols.has(col)) continue;
+          insertCols.push(col);
+          insertParams.push(val);
+        }
+        const placeholders = insertParams.map((_, i) => `$${i + 1}`).join(', ');
+        await client.query(
+          `INSERT INTO item_conditions (${insertCols.join(', ')}) VALUES (${placeholders})`,
+          insertParams
+        );
       }
 
       // Create order item
       // Catatan: diskon hanya level orders (bukan per item).
-      // order_items.subtotal = qty * weight * harga_per_gram
-      // order_items.total = pembulatan dari subtotal (naik ke kelipatan 5.000)
+      // Default (jual/buyback): subtotal = qty * weight * harga_per_gram, lalu total dibulatkan naik ke kelipatan 5.000.
+      // Service/Custom: boleh kirim angka final manual lewat `manual_total` (mis. biaya jasa / estimasi biaya).
       const qtyVal = parseInt(itemDetails.qty) || 1;
       const weightVal = parseFloat(itemDetails.weight) || 0;
       const hargaVal = parseFloat(itemDetails.harga_per_gram) || 0;
-      const subtotalVal = qtyVal * weightVal * hargaVal;
+
+      const manualTotalRaw =
+        itemDetails.manual_total ??
+        itemDetails.manualTotal ??
+        itemData.manual_total ??
+        itemData.manualTotal;
+      const manualTotalVal = parseFloat(manualTotalRaw);
+
+      const isManualTotalAllowed = order_type === 'service' || order_type === 'custom';
+      const subtotalVal =
+        isManualTotalAllowed && Number.isFinite(manualTotalVal) && manualTotalVal > 0
+          ? manualTotalVal
+          : qtyVal * weightVal * hargaVal;
       const totalRoundedVal = Math.ceil(subtotalVal / 5000) * 5000;
 
       await client.query(
@@ -880,76 +1943,79 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       // Keep a running total from the authoritative per-item rounded value
       computedOrderItemsTotal += totalRoundedVal;
 
-      // Update existing item status if it's from stock
+      // Update existing item stock if it's from items table (has item_id).
+      // IMPORTANT: buyback should NOT check/consume stock like a sale.
       if (final_item_id && itemData.item_id) {
-        // Decrease quantity for stock items. If stock remains, keep item as stock.
         const prevQtyRaw = itemDetails.item_quantity;
         const prevQty = Number.isFinite(parseInt(prevQtyRaw, 10))
           ? parseInt(prevQtyRaw, 10)
           : 0;
 
-        const decRes = await client.query(
-          `
-            UPDATE items
-            SET quantity = COALESCE(quantity, 0) - $1,
-                updated_at = NOW()
-            WHERE item_id = $2
-              AND COALESCE(quantity, 0) >= $1
-            RETURNING quantity, status
-          `,
-          [qtyVal, final_item_id]
-        );
-
-        if (decRes.rows.length === 0) {
-          return res.status(400).json({
-            error: 'Insufficient stock quantity',
-            detail: `Stock ${prevQty} < order quantity ${qtyVal}`,
-          });
-        }
-
-        const nextQty = parseInt(decRes.rows[0].quantity, 10);
-        const prevStatus = (itemDetails.item_status ?? decRes.rows[0].status ?? 'ready').toString();
-
-        // If stock is depleted, mark as sold; otherwise keep as available for stock.
-        if (nextQty <= 0) {
-          const newItemStatus = 'sold';
-          const newOwnership = 'pelanggan';
-          const newStockType = 'non_inventory';
-
-          await client.query(
-            `UPDATE items SET
-              status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
-             WHERE item_id = $4`,
-            [newItemStatus, newOwnership, newStockType, final_item_id]
+        if (order_type === 'jual') {
+          // Decrease quantity for stock items. If stock remains, keep item as stock.
+          const decRes = await client.query(
+            `
+              UPDATE items
+              SET quantity = COALESCE(quantity, 0) - $1,
+                  updated_at = NOW()
+              WHERE item_id = $2
+                AND COALESCE(quantity, 0) >= $1
+              RETURNING quantity, status
+            `,
+            [qtyVal, final_item_id]
           );
 
+          if (decRes.rows.length === 0) {
+            return res.status(400).json({
+              error: 'Insufficient stock quantity',
+              detail: `Stock ${prevQty} < order quantity ${qtyVal}`,
+            });
+          }
+
+          const nextQty = parseInt(decRes.rows[0].quantity, 10);
+          const prevStatus = (itemDetails.item_status ?? decRes.rows[0].status ?? 'ready').toString();
+
+          // If stock is depleted, mark as sold; otherwise keep as available for stock.
+          if (nextQty <= 0) {
+            const newItemStatus = 'sold';
+            const newOwnership = 'pelanggan';
+            const newStockType = 'non_inventory';
+
+            await client.query(
+              `UPDATE items SET
+                status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
+               WHERE item_id = $4`,
+              [newItemStatus, newOwnership, newStockType, final_item_id]
+            );
+
+            await client.query(
+              `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [final_item_id, prevStatus, newItemStatus, user_id, `Order ${order_type} created (stock depleted)`]
+            );
+          }
+
+          // Always record stock mutation for this sale (type must satisfy stock_mutations_type_check: in|out|transfer|adjustment)
           await client.query(
-            `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [final_item_id, prevStatus, newItemStatus, user_id, `Order ${order_type} created (stock depleted)`]
+            `
+              INSERT INTO stock_mutations (
+                item_id, branch_id, type, quantity, previous_stock, current_stock,
+                notes, reference_id, reference_type, created_by
+              )
+              VALUES ($1, $2, 'out', $3, $4, $5, $6, $7, 'order', $8)
+            `,
+            [
+              final_item_id,
+              branch_id,
+              qtyVal,
+              prevQty,
+              nextQty,
+              `Order ${order_type} (${nota_order})`,
+              order.order_id,
+              user_id,
+            ]
           );
         }
-
-        // Always record stock mutation for this sale (type must satisfy stock_mutations_type_check: in|out|transfer|adjustment)
-        await client.query(
-          `
-            INSERT INTO stock_mutations (
-              item_id, branch_id, type, quantity, previous_stock, current_stock,
-              notes, reference_id, reference_type, created_by
-            )
-            VALUES ($1, $2, 'out', $3, $4, $5, $6, $7, 'order', $8)
-          `,
-          [
-            final_item_id,
-            branch_id,
-            qtyVal,
-            prevQty,
-            nextQty,
-            `Order ${order_type} (${nota_order})`,
-            order.order_id,
-            user_id,
-          ]
-        );
       }
     }
 
@@ -1087,19 +2153,69 @@ app.get('/orders/pending-payment', async (req, res) => {
         o.diskon,
         o.created_at,
         o.updated_at,
-        c.name as customer_name,
+        c.name AS customer_name,
         c.phone,
         c.address,
-        COALESCE(oi.nama_item, i.name) as item_name,
-        COALESCE(oi.qty, 1) as quantity,
-        COALESCE(oi.weight, i.weight, 0) as weight,
-        COALESCE(oi.jenis, i.material) as material
+        COALESCE(
+          (
+            SELECT SUM(COALESCE(p.amount, 0))::float8
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status IN ('pending', 'completed')
+          ),
+          0
+        ) AS paid_amount,
+        COALESCE(
+          (
+            SELECT STRING_AGG(
+              COALESCE(
+                NULLIF(BTRIM(oi.nama_item), ''),
+                NULLIF(BTRIM(i.name), ''),
+                '(tanpa nama)'
+              ),
+              ', ' ORDER BY oi.order_item_id
+            )
+            FROM order_items oi
+            LEFT JOIN items i ON oi.item_id = i.item_id
+            WHERE oi.order_id = o.order_id
+          ),
+          'Order ' || COALESCE(o.order_number, o.order_id::text)
+        ) AS item_name,
+        COALESCE(
+          (
+            SELECT SUM(GREATEST(COALESCE(oi.qty, 1), 1))::int
+            FROM order_items oi
+            WHERE oi.order_id = o.order_id
+          ),
+          1
+        ) AS quantity,
+        COALESCE(
+          (
+            SELECT SUM(
+              COALESCE(oi.weight, i.weight, 0)::numeric
+              * GREATEST(COALESCE(oi.qty, 1), 1)::numeric
+            )
+            FROM order_items oi
+            LEFT JOIN items i ON oi.item_id = i.item_id
+            WHERE oi.order_id = o.order_id
+          ),
+          0
+        )::float8 AS weight,
+        (
+          SELECT MAX(
+            COALESCE(
+              NULLIF(BTRIM(oi.jenis), ''),
+              NULLIF(BTRIM(i.material), '')
+            )
+          )
+          FROM order_items oi
+          LEFT JOIN items i ON oi.item_id = i.item_id
+          WHERE oi.order_id = o.order_id
+        ) AS material
       FROM orders o
       JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON oi.item_id = i.item_id
       WHERE o.branch_id = $1
-        AND o.status IN ('pending', 'ready_for_payment', 'confirmed', 'completed')
+        AND o.status IN ('pending', 'ready_for_payment', 'confirmed')
         AND NOT EXISTS (
           SELECT 1 FROM payments p
           WHERE p.order_id = o.order_id
@@ -1109,22 +2225,33 @@ app.get('/orders/pending-payment', async (req, res) => {
     `, [branch_id]);
 
     // Convert BigInt and other data types for JSON serialization
-    const processedRows = result.rows.map(row => ({
-      order_id: row.order_id.toString(),
-      order_number: row.order_number,
-      order_type: row.order_type,
-      total: parseFloat(row.total || 0),
-      diskon: parseFloat(row.diskon || 0),
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      customer_name: row.customer_name,
-      phone: row.phone,
-      address: row.address,
-      item_name: row.item_name,
-      quantity: parseInt(row.quantity || 1),
-      weight: parseFloat(row.weight || 0),
-      material: row.material
-    }));
+    const processedRows = result.rows.map((row) => {
+      const w = parseFloat(row.weight || 0);
+      const itemName = row.item_name;
+      const total = parseFloat(row.total || 0);
+      const paid = parseFloat(row.paid_amount || 0);
+      const remaining = Math.max(total - paid, 0);
+      return {
+        order_id: row.order_id.toString(),
+        order_number: row.order_number,
+        order_type: row.order_type,
+        total,
+        diskon: parseFloat(row.diskon || 0),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        customer_name: row.customer_name,
+        phone: row.phone,
+        address: row.address,
+        item_name: itemName,
+        nama_item: itemName,
+        quantity: parseInt(row.quantity || 1, 10),
+        weight: w,
+        berat: w,
+        material: row.material,
+        paid_amount: paid,
+        remaining_amount: remaining,
+      };
+    });
 
     res.status(200).json(processedRows);
   } catch (error) {
@@ -1142,13 +2269,47 @@ app.get('/payments/daily-summary', async (req, res) => {
       return res.status(400).json({ error: 'branch_id is required' });
     }
 
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const datePat = /^\d{4}-\d{2}-\d{2}$/;
+    const dfRaw = String(req.query.date_from ?? '').trim();
+    const dtRaw = String(req.query.date_to ?? '').trim();
+    const MAX_PAYMENT_RANGE_DAYS = 93;
+
+    let paymentDateSql = 'DATE(p.created_at) = $2';
+    /** @type {string[]} */
+    let dateArgs;
+    if (datePat.test(dfRaw) && datePat.test(dtRaw)) {
+      if (dfRaw > dtRaw) {
+        return res.status(400).json({ error: 'date_from harus <= date_to' });
+      }
+      const spanMs =
+        Date.parse(`${dtRaw}T12:00:00`) - Date.parse(`${dfRaw}T12:00:00`);
+      const spanDays = Math.floor(spanMs / 86400000) + 1;
+      if (spanDays > MAX_PAYMENT_RANGE_DAYS) {
+        return res.status(400).json({
+          error: `Rentang tanggal maksimal ${MAX_PAYMENT_RANGE_DAYS} hari`,
+        });
+      }
+      paymentDateSql = 'DATE(p.created_at) BETWEEN $2 AND $3';
+      dateArgs = [dfRaw, dtRaw];
+    } else {
+      const single = String(date ?? '').trim();
+      const targetDate = datePat.test(single)
+        ? single
+        : new Date().toISOString().split('T')[0];
+      dateArgs = [targetDate];
+    }
+
     const hasProofCol = await paymentsHasProofUrlColumn(db);
     const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
 
     const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
     const validatedOnly =
       validatedOnlyRaw === '1' || validatedOnlyRaw === 'true' || validatedOnlyRaw === 'yes';
+
+    const orderTypeRaw = (req.query.order_type ?? '').toString().trim().toLowerCase();
+    const allowedOrderTypes = new Set(['jual', 'buyback', 'service', 'custom']);
+    const orderTypeFilter =
+      orderTypeRaw && allowedOrderTypes.has(orderTypeRaw) ? orderTypeRaw : null;
 
     const userIdFilterRaw = (user_id ?? '').toString().trim();
     let userIdFromQuery =
@@ -1186,7 +2347,18 @@ app.get('/payments/daily-summary', async (req, res) => {
       }
     }
 
-    // Get payments for the day
+    const listParams = [branch_id, ...dateArgs];
+    let listExtraWhere = '';
+    if (userIdFilter != null) {
+      listExtraWhere += ` AND p.validated_by = $${listParams.length + 1}`;
+      listParams.push(userIdFilter);
+    }
+    if (orderTypeFilter) {
+      listExtraWhere += ` AND o.order_type = $${listParams.length + 1}`;
+      listParams.push(orderTypeFilter);
+    }
+
+    // Get payments for the day (or date range)
     const paymentsResult = await db.query(`
       SELECT
         p.payment_id,
@@ -1207,33 +2379,58 @@ app.get('/payments/daily-summary', async (req, res) => {
       JOIN orders o ON p.order_id = o.order_id
       JOIN customers c ON o.customer_id = c.customer_id
       WHERE o.branch_id = $1
-        AND DATE(p.created_at) = $2
-        ${userIdFilter != null ? 'AND p.validated_by = $3' : ''}
+        AND ${paymentDateSql}
+        ${listExtraWhere}
       ORDER BY p.created_at DESC
-    `, userIdFilter != null ? [branch_id, targetDate, userIdFilter] : [branch_id, targetDate]);
+    `, listParams);
+
+    const summaryParams = [branch_id, ...dateArgs];
+    let summaryExtraWhere = '';
+    if (userIdFilter != null) {
+      summaryExtraWhere += ` AND p.validated_by = $${summaryParams.length + 1}`;
+      summaryParams.push(userIdFilter);
+    }
+    if (orderTypeFilter) {
+      summaryExtraWhere += ` AND o.order_type = $${summaryParams.length + 1}`;
+      summaryParams.push(orderTypeFilter);
+    }
 
     // Get summary
-    const summaryResult = await db.query(`
-      SELECT
-        COUNT(*) as total_payments,
-        SUM(amount) as total_amount,
-        COUNT(CASE WHEN method = 'cash' THEN 1 END) as cash_payments,
-        COUNT(CASE WHEN method = 'transfer' THEN 1 END) as transfer_payments,
-        COUNT(CASE WHEN method = 'qris' THEN 1 END) as qris_payments
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      WHERE o.branch_id = $1
-        AND DATE(p.created_at) = $2
-        AND p.status = 'completed'
-        ${userIdFilter != null ? 'AND p.validated_by = $3' : ''}
-    `, userIdFilter != null ? [branch_id, targetDate, userIdFilter] : [branch_id, targetDate]);
+    // Business rule:
+    // - jual/service/custom = pendapatan (uang masuk)
+    // - buyback = pengeluaran (uang keluar)
+    const summaryResult = await db.query(
+      `
+        SELECT
+          COUNT(*) as total_payments,
+          SUM(amount) as total_amount,
+          COALESCE(SUM(CASE WHEN o.order_type IN ('jual', 'service', 'custom') THEN amount ELSE 0 END), 0) as income_amount,
+          COALESCE(SUM(CASE WHEN o.order_type = 'buyback' THEN amount ELSE 0 END), 0) as expense_amount,
+          COUNT(CASE WHEN method = 'cash' THEN 1 END) as cash_payments,
+          COUNT(CASE WHEN method = 'transfer' THEN 1 END) as transfer_payments,
+          COUNT(CASE WHEN method = 'qris' THEN 1 END) as qris_payments,
+          COALESCE(SUM(CASE WHEN method = 'cash' THEN amount ELSE 0 END), 0) as cash_amount,
+          COALESCE(SUM(CASE WHEN method = 'transfer' THEN amount ELSE 0 END), 0) as transfer_amount,
+          COALESCE(SUM(CASE WHEN method = 'qris' THEN amount ELSE 0 END), 0) as qris_amount
+        FROM payments p
+        JOIN orders o ON p.order_id = o.order_id
+        WHERE o.branch_id = $1
+          AND ${paymentDateSql}
+          AND p.status = 'completed'
+          ${summaryExtraWhere}
+      `,
+      summaryParams,
+    );
 
     const summary = summaryResult.rows[0] || {
       total_payments: 0,
       total_amount: 0,
       cash_payments: 0,
       transfer_payments: 0,
-      qris_payments: 0
+      qris_payments: 0,
+      cash_amount: 0,
+      transfer_amount: 0,
+      qris_amount: 0,
     };
 
     // Convert BigInt and other data types for JSON serialization
@@ -1256,10 +2453,23 @@ app.get('/payments/daily-summary', async (req, res) => {
 
     const processedSummary = {
       total_payments: parseInt(summary.total_payments || 0),
+      // Backward-compatible:
+      // - total_amount: total nominal semua pembayaran completed (income + expense)
+      // - income_amount: nominal masuk (jual/service/custom)
+      // - expense_amount: nominal keluar (buyback)
+      // - net_amount: income - expense
       total_amount: parseFloat(summary.total_amount || 0),
+      income_amount: parseFloat(summary.income_amount || 0),
+      expense_amount: parseFloat(summary.expense_amount || 0),
+      net_amount:
+        (parseFloat(summary.income_amount || 0) || 0) -
+        (parseFloat(summary.expense_amount || 0) || 0),
       cash_payments: parseInt(summary.cash_payments || 0),
       transfer_payments: parseInt(summary.transfer_payments || 0),
-      qris_payments: parseInt(summary.qris_payments || 0)
+      qris_payments: parseInt(summary.qris_payments || 0),
+      cash_amount: parseFloat(summary.cash_amount || 0),
+      transfer_amount: parseFloat(summary.transfer_amount || 0),
+      qris_amount: parseFloat(summary.qris_amount || 0),
     };
 
     res.status(200).json({
@@ -1414,18 +2624,14 @@ app.get('/item-conditions', async (req, res) => {
         ic.item_id,
         ic.order_id,
         ic.kondisi_fisik,
-        ic.kerusakan,
-        ic.berat_awal,
-        ic.berat_akhir,
         ic.penyesuaian_berat,
-        ic.keaslian,
-        ic.sertifikat,
         ic.nilai_resale,
-        ic.harga_beli,
+        ic.harga_per_gram,
+        ic.potongan_kondisi,
+        ic.untung_rugi,
+        ic.nilai_untung_rugi,
         ic.catatan_kondisi,
         ic.foto_kondisi,
-        ic.dinilai_oleh,
-        ic.tanggal_penilaian,
         ic.created_at,
         ic.updated_at,
         i.name as item_name,
@@ -1435,13 +2641,11 @@ app.get('/item-conditions', async (req, res) => {
         i.purity,
         o.order_number,
         o.order_type,
-        c.name as customer_name,
-        u.username as dinilai_oleh_username
+        c.name as customer_name
       FROM item_conditions ic
       JOIN items i ON ic.item_id = i.item_id
       JOIN orders o ON ic.order_id = o.order_id
       JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN users u ON ic.dinilai_oleh = u.user_id
     `;
 
     let params = [];
@@ -1476,18 +2680,15 @@ app.get('/item-conditions', async (req, res) => {
       item_id: row.item_id.toString(),
       order_id: row.order_id.toString(),
       kondisi_fisik: row.kondisi_fisik,
-      kerusakan: row.kerusakan || [],
-      berat_awal: parseFloat(row.berat_awal || 0),
-      berat_akhir: parseFloat(row.berat_akhir || 0),
+      kerusakan: [],
       penyesuaian_berat: row.penyesuaian_berat,
-      keaslian: row.keaslian,
-      sertifikat: row.sertifikat,
       nilai_resale: parseInt(row.nilai_resale || 0),
-      harga_beli: parseInt(row.harga_beli || 0),
+      harga_per_gram: parseFloat(row.harga_per_gram || 0),
+      potongan_kondisi: parseFloat(row.potongan_kondisi || 0),
+      untung_rugi: row.untung_rugi,
+      nilai_untung_rugi: parseFloat(row.nilai_untung_rugi || 0),
       catatan_kondisi: row.catatan_kondisi,
       foto_kondisi: row.foto_kondisi || [],
-      dinilai_oleh: row.dinilai_oleh ? row.dinilai_oleh.toString() : null,
-      tanggal_penilaian: row.tanggal_penilaian,
       created_at: row.created_at,
       updated_at: row.updated_at,
       item_name: row.item_name,
@@ -1498,7 +2699,6 @@ app.get('/item-conditions', async (req, res) => {
       order_number: row.order_number,
       order_type: row.order_type,
       customer_name: row.customer_name,
-      dinilai_oleh_username: row.dinilai_oleh_username
     }));
 
     res.status(200).json(processedRows);
@@ -1508,10 +2708,10 @@ app.get('/item-conditions', async (req, res) => {
   }
 });
 
-// Get all branches
+// Get all branches (logo_url opsional: fallback jika kolom belum ada)
 app.get('/branches', async (req, res) => {
   try {
-    const result = await db.query(`
+    const qWithLogo = `
       SELECT
         branch_id,
         name,
@@ -1520,21 +2720,46 @@ app.get('/branches', async (req, res) => {
         initials,
         address,
         phone_number,
-        status
+        status,
+        logo_url
       FROM branches
       ORDER BY name
-    `);
+    `;
+    const qNoLogo = `
+      SELECT
+        branch_id,
+        name,
+        code,
+        alias,
+        initials,
+        address,
+        phone_number,
+        status,
+        NULL::text AS logo_url
+      FROM branches
+      ORDER BY name
+    `;
+    let result;
+    try {
+      result = await db.query(qWithLogo);
+    } catch (e) {
+      if (String(e.message || '').includes('logo_url')) {
+        result = await db.query(qNoLogo);
+      } else {
+        throw e;
+      }
+    }
 
-    // Convert BigInt for JSON serialization
     const processedRows = result.rows.map(row => ({
-      branch_id: row.branch_id.toString(),
+      branch_id: row.branch_id != null ? String(row.branch_id) : '',
       name: row.name,
       code: row.code,
       alias: row.alias,
       initials: row.initials,
       address: row.address,
       phone_number: row.phone_number,
-      status: row.status
+      status: row.status,
+      logo_url: row.logo_url || null,
     }));
 
     res.status(200).json(processedRows);
@@ -1552,12 +2777,13 @@ app.post('/branches', requireRoles('superadmin'), async (req, res) => {
       return res.status(400).json({ error: 'name and code are required' });
     }
 
+    const { logo_url } = req.body || {};
     const insertQuery = `
-      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW(), NOW())
-      RETURNING branch_id, name, code, alias, initials, address, phone_number, status, created_at, updated_at
+      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, logo_url, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, NOW(), NOW())
+      RETURNING branch_id, name, code, alias, initials, address, phone_number, status, logo_url, created_at, updated_at
     `;
-    const result = await db.query(insertQuery, [name, code, alias, initials, address, phone_number]);
+    const result = await db.query(insertQuery, [name, code, alias, initials, address, phone_number, logo_url || null]);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -1573,36 +2799,59 @@ app.post('/branches', requireRoles('superadmin'), async (req, res) => {
 // CRUD for Items
 app.get('/items', async (req, res) => {
   try {
-    const { branch_id, item_code, stock_type, status, is_quick_registered, search, limit } = req.query;
-    let query = 'SELECT * FROM items';
+    const {
+      branch_id,
+      item_code,
+      stock_type: _stock_type,
+      status,
+      is_quick_registered,
+      search,
+      limit,
+      sellable_only,
+    } = req.query;
+    const hasCreatorCol = await itemsHasCreatedByColumn();
+    const fromSql = hasCreatorCol
+      ? 'items i LEFT JOIN users icu ON i.created_by = icu.user_id'
+      : 'items i';
+    const selectSql = hasCreatorCol
+      ? 'i.*, icu.username AS item_created_by_name'
+      : 'i.*';
+    let query = `SELECT ${selectSql} FROM ${fromSql}`;
     let params = [];
     let conditions = [];
 
     if (branch_id) {
-      conditions.push(`branch_id = $${params.length + 1}`);
+      conditions.push(`i.branch_id = $${params.length + 1}`);
       params.push(branch_id);
     }
 
     if (item_code) {
       // Backward compatible: DB schema uses kode_produk
-      conditions.push(`(kode_produk = $${params.length + 1})`);
+      conditions.push(`(i.kode_produk = $${params.length + 1})`);
       params.push(item_code);
     }
 
     // stock_type is not available in older schema; ignore when present
 
     if (status) {
-      conditions.push(`status = $${params.length + 1}`);
+      conditions.push(`i.status = $${params.length + 1}`);
       params.push(status);
+    } else if (sellable_only === 'true' || sellable_only === '1') {
+      // Stok yang boleh dipakai untuk penjualan etalase (exclude buyback, service, custom, sold, …)
+      conditions.push(
+        `LOWER(TRIM(COALESCE(i.status, ''))) IN ('ready', 'available', 'reserved')`
+      );
     }
 
     if (is_quick_registered !== undefined) {
-      conditions.push(`is_quick_registered = $${params.length + 1}`);
+      conditions.push(`i.is_quick_registered = $${params.length + 1}`);
       params.push(is_quick_registered === 'true');
     }
 
     if (search) {
-      conditions.push(`(CAST(item_id AS TEXT) ILIKE $${params.length + 1} OR kode_produk ILIKE $${params.length + 1} OR name ILIKE $${params.length + 1})`);
+      conditions.push(
+        `(CAST(i.item_id AS TEXT) ILIKE $${params.length + 1} OR i.kode_produk ILIKE $${params.length + 1} OR i.name ILIKE $${params.length + 1})`
+      );
       params.push(`%${search}%`);
     }
 
@@ -1610,7 +2859,7 @@ app.get('/items', async (req, res) => {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY i.created_at DESC';
 
     if (limit) {
       query += ` LIMIT $${params.length + 1}`;
@@ -1622,6 +2871,39 @@ app.get('/items', async (req, res) => {
   } catch (error) {
     console.error('Error fetching items:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Riwayat perubahan status item (dari tabel stock_history, untuk pelengkap mutasi fisik).
+app.get('/items/:id/status-history', async (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id ?? '').trim(), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid item id' });
+    }
+    const result = await db.query(
+      `
+        SELECT
+          sh.history_id,
+          sh.item_id,
+          sh.old_status,
+          sh.new_status,
+          sh.notes,
+          sh.created_at,
+          sh.changed_by,
+          u.username AS changed_by_name
+        FROM stock_history sh
+        LEFT JOIN users u ON sh.changed_by = u.user_id
+        WHERE sh.item_id = $1
+        ORDER BY sh.created_at DESC NULLS LAST, sh.history_id DESC
+        LIMIT 200
+      `,
+      [id]
+    );
+    return res.status(200).json(result.rows);
+  } catch (error) {
+    console.error('Error fetching item status history:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -1688,30 +2970,91 @@ app.post('/items', async (req, res) => {
       });
     }
 
-    const result = await db.query(
-      `INSERT INTO items (
-        branch_id, kode_produk, kategori, jenis, tipe, name, material, purity, weight, quantity,
-        status, source, metadata, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
-      RETURNING *`,
-      [
-        branch_id,
-        final_item_code,
-        kategori,
-        jenis,
-        tipe,
-        name,
-        material,
-        purity,
-        weight,
-        quantity,
-        status,
-        source,
-        metadata,
-      ]
-    );
+    const creatorId = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
+    const creatorOk = Number.isFinite(creatorId) && creatorId > 0;
+    const hasCb = await itemsHasCreatedByColumn();
+    const qtyParsed = parseInt(String(quantity), 10);
+    const qtyForMutation = Number.isFinite(qtyParsed) && qtyParsed > 0 ? qtyParsed : 1;
 
-    res.status(201).json(result.rows[0]);
+    const client = await db.getClient();
+    let result;
+    try {
+      await client.query('BEGIN');
+      if (hasCb) {
+        result = await client.query(
+          `INSERT INTO items (
+            branch_id, kode_produk, kategori, jenis, tipe, name, material, purity, weight, quantity,
+            status, source, metadata, created_by, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+          RETURNING *`,
+          [
+            branch_id,
+            final_item_code,
+            kategori,
+            jenis,
+            tipe,
+            name,
+            material,
+            purity,
+            weight,
+            quantity,
+            status,
+            source,
+            metadata,
+            creatorOk ? creatorId : null,
+          ]
+        );
+      } else {
+        result = await client.query(
+          `INSERT INTO items (
+            branch_id, kode_produk, kategori, jenis, tipe, name, material, purity, weight, quantity,
+            status, source, metadata, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+          RETURNING *`,
+          [
+            branch_id,
+            final_item_code,
+            kategori,
+            jenis,
+            tipe,
+            name,
+            material,
+            purity,
+            weight,
+            quantity,
+            status,
+            source,
+            metadata,
+          ]
+        );
+      }
+
+      const row = result.rows[0];
+      await client.query(
+        `
+          INSERT INTO stock_mutations (
+            item_id, branch_id, type, quantity, previous_stock, current_stock,
+            notes, reference_id, reference_type, created_by
+          )
+          VALUES ($1, $2, 'in', $3, 0, $3, $4, NULL, 'item_create', $5)
+        `,
+        [
+          row.item_id,
+          branch_id,
+          qtyForMutation,
+          'Pembuatan / input stok baru',
+          creatorOk ? creatorId : null,
+        ]
+      );
+
+      await client.query('COMMIT');
+      res.status(201).json(row);
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error('Error creating item:', error);
     // Provide safer, actionable errors to the client
@@ -1751,7 +3094,10 @@ app.post('/items', async (req, res) => {
 
 app.put('/items/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid item id' });
+    }
     const {
       name,
       weight,
@@ -1785,8 +3131,29 @@ app.put('/items/:id', async (req, res) => {
       });
     }
 
-    const result = await db.query(
-      `UPDATE items SET
+    const newStatusStr = String(status);
+    const editorId = parseInt(
+      String(req.user?.user_id ?? req.user?.id ?? ''),
+      10
+    );
+    const editorOk = Number.isFinite(editorId) && editorId > 0;
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+
+      const prevRes = await client.query(
+        `SELECT status FROM items WHERE item_id = $1 FOR UPDATE`,
+        [id]
+      );
+      if (prevRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Item not found' });
+      }
+      const oldStatus = String(prevRes.rows[0].status ?? '');
+
+      const result = await client.query(
+        `UPDATE items SET
         branch_id = $1,
         kode_produk = $2,
         kategori = $3,
@@ -1802,28 +3169,50 @@ app.put('/items/:id', async (req, res) => {
         updated_at = NOW()
       WHERE item_id = $13
       RETURNING *`,
-      [
-        branch_id,
-        final_item_code,
-        kategori,
-        jenis,
-        tipe,
-        name,
-        material,
-        purity,
-        weight,
-        status,
-        source,
-        metadata,
-        id,
-      ]
-    );
+        [
+          branch_id,
+          final_item_code,
+          kategori,
+          jenis,
+          tipe,
+          name,
+          material,
+          purity,
+          weight,
+          status,
+          source,
+          metadata,
+          id,
+        ]
+      );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Item not found' });
+      }
+
+      if (oldStatus !== newStatusStr) {
+        await client.query(
+          `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            id,
+            oldStatus,
+            newStatusStr,
+            editorOk ? editorId : null,
+            'Perubahan status / edit data item (toko atau admin)',
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      return res.json(result.rows[0]);
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
-
-    res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating item:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1833,37 +3222,84 @@ app.put('/items/:id', async (req, res) => {
 // Restock: increment item quantity safely
 app.post('/items/:id/restock', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id, 10);
     const { delta_quantity, branch_id } = req.body || {};
 
-    const delta = parseInt(delta_quantity);
+    const delta = parseInt(delta_quantity, 10);
     if (!Number.isFinite(delta) || delta <= 0) {
       return res
         .status(400)
         .json({ error: 'delta_quantity wajib diisi dan harus > 0' });
     }
 
-    const params = [delta, id];
-    let sql = `
+    const creatorId = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
+    const creatorOk = Number.isFinite(creatorId) && creatorId > 0;
+
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+
+      const selParams = [id];
+      let selSql = `SELECT item_id, branch_id, COALESCE(quantity, 0) AS quantity FROM items WHERE item_id = $1`;
+      if (branch_id != null && String(branch_id).trim() !== '') {
+        selSql += ` AND branch_id = $2`;
+        selParams.push(branch_id);
+      }
+      const prevRes = await client.query(selSql, selParams);
+      if (prevRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Item not found' });
+      }
+      const prevQty = parseInt(prevRes.rows[0].quantity, 10) || 0;
+      const itemBranchId = prevRes.rows[0].branch_id;
+
+      const updParams = [delta, id];
+      let updSql = `
       UPDATE items
       SET quantity = COALESCE(quantity, 0) + $1,
           updated_at = NOW()
       WHERE item_id = $2
     `;
+      if (branch_id != null && String(branch_id).trim() !== '') {
+        updSql += ` AND branch_id = $3`;
+        updParams.push(branch_id);
+      }
+      updSql += ` RETURNING *`;
+      const result = await client.query(updSql, updParams);
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Item not found' });
+      }
+      const row = result.rows[0];
+      const nextQty = parseInt(row.quantity, 10) || 0;
 
-    if (branch_id) {
-      sql += ` AND branch_id = $3`;
-      params.push(branch_id);
+      await client.query(
+        `
+          INSERT INTO stock_mutations (
+            item_id, branch_id, type, quantity, previous_stock, current_stock,
+            notes, reference_id, reference_type, created_by
+          )
+          VALUES ($1, $2, 'in', $3, $4, $5, $6, NULL, 'restock', $7)
+        `,
+        [
+          id,
+          itemBranchId,
+          delta,
+          prevQty,
+          nextQty,
+          'Restok penambahan quantity',
+          creatorOk ? creatorId : null,
+        ]
+      );
+
+      await client.query('COMMIT');
+      return res.status(200).json(row);
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
-
-    sql += ` RETURNING *`;
-
-    const result = await db.query(sql, params);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
-    }
-
-    return res.status(200).json(result.rows[0]);
   } catch (error) {
     console.error('Error restocking item:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -2295,37 +3731,12 @@ app.delete('/user-branch-roles/:userId/:branchId/:role', async (req, res) => {
   }
 });
 
-// CRUD for Branches
-app.get('/branches', async (req, res) => {
-  try {
-    const query = `
-      SELECT
-        branch_id,
-        name,
-        code,
-        alias,
-        initials,
-        address,
-        phone_number,
-        status,
-        created_at,
-        updated_at
-      FROM branches
-      ORDER BY name ASC
-    `;
-
-    const result = await db.query(query);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching branches:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// CRUD for Branches (GET /branches list — gunakan handler tunggal di atas; duplikat dihapus agar tidak membingungkan)
 
 app.get('/branches/:id/basic', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const query = `
+    const qWithLogo = `
       SELECT
         branch_id,
         name,
@@ -2335,13 +3746,38 @@ app.get('/branches/:id/basic', async (req, res) => {
         address,
         phone_number,
         status,
+        logo_url,
         created_at,
         updated_at
       FROM branches
       WHERE branch_id = $1
     `;
-
-    const result = await db.query(query, [id]);
+    const qNoLogo = `
+      SELECT
+        branch_id,
+        name,
+        code,
+        alias,
+        initials,
+        address,
+        phone_number,
+        status,
+        NULL::text AS logo_url,
+        created_at,
+        updated_at
+      FROM branches
+      WHERE branch_id = $1
+    `;
+    let result;
+    try {
+      result = await db.query(qWithLogo, [id]);
+    } catch (e) {
+      if (String(e.message || '').includes('logo_url')) {
+        result = await db.query(qNoLogo, [id]);
+      } else {
+        throw e;
+      }
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Branch not found' });
@@ -2428,7 +3864,7 @@ app.get('/branches/:id/statistics', async (req, res) => {
 app.get('/branches/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const query = `
+    const qWithLogo = `
       SELECT
         branch_id,
         name,
@@ -2438,13 +3874,38 @@ app.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        logo_url,
         created_at,
         updated_at
       FROM branches
       WHERE branch_id = $1
     `;
-
-    const result = await db.query(query, [id]);
+    const qNoLogo = `
+      SELECT
+        branch_id,
+        name,
+        code,
+        alias,
+        initials,
+        address,
+        phone_number,
+        status,
+        NULL::text AS logo_url,
+        created_at,
+        updated_at
+      FROM branches
+      WHERE branch_id = $1
+    `;
+    let result;
+    try {
+      result = await db.query(qWithLogo, [id]);
+    } catch (e) {
+      if (String(e.message || '').includes('logo_url')) {
+        result = await db.query(qNoLogo, [id]);
+      } else {
+        throw e;
+      }
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Branch not found' });
@@ -2509,6 +3970,69 @@ app.patch('/branches/:id/status', requireRoles('superadmin'), async (req, res) =
     res.json({ message: 'Branch status updated successfully' });
   } catch (error) {
     console.error('Error updating branch status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Upload / hapus logo cabang (multipart field name: `logo`)
+async function ensureBranchesLogoColumn() {
+  await db.query('ALTER TABLE branches ADD COLUMN IF NOT EXISTS logo_url TEXT');
+}
+
+app.post(
+  '/branches/:id/logo',
+  requireRoles('superadmin'),
+  (req, res, next) => {
+    upload.single('logo')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ error: err.message || 'Upload failed' });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    try {
+      await ensureBranchesLogoColumn();
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: 'Invalid branch id' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'File logo wajib diisi (field: logo)' });
+      }
+      const urlPath = `/uploads/${req.file.filename}`;
+      const result = await db.query(
+        `UPDATE branches SET logo_url = $1, updated_at = now() WHERE branch_id = $2 RETURNING branch_id, logo_url`,
+        [urlPath, id]
+      );
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+      res.status(200).json({ branch_id: String(id), logo_url: result.rows[0].logo_url });
+    } catch (error) {
+      console.error('Error uploading branch logo:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+app.delete('/branches/:id/logo', requireRoles('superadmin'), async (req, res) => {
+  try {
+    await ensureBranchesLogoColumn();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'Invalid branch id' });
+    }
+    const result = await db.query(
+      `UPDATE branches SET logo_url = NULL, updated_at = now() WHERE branch_id = $1 RETURNING branch_id`,
+      [id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Branch not found' });
+    }
+    res.json({ message: 'Logo cabang dihapus', branch_id: String(id) });
+  } catch (error) {
+    console.error('Error clearing branch logo:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2811,6 +4335,7 @@ app.post('/stock-history', (req, res) => {
 
 // Endpoint untuk mencatat transaksi pembayaran
 app.post('/payments', async (req, res) => {
+  const client = await db.getClient();
   try {
     const { order_id, amount, method, status, notes, proof_url } = req.body;
 
@@ -2847,16 +4372,22 @@ app.post('/payments', async (req, res) => {
       return res.status(400).json({ error: 'Status pembayaran tidak valid' });
     }
 
-    // Cek apakah order ada dan ambil order_type
-    const orderCheck = await db.query('SELECT order_id, order_type FROM orders WHERE order_id = $1', [parsedOrderId]);
+    // Cek apakah order ada dan ambil order_type + branch_id (untuk stock mutation buyback)
+    const hasPickedUpAtCol = await ordersHasPickedUpAtColumn(client);
+    const pickedUpSelect = hasPickedUpAtCol ? 'picked_up_at' : 'NULL::timestamp AS picked_up_at';
+    const orderCheck = await client.query(
+      `SELECT order_id, order_type, branch_id, status, ${pickedUpSelect} FROM orders WHERE order_id = $1`,
+      [parsedOrderId]
+    );
     if (orderCheck.rows.length === 0) {
       return res.status(404).json({ error: 'Order tidak ditemukan' });
     }
 
     const orderType = orderCheck.rows[0].order_type;
+    const orderBranchId = orderCheck.rows[0].branch_id;
 
     // Cek apakah order sudah pernah dibayar (completed payment)
-    const existingPayment = await db.query(
+    const existingPayment = await client.query(
       'SELECT payment_id FROM payments WHERE order_id = $1 AND status = $2',
       [parsedOrderId, 'completed']
     );
@@ -2864,14 +4395,16 @@ app.post('/payments', async (req, res) => {
       return res.status(400).json({ error: 'Order ini sudah dibayar. Tidak dapat melakukan pembayaran ganda.' });
     }
 
-    const hasProofCol = await paymentsHasProofUrlColumn(db);
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
+    const hasProofCol = await paymentsHasProofUrlColumn(client);
+    const hasValidatedByCol = await paymentsHasValidatedByColumn(client);
     let finalNotes = notes;
     const proofTrimmed = (proof_url ?? '').toString().trim();
     if (!hasProofCol && proofTrimmed) {
       const n = (finalNotes ?? '').toString().trim();
       finalNotes = n ? `${n}\nBukti: ${proofTrimmed}` : `Bukti: ${proofTrimmed}`;
     }
+
+    await client.query('BEGIN');
 
     // Insert pembayaran ke database (backward-compatible with older DBs)
     const validatedBy = req.user?.user_id ?? req.user?.id ?? null;
@@ -2901,21 +4434,131 @@ app.post('/payments', async (req, res) => {
       RETURNING *
     `;
 
-    const result = await db.query(insertQuery, params);
+    const result = await client.query(insertQuery, params);
 
     // Update status order jika pembayaran completed
     if (paymentStatus === 'completed') {
-      await db.query('UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE order_id = $2', ['completed', parsedOrderId]);
+      const orderStatus = (orderCheck.rows[0].status ?? '').toString().trim().toLowerCase();
+      const pickedUpAt = orderCheck.rows[0].picked_up_at;
+      let nextOrderStatus = 'completed';
+      const lowerOrderType = (orderType ?? '').toString().trim().toLowerCase();
+      if (lowerOrderType === 'service' || lowerOrderType === 'custom') {
+        const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
+        const workshopEntryStatus = supportsWorkshopStatuses
+          ? 'sent-to-workshop'
+          : 'pending';
+        // Service/custom flow:
+        // - sebelum pickup customer: selesai bayar => kirim ke workshop
+        // - sesudah pickup customer: pembayaran final => completed
+        nextOrderStatus = pickedUpAt ? 'completed' : workshopEntryStatus;
+        // Jika sudah berada di fase workshop, jangan mundur status.
+        if (
+          ['in_workshop', 'repairing', 'polishing', 'done_workshop', 'ready_for_pickup'].includes(orderStatus)
+        ) {
+          nextOrderStatus = orderStatus;
+        }
+      }
+      await client.query(
+        'UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE order_id = $2',
+        [nextOrderStatus, parsedOrderId]
+      );
+
+      // BUYBACK: stock in happens ONLY when paid by kasir (completed)
+      // Stock in but NOT ready for sale: items.status stays 'buyback' (not in allowed sale statuses).
+      if ((orderType ?? '').toString().trim().toLowerCase() === 'buyback') {
+        const itemsRes = await client.query(
+          `
+            SELECT oi.item_id, oi.qty
+            FROM order_items oi
+            WHERE oi.order_id = $1
+              AND oi.item_id IS NOT NULL
+          `,
+          [parsedOrderId]
+        );
+
+        for (const row of itemsRes.rows) {
+          const itemId = parseInt(row.item_id, 10);
+          const qtyVal = parseInt(row.qty, 10) || 1;
+          if (!Number.isFinite(itemId) || qtyVal <= 0) continue;
+
+          // Lock item row to avoid race conditions on quantity
+          const prev = await client.query(
+            `SELECT COALESCE(quantity, 0) AS quantity, status
+             FROM items
+             WHERE item_id = $1
+             FOR UPDATE`,
+            [itemId]
+          );
+          const prevQty = prev.rows.length > 0 ? parseInt(prev.rows[0].quantity, 10) : 0;
+          const prevStatus = prev.rows.length > 0 ? (prev.rows[0].status ?? 'unknown').toString() : 'unknown';
+
+          const upd = await client.query(
+            `
+              UPDATE items
+              SET quantity = COALESCE(quantity, 0) + $1,
+                  status = 'buyback',
+                  ownership = 'toko',
+                  stock_type = 'inventory',
+                  updated_at = NOW()
+              WHERE item_id = $2
+              RETURNING COALESCE(quantity, 0) AS quantity
+            `,
+            [qtyVal, itemId]
+          );
+          const nextQty = upd.rows.length > 0 ? parseInt(upd.rows[0].quantity, 10) : prevQty + qtyVal;
+
+          await client.query(
+            `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              itemId,
+              prevStatus,
+              'buyback',
+              validatedBy,
+              `Order buyback paid (order_id ${parsedOrderId})`,
+            ]
+          );
+
+          await client.query(
+            `
+              INSERT INTO stock_mutations (
+                item_id, branch_id, type, quantity, previous_stock, current_stock,
+                notes, reference_id, reference_type, created_by
+              )
+              VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, 'order', $8)
+            `,
+            [
+              itemId,
+              orderBranchId,
+              qtyVal,
+              prevQty,
+              nextQty,
+              `Order buyback completed (order_id ${parsedOrderId})`,
+              parsedOrderId,
+              validatedBy,
+            ]
+          );
+        }
+      }
+
       // Kirim notifikasi realtime
-      sendNotificationToClients(`Order ${parsedOrderId} (${orderType}) telah dibayar dan status berubah ke completed`);
+      sendNotificationToClients(`Order ${parsedOrderId} (${orderType}) telah dibayar dan status diperbarui`);
     }
 
     const payment = result.rows[0];
     console.log('Pembayaran dicatat:', payment);
+    await client.query('COMMIT');
     res.status(201).json({ message: 'Pembayaran berhasil dicatat', payment });
   } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
     console.error('Error creating payment:', error);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    try {
+      client.release?.();
+    } catch (_) {}
   }
 });
 
@@ -2968,10 +4611,16 @@ app.post('/login', loginLimiter, async (req, res) => {
     }
     let isPasswordValid = false;
     const passwordHash = user.password_hash || '';
+    // Produksi: hanya jika ALLOW_LEGACY_PLAINTEXT_PASSWORD=true.
+    // Non-produksi: default izinkan migrasi hash lama kecuali ALLOW_LEGACY_PLAINTEXT_PASSWORD=false.
+    const allowLegacyPlaintext =
+      process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD === 'true' ||
+      (process.env.NODE_ENV !== 'production' &&
+        process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD !== 'false');
     if (passwordHash.startsWith('$2')) {
       isPasswordValid = await bcrypt.compare(password, passwordHash);
-    } else {
-      // Legacy compatibility path for older rows; migrate hash on successful login.
+    } else if (allowLegacyPlaintext) {
+      // Legacy: hash tidak bcrypt — hanya jika ALLOW_LEGACY_PLAINTEXT_PASSWORD=true
       isPasswordValid = password === passwordHash;
       if (isPasswordValid) {
         const migratedHash = await bcrypt.hash(password, 10);
@@ -2980,6 +4629,8 @@ app.post('/login', loginLimiter, async (req, res) => {
           [migratedHash, user.user_id]
         );
       }
+    } else {
+      isPasswordValid = false;
     }
 
     if (!isPasswordValid) {
@@ -3019,16 +4670,22 @@ app.post('/login', loginLimiter, async (req, res) => {
     );
     // Ambil branch beserta role per branch
     const branchesWithRolesResult = await db.query(
-      `SELECT ubr.branch_id, b.name, b.initials, array_agg(ubr.role) as roles
+      `SELECT ubr.branch_id, b.name, b.alias, b.initials, array_agg(ubr.role) as roles
         FROM user_branch_roles ubr
         JOIN branches b ON ubr.branch_id = b.branch_id
         WHERE ubr.user_id = $1
-        GROUP BY ubr.branch_id, b.name, b.initials`,
+        GROUP BY ubr.branch_id, b.name, b.alias, b.initials`,
       [user.user_id]
     );
     const roles = rolesResult.rows.map(r => r.role);
-    // branches: array of objects {branch_id, name, initials, roles}
-    const branches = branchesWithRolesResult.rows.map(b => ({ branch_id: b.branch_id, name: b.name, initials: b.initials, roles: b.roles }));
+    // branches: array of objects {branch_id, name, alias, initials, roles}
+    const branches = branchesWithRolesResult.rows.map(b => ({
+      branch_id: b.branch_id,
+      name: b.name,
+      alias: b.alias,
+      initials: b.initials,
+      roles: b.roles,
+    }));
 
     // Tambahkan log response login
     const token = jwt.sign(
@@ -3092,7 +4749,6 @@ app.get('/reports/orders-completed-today', async (req, res) => {
         o.order_type,
         o.status,
         o.total,
-        o.total_akhir,
         o.diskon,
         o.mode,
         o.created_at,
@@ -3127,7 +4783,7 @@ app.get('/reports/orders-completed-today', async (req, res) => {
       user_id: r.user_id?.toString?.() ?? r.user_id,
       customer_id: r.customer_id?.toString?.() ?? r.customer_id,
       total: r.total == null ? null : parseFloat(r.total),
-      total_akhir: r.total_akhir == null ? null : parseFloat(r.total_akhir),
+      total_akhir: r.total == null ? null : parseFloat(r.total),
       diskon: r.diskon == null ? null : parseFloat(r.diskon),
     }));
 
@@ -3198,7 +4854,7 @@ app.get('/payments', async (req, res) => {
       SELECT
         p.*,
         COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
-        o.total_akhir as order_total,
+        o.total as order_total,
         c.name as customer_name,
         b.name as branch_name
       FROM payments p
@@ -3236,7 +4892,7 @@ app.get('/payments', async (req, res) => {
       paramIndex++;
     }
 
-    query += ` GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.status, p.created_at, p.updated_at, o.total_akhir, c.name, b.name ORDER BY p.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    query += ` GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.status, p.created_at, p.updated_at, o.total, c.name, b.name ORDER BY p.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
 
     const result = await db.query(query, params);
@@ -3385,7 +5041,10 @@ app.post('/transfers', async (req, res) => {
       return res.status(400).json({ error: 'from_branch_id, to_branch_id, item_name, and quantity are required' });
     }
 
-    const normalizedSourceType = source_type === 'buyback' ? 'buyback' : 'stok';
+    const sourceTypeNormalized = (source_type ?? '').toString().trim().toLowerCase();
+    const normalizedSourceType = ['stok', 'buyback', 'service', 'custom'].includes(sourceTypeNormalized)
+      ? sourceTypeNormalized
+      : 'stok';
 
     async function hasTransfersColumn(columnName) {
       try {
@@ -3503,7 +5162,36 @@ app.post('/transfers', async (req, res) => {
       ];
     }
 
-    const result = await db.query(insertQuery, params);
+    let result;
+    try {
+      result = await db.query(insertQuery, params);
+    } catch (err) {
+      const isSourceTypeConstraintError =
+        err?.code === '23514' &&
+        String(err?.constraint ?? '') === 'transfers_source_type_check';
+      if (!isSourceTypeConstraintError || !hasSourceTypeCol) {
+        throw err;
+      }
+
+      // Backward compatibility: some DBs still enforce older source_type values.
+      // Fallback to "stok" so transfer still succeeds, while preserving original source in notes.
+      const fallbackParams = [...params];
+      const sourceTypeParamIndex = 4; // source_type is always the 5th bound param when present
+      if (fallbackParams[sourceTypeParamIndex] !== 'stok') {
+        const notesParamIndex = hasCourierCol ? 6 : 5;
+        const oldNotes =
+          fallbackParams[notesParamIndex] == null
+            ? ''
+            : String(fallbackParams[notesParamIndex]);
+        const fallbackPrefix = `Sumber asli: ${fallbackParams[sourceTypeParamIndex]}`;
+        fallbackParams[notesParamIndex] = oldNotes.trim().isEmpty
+          ? fallbackPrefix
+          : `${fallbackPrefix}\n${oldNotes}`;
+        fallbackParams[sourceTypeParamIndex] = 'stok';
+      }
+      result = await db.query(insertQuery, fallbackParams);
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating transfer:', error);
@@ -3564,34 +5252,124 @@ app.put('/transfers/:id', async (req, res) => {
         const toBranchId = transfer.to_branch_id;
         const qty = parseInt(transfer.quantity, 10);
         const itemName = String(transfer.item_name ?? '').trim();
+        const sourceTypeFromColumn =
+          (transfer.source_type ?? '').toString().trim().toLowerCase();
+        const sourceTypeFromNotes = extractTransferSourceTypeFromNotes(transfer.notes);
+        const sourceTypeRaw =
+          sourceTypeFromColumn === 'stok' && sourceTypeFromNotes
+            ? sourceTypeFromNotes
+            : (sourceTypeFromColumn || sourceTypeFromNotes || 'stok');
+        const transferSourceType = ['stok', 'buyback', 'service', 'custom'].includes(sourceTypeRaw)
+          ? sourceTypeRaw
+          : 'stok';
+        const sourceStatusCandidatesByType = {
+          stok: ['ready'],
+          buyback: ['buyback'],
+          service: ['on-service'],
+          custom: ['on-custom'],
+        };
+        const sourceStatusCandidates =
+          sourceStatusCandidatesByType[transferSourceType] || [];
+        const destinationStatusByType = {
+          stok: 'ready',
+          buyback: 'buyback',
+          service: 'on-service',
+          custom: 'on-custom',
+        };
+        const destinationStatus =
+          destinationStatusByType[transferSourceType] || 'ready';
 
         // Find source item: exact `name` first, then "KODE - label" by kode_produk (see parseKodeProdukFromTransferItemLabel).
-        let sourceItemRes = await client.query(
-          `
-            SELECT *
-            FROM items
-            WHERE branch_id = $1 AND name = $2
-            ORDER BY updated_at DESC
-            LIMIT 1
-            FOR UPDATE
-          `,
-          [fromBranchId, itemName]
-        );
+        let sourceItemRes;
+        if (sourceStatusCandidates.length > 0) {
+          sourceItemRes = await client.query(
+            `
+              SELECT *
+              FROM items
+              WHERE branch_id = $1
+                AND name = $2
+                AND status = ANY($3::text[])
+              ORDER BY updated_at DESC
+              LIMIT 1
+              FOR UPDATE
+            `,
+            [fromBranchId, itemName, sourceStatusCandidates]
+          );
+        } else {
+          sourceItemRes = await client.query(
+            `
+              SELECT *
+              FROM items
+              WHERE branch_id = $1 AND name = $2
+              ORDER BY updated_at DESC
+              LIMIT 1
+              FOR UPDATE
+            `,
+            [fromBranchId, itemName]
+          );
+        }
 
         if (sourceItemRes.rows.length === 0) {
           const kode = parseKodeProdukFromTransferItemLabel(itemName);
           if (kode) {
-            sourceItemRes = await client.query(
-              `
-                SELECT *
-                FROM items
-                WHERE branch_id = $1 AND kode_produk = $2
-                ORDER BY updated_at DESC
-                LIMIT 1
-                FOR UPDATE
-              `,
-              [fromBranchId, kode]
-            );
+            if (sourceStatusCandidates.length > 0) {
+              sourceItemRes = await client.query(
+                `
+                  SELECT *
+                  FROM items
+                  WHERE branch_id = $1
+                    AND kode_produk = $2
+                    AND status = ANY($3::text[])
+                  ORDER BY updated_at DESC
+                  LIMIT 1
+                  FOR UPDATE
+                `,
+                [fromBranchId, kode, sourceStatusCandidates]
+              );
+            } else {
+              sourceItemRes = await client.query(
+                `
+                  SELECT *
+                  FROM items
+                  WHERE branch_id = $1 AND kode_produk = $2
+                  ORDER BY updated_at DESC
+                  LIMIT 1
+                  FOR UPDATE
+                `,
+                [fromBranchId, kode]
+              );
+            }
+          }
+        }
+
+        // Fallback for legacy/dirty rows: retry without status restriction
+        if (sourceItemRes.rows.length === 0 && sourceStatusCandidates.length > 0) {
+          sourceItemRes = await client.query(
+            `
+              SELECT *
+              FROM items
+              WHERE branch_id = $1 AND name = $2
+              ORDER BY updated_at DESC
+              LIMIT 1
+              FOR UPDATE
+            `,
+            [fromBranchId, itemName]
+          );
+          if (sourceItemRes.rows.length === 0) {
+            const kode = parseKodeProdukFromTransferItemLabel(itemName);
+            if (kode) {
+              sourceItemRes = await client.query(
+                `
+                  SELECT *
+                  FROM items
+                  WHERE branch_id = $1 AND kode_produk = $2
+                  ORDER BY updated_at DESC
+                  LIMIT 1
+                  FOR UPDATE
+                `,
+                [fromBranchId, kode]
+              );
+            }
           }
         }
 
@@ -3628,24 +5406,67 @@ app.put('/transfers/:id', async (req, res) => {
         let destPrevStock;
         let destCurrentStock;
 
+        const preDest = await client.query(
+          `
+            SELECT item_id, status, quantity
+            FROM items
+            WHERE branch_id = $1 AND kode_produk = $2
+            ORDER BY updated_at DESC
+          `,
+          [toBranchId, sourceItem.kode_produk]
+        );
+
         const destUpdateRes = await client.query(
           `
             UPDATE items
             SET quantity = quantity + $1,
-                status = 'ready',
+                status = $4,
+                ownership = COALESCE($5, ownership),
+                stock_type = COALESCE($6, stock_type),
                 updated_at = CURRENT_TIMESTAMP
             WHERE branch_id = $2 AND kode_produk = $3
             RETURNING item_id, quantity
           `,
-          [qty, toBranchId, sourceItem.kode_produk]
+          [
+            qty,
+            toBranchId,
+            sourceItem.kode_produk,
+            destinationStatus,
+            sourceItem.ownership ?? null,
+            sourceItem.stock_type ?? null,
+          ]
         );
 
         if (destUpdateRes.rows.length > 0) {
           // If duplicates exist, we just pick the first returned row for mutation logging.
-          // All matching rows already had status forced to 'ready'.
+          // All matching rows already had status forced to destination status.
           destItemId = destUpdateRes.rows[0].item_id;
           destCurrentStock = parseInt(destUpdateRes.rows[0].quantity, 10);
           destPrevStock = destCurrentStock - qty;
+
+          const destRowCount = destUpdateRes.rows.length;
+          const singleUnambiguous =
+            preDest.rows.length === 1 &&
+            destRowCount === 1 &&
+            String(preDest.rows[0].item_id) === String(destItemId);
+          if (singleUnambiguous) {
+            const oldDestStatus = String(preDest.rows[0].status ?? '');
+            if (oldDestStatus !== destinationStatus) {
+              await client.query(
+                `
+                  INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
+                  VALUES ($1, $2, $3, $4, $5)
+                `,
+                [
+                  destItemId,
+                  oldDestStatus,
+                  destinationStatus,
+                  approverUserId,
+                  `Transfer masuk selesai (#${transfer.transfer_id})`,
+                ]
+              );
+            }
+          }
         } else {
           destPrevStock = 0;
           destCurrentStock = qty;
@@ -3664,6 +5485,8 @@ app.put('/transfers/:id', async (req, res) => {
                 weight,
                 quantity,
                 status,
+                ownership,
+                stock_type,
                 source,
                 metadata,
                 created_at,
@@ -3672,7 +5495,7 @@ app.put('/transfers/:id', async (req, res) => {
               VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, $8, $9,
-                $10, $11, $12, $13,
+                $10, $11, $12, $13, $14, $15,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
               )
               RETURNING item_id
@@ -3688,7 +5511,9 @@ app.put('/transfers/:id', async (req, res) => {
               sourceItem.purity,
               sourceItem.weight,
               qty,
-              'ready',
+              destinationStatus,
+              sourceItem.ownership ?? 'toko',
+              sourceItem.stock_type ?? (destinationStatus === 'ready' ? 'inventory' : 'non_inventory'),
               'transfer',
               sourceItem.metadata,
             ]
@@ -3758,7 +5583,15 @@ app.put('/transfers/:id', async (req, res) => {
 // Endpoint untuk mendapatkan data mutasi stok (admin_toko)
 app.get('/stock-mutations', async (req, res) => {
   try {
-    const { branch_id, type, item_id, limit = 50, offset = 0 } = req.query;
+    const {
+      branch_id,
+      type,
+      item_id,
+      start_date,
+      end_date,
+      limit = 50,
+      offset = 0,
+    } = req.query;
 
     let query = `
       SELECT
@@ -3767,18 +5600,47 @@ app.get('/stock-mutations', async (req, res) => {
         i.material,
         i.purity,
         b.name as branch_name,
-        u.username as created_by_name
+        u.username as created_by_name,
+        o.order_type,
+        o.order_number,
+        o.created_at as order_created_at,
+        cust.name as customer_name,
+        cust.phone as customer_phone,
+        ou.username as order_user_name,
+        t.from_branch_id as transfer_from_branch_id,
+        t.to_branch_id as transfer_to_branch_id,
+        bfb.name as transfer_from_branch_name,
+        btb.name as transfer_to_branch_name,
+        appr.username as transfer_approved_by_username
       FROM stock_mutations sm
       LEFT JOIN items i ON sm.item_id = i.item_id
       LEFT JOIN branches b ON sm.branch_id = b.branch_id
       LEFT JOIN users u ON sm.created_by = u.user_id
+      LEFT JOIN orders o
+        ON sm.reference_type = 'order' AND sm.reference_id IS NOT NULL AND sm.reference_id = o.order_id
+      LEFT JOIN customers cust ON o.customer_id = cust.customer_id
+      LEFT JOIN users ou ON o.user_id = ou.user_id
+      LEFT JOIN transfers t
+        ON sm.reference_type = 'transfer' AND sm.reference_id IS NOT NULL AND sm.reference_id = t.transfer_id
+      LEFT JOIN branches bfb ON t.from_branch_id = bfb.branch_id
+      LEFT JOIN branches btb ON t.to_branch_id = btb.branch_id
+      LEFT JOIN users appr ON t.approved_by = appr.user_id
       WHERE 1=1
     `;
 
     const params = [];
     let paramIndex = 1;
 
-    if (branch_id) {
+    const itemIdTrim = item_id != null ? String(item_id).trim() : '';
+    const itemIdParsed =
+      itemIdTrim !== '' ? parseInt(itemIdTrim, 10) : NaN;
+    const itemScoped =
+      Number.isFinite(itemIdParsed) && itemIdParsed > 0;
+
+    // Filter cabang untuk daftar mutasi per cabang. Untuk riwayat per-item_id,
+    // jangan filter branch_id — mutasi order di toko memakai branch_id toko,
+    // sedangkan stockist gudang tetap perlu melihat alur penuh (transfer + jual).
+    if (branch_id && !itemScoped) {
       query += ` AND sm.branch_id = $${paramIndex}`;
       params.push(branch_id);
       paramIndex++;
@@ -3790,13 +5652,24 @@ app.get('/stock-mutations', async (req, res) => {
       paramIndex++;
     }
 
-    if (item_id != null && String(item_id).trim() !== '') {
-      const iid = parseInt(String(item_id).trim(), 10);
-      if (Number.isFinite(iid)) {
-        query += ` AND sm.item_id = $${paramIndex}`;
-        params.push(iid);
-        paramIndex++;
-      }
+    if (itemScoped) {
+      query += ` AND sm.item_id = $${paramIndex}`;
+      params.push(itemIdParsed);
+      paramIndex++;
+    }
+
+    const startDateTrim =
+      start_date != null ? String(start_date).trim() : '';
+    const endDateTrim = end_date != null ? String(end_date).trim() : '';
+    if (startDateTrim) {
+      query += ` AND DATE(sm.created_at) >= $${paramIndex}`;
+      params.push(startDateTrim);
+      paramIndex++;
+    }
+    if (endDateTrim) {
+      query += ` AND DATE(sm.created_at) <= $${paramIndex}`;
+      params.push(endDateTrim);
+      paramIndex++;
     }
 
     const lim = Math.min(Math.max(parseInt(String(limit), 10) || 50, 1), 200);
@@ -4106,12 +5979,37 @@ app.use('/api', userInfoRoute);
 app.get("/api/workshop/work-queue", async (req, res) => {
   try {
     const branchId = req.query.branch_id;
+    const technicianIdRaw = req.query.technician_id;
+    const technicianId = parseInt(String(technicianIdRaw ?? ''), 10);
 
     if (!branchId) {
       return res.status(400).json({ error: "branch_id is required" });
     }
 
-    const result = await db.query("SELECT * FROM orders WHERE branch_id = $1 AND status IN ('in_workshop', 'custom_work') ORDER BY created_at ASC", [branchId]);
+    let query = `
+      SELECT *
+      FROM orders
+      WHERE branch_id = $1
+        AND status IN ('in_workshop', 'repairing', 'polishing', 'custom_work')
+    `;
+    const params = [branchId];
+    if (Number.isFinite(technicianId) && technicianId > 0) {
+      const hasOrdersMetadata = await ordersHasMetadataColumn(db);
+      if (hasOrdersMetadata) {
+        query += ` AND (
+          user_id = $2
+          OR COALESCE(metadata->>'assigned_technician_id', '') = $2::text
+          OR COALESCE(metadata->>'assigned_technician', '') = $2::text
+        )`;
+        params.push(technicianId);
+      } else {
+        query += ` AND user_id = $2`;
+        params.push(technicianId);
+      }
+    }
+    query += ' ORDER BY created_at ASC';
+
+    const result = await db.query(query, params);
     res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error fetching work queue:", error);
@@ -4180,7 +6078,7 @@ app.get("/api/workshop/material-stock", async (req, res) => {
 
 app.get("/api/workshop/dashboard", async (req, res) => {
   try {
-    const { branch_id, user_id } = req.query;
+    const { branch_id, user_id: _user_id } = req.query;
 
     // Get workshop statistics (consistent with other role dashboards)
     const statsResult = await db.query(`
@@ -4243,87 +6141,182 @@ app.get("/api/workshop/dashboard", async (req, res) => {
 
 app.get("/api/workshop/reports", async (req, res) => {
   try {
-    const { branch_id, period = "month" } = req.query;
+    const branchId = parseInt(String(req.query.branch_id ?? ""), 10);
+    const periodRaw = String(req.query.period ?? "month").toLowerCase();
+    const period = ["week", "month", "year", "quarter"].includes(periodRaw)
+      ? periodRaw
+      : "month";
 
-    // Calculate date range based on period
-    let dateFilter = "";
-    if (period === "month") {
-      dateFilter = "AND o.created_at >= DATE_TRUNC(\"month\", CURRENT_DATE)";
-    } else if (period === "week") {
-      dateFilter = "AND o.created_at >= DATE_TRUNC(\"week\", CURRENT_DATE)";
-    } else if (period === "year") {
-      dateFilter = "AND o.created_at >= DATE_TRUNC(\"year\", CURRENT_DATE)";
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: "branch_id wajib diisi dan valid" });
     }
 
-    // Get order statistics
-    const orderStats = await db.query(`
-      SELECT
-        COUNT(*) as total_orders,
-        COUNT(CASE WHEN status IN ('completed', 'delivered') THEN 1 END) as completed_orders,
-        COUNT(CASE WHEN status IN ('in_workshop', 'repairing', 'polishing', 'custom_work') THEN 1 END) as pending_orders,
-        AVG(CASE WHEN status IN ('completed', 'delivered') AND updated_at - created_at < interval '7 days'
-                 THEN EXTRACT(EPOCH FROM (updated_at - created_at))/3600 END) as avg_completion_hours
-      FROM orders o
-      WHERE branch_id = $1 ${dateFilter}
-    `, [branch_id]);
+    let dateFilter = "";
+    if (period === "week") {
+      dateFilter = "AND o.created_at >= DATE_TRUNC('week', CURRENT_DATE)";
+    } else if (period === "year") {
+      dateFilter = "AND o.created_at >= DATE_TRUNC('year', CURRENT_DATE)";
+    } else if (period === "quarter") {
+      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '90 days'";
+    } else {
+      dateFilter = "AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE)";
+    }
 
-    // Get technician performance
-    const technicianStats = await db.query(`
-      SELECT
-        COALESCE(o.metadata->>"assigned_technician", "Unassigned") as technician,
-        COUNT(*) as orders_assigned,
-        COUNT(CASE WHEN o.status IN ('completed', 'delivered') THEN 1 END) as orders_completed,
-        AVG(CASE WHEN o.status IN ('completed', 'delivered')
-                 THEN EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600 END) as avg_time_hours
-      FROM orders o
-      WHERE branch_id = $1 ${dateFilter}
-      GROUP BY COALESCE(o.metadata->>"assigned_technician", "Unassigned")
-    `, [branch_id]);
+    const hasOrdersMetadata = await ordersHasMetadataColumn(db);
+    const technicianExpr = hasOrdersMetadata
+      ? "COALESCE(NULLIF(o.metadata->>'assigned_technician', ''), NULLIF(o.metadata->>'assigned_technician_id', ''), 'Unassigned')"
+      : "'Unassigned'";
+    const sellingPriceExpr = hasOrdersMetadata
+      ? "COALESCE((o.metadata->>'selling_price')::numeric, 0)"
+      : "0::numeric";
+    const buybackPriceExpr = hasOrdersMetadata
+      ? "COALESCE((o.metadata->>'buyback_price')::numeric, 0)"
+      : "0::numeric";
+    const materialCostExpr = hasOrdersMetadata
+      ? "COALESCE((o.metadata->>'material_cost')::numeric, 0)"
+      : "0::numeric";
+    const laborCostExpr = hasOrdersMetadata
+      ? "COALESCE((o.metadata->>'labor_cost')::numeric, 0)"
+      : "0::numeric";
 
-    // Get material usage
-    const materialStats = await db.query(`
-      SELECT
-        i.material,
-        COUNT(*) as usage_count,
-        SUM(i.weight) as total_weight_used
-      FROM orders o
-      JOIN items i ON o.item_id = i.item_id
-      WHERE o.branch_id = $1 ${dateFilter}
-        AND o.status IN ("completed", "delivered")
-      GROUP BY i.material
-      ORDER BY total_weight_used DESC
-    `, [branch_id]);
+    const orderStats = await db.query(
+      `
+        SELECT
+          COUNT(*) as total_orders,
+          COUNT(CASE WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered') THEN 1 END) as completed_orders,
+          COUNT(CASE WHEN o.status IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_orders,
+          COUNT(CASE WHEN o.status IN ('pending', 'sent-to-workshop', 'in_workshop') THEN 1 END) as pending_orders,
+          AVG(
+            CASE
+              WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
+              THEN EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
+              ELSE NULL
+            END
+          ) as avg_completion_hours
+        FROM orders o
+        WHERE o.branch_id = $1
+          AND o.order_type IN ('service', 'custom')
+          ${dateFilter}
+      `,
+      [branchId]
+    );
 
-    // Get financial summary (simplified)
-    const financialStats = await db.query(`
-      SELECT
-        SUM(CASE WHEN order_type = 'jual' THEN COALESCE((o.metadata->>"selling_price")::numeric, 0) ELSE 0 END) as sales_revenue,
-        SUM(CASE WHEN order_type = 'buyback' THEN COALESCE((o.metadata->>"buyback_price")::numeric, 0) ELSE 0 END) as buyback_revenue,
-        SUM(COALESCE((o.metadata->>"material_cost")::numeric, 0)) as material_cost,
-        SUM(COALESCE((o.metadata->>"labor_cost")::numeric, 0)) as labor_cost
-      FROM orders o
-      WHERE branch_id = $1 ${dateFilter}
-    `, [branch_id]);
+    const technicianStats = await db.query(
+      `
+        SELECT
+          ${technicianExpr} as technician,
+          COUNT(*) as orders_assigned,
+          COUNT(CASE WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered') THEN 1 END) as orders_completed,
+          AVG(
+            CASE
+              WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
+              THEN EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
+              ELSE NULL
+            END
+          ) as avg_time_hours
+        FROM orders o
+        WHERE o.branch_id = $1
+          AND o.order_type IN ('service', 'custom')
+          ${dateFilter}
+        GROUP BY 1
+        ORDER BY orders_assigned DESC
+      `,
+      [branchId]
+    );
+
+    const materialStats = await db.query(
+      `
+        SELECT
+          COALESCE(
+            NULLIF(BTRIM(oi.jenis), ''),
+            NULLIF(BTRIM(i.material), ''),
+            'Unknown'
+          ) as material,
+          SUM(COALESCE(oi.qty, 1)) as usage_count,
+          SUM(COALESCE(oi.weight, i.weight, 0) * GREATEST(COALESCE(oi.qty, 1), 1)) as total_weight_used
+        FROM orders o
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN items i ON oi.item_id = i.item_id
+        WHERE o.branch_id = $1
+          AND o.order_type IN ('service', 'custom')
+          AND o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
+          ${dateFilter}
+        GROUP BY 1
+        ORDER BY total_weight_used DESC NULLS LAST
+      `,
+      [branchId]
+    );
+
+    const financialStats = await db.query(
+      `
+        SELECT
+          SUM(CASE WHEN o.order_type = 'jual' THEN ${sellingPriceExpr} ELSE 0 END) as sales_revenue,
+          SUM(CASE WHEN o.order_type = 'buyback' THEN ${buybackPriceExpr} ELSE 0 END) as buyback_revenue,
+          SUM(${materialCostExpr}) as material_cost,
+          SUM(${laborCostExpr}) as labor_cost
+        FROM orders o
+        WHERE o.branch_id = $1
+          ${dateFilter}
+      `,
+      [branchId]
+    );
 
     const stats = orderStats.rows[0] || {};
     const financial = financialStats.rows[0] || {};
+    const totalOrders = parseInt(stats.total_orders || 0, 10) || 0;
+    const completedOrders = parseInt(stats.completed_orders || 0, 10) || 0;
+    const inProgressOrders = parseInt(stats.in_progress_orders || 0, 10) || 0;
+    const pendingOrders = parseInt(stats.pending_orders || 0, 10) || 0;
+    const avgCompletionHours = parseFloat(stats.avg_completion_hours || 0) || 0;
+
+    const totalMaterialUsed = materialStats.rows.reduce(
+      (acc, row) => acc + (parseFloat(row.total_weight_used || 0) || 0),
+      0
+    );
+    const materialTypes = materialStats.rows.filter(
+      (row) => String(row.material ?? "").trim().isNotEmpty
+    ).length;
+    const materialEfficiency = totalOrders > 0
+      ? (completedOrders / totalOrders) * 100
+      : 0;
+    const activeTechnicians = technicianStats.rows.filter(
+      (row) => (parseInt(row.orders_assigned || 0, 10) || 0) > 0
+    ).length;
+
+    const salesRevenue = parseFloat(financial.sales_revenue || 0) || 0;
+    const buybackRevenue = parseFloat(financial.buyback_revenue || 0) || 0;
+    const materialCost = parseFloat(financial.material_cost || 0) || 0;
+    const laborCost = parseFloat(financial.labor_cost || 0) || 0;
 
     res.status(200).json({
-      period: period,
+      // Flat keys for legacy/mobile UI compatibility
+      total_orders: totalOrders,
+      completed_orders: completedOrders,
+      in_progress_orders: inProgressOrders,
+      pending_orders: pendingOrders,
+      avg_production_time: avgCompletionHours,
+      total_material_used: totalMaterialUsed,
+      material_types: materialTypes,
+      material_efficiency: materialEfficiency,
+      total_technicians: technicianStats.rows.length,
+      active_technicians: activeTechnicians,
+
+      // Rich structure for newer UI/widgets
+      period,
       order_summary: {
-        total_orders: parseInt(stats.total_orders || 0),
-        completed_orders: parseInt(stats.completed_orders || 0),
-        pending_orders: parseInt(stats.pending_orders || 0),
-        avg_completion_time: `${Math.round((stats.avg_completion_hours || 0) * 10) / 10} jam`
+        total_orders: totalOrders,
+        completed_orders: completedOrders,
+        in_progress_orders: inProgressOrders,
+        pending_orders: pendingOrders,
+        avg_completion_time: `${Math.round(avgCompletionHours * 10) / 10} jam`,
       },
       technician_performance: technicianStats.rows,
       material_usage: materialStats.rows,
       financial_summary: {
-        total_revenue: parseFloat(financial.sales_revenue || 0) + parseFloat(financial.buyback_revenue || 0),
-        total_cost: parseFloat(financial.material_cost || 0) + parseFloat(financial.labor_cost || 0),
-        net_profit: (parseFloat(financial.sales_revenue || 0) + parseFloat(financial.buyback_revenue || 0)) -
-          (parseFloat(financial.material_cost || 0) + parseFloat(financial.labor_cost || 0))
-      }
+        total_revenue: salesRevenue + buybackRevenue,
+        total_cost: materialCost + laborCost,
+        net_profit: (salesRevenue + buybackRevenue) - (materialCost + laborCost),
+      },
     });
   } catch (error) {
     console.error("Error fetching workshop reports:", error);
@@ -4331,20 +6324,320 @@ app.get("/api/workshop/reports", async (req, res) => {
   }
 });
 
+app.get("/api/workshop/order-cost-breakdown", async (req, res) => {
+  try {
+    const orderId = parseInt(String(req.query.order_id ?? ""), 10);
+    const branchId = parseInt(String(req.query.branch_id ?? ""), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "order_id tidak valid" });
+    }
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: "branch_id wajib diisi" });
+    }
+
+    const orderRes = await db.query(
+      `
+        SELECT order_id, branch_id, order_type
+        FROM orders
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+    const order = orderRes.rows[0];
+    if (parseInt(order.branch_id, 10) !== branchId) {
+      return res.status(403).json({ error: "Order bukan milik branch ini" });
+    }
+    const orderType = String(order.order_type ?? "").toLowerCase();
+    if (orderType !== "service" && orderType !== "custom") {
+      return res.status(400).json({ error: "Hanya order service/custom" });
+    }
+
+    const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
+    if (!hasBreakdownTable) {
+      return res.status(200).json({ latest: null, history: [] });
+    }
+
+    const rows = await db.query(
+      `
+        SELECT
+          breakdown_id,
+          order_id,
+          revision,
+          material_cost,
+          labor_cost,
+          other_cost,
+          notes,
+          created_by,
+          created_at
+        FROM order_cost_breakdowns
+        WHERE order_id = $1
+        ORDER BY revision DESC
+      `,
+      [orderId]
+    );
+    const history = rows.rows.map((row) => ({
+      ...row,
+      breakdown_id: String(row.breakdown_id),
+      order_id: String(row.order_id),
+      revision: parseInt(row.revision ?? 0, 10) || 0,
+      material_cost: parseFloat(row.material_cost ?? 0) || 0,
+      labor_cost: parseFloat(row.labor_cost ?? 0) || 0,
+      other_cost: parseFloat(row.other_cost ?? 0) || 0,
+      created_by: row.created_by == null ? null : String(row.created_by),
+    }));
+    return res.status(200).json({
+      latest: history.length > 0 ? history[0] : null,
+      history,
+    });
+  } catch (error) {
+    console.error("Error fetching order cost breakdown:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
+  try {
+    const { order_id, branch_id, material_cost, labor_cost, other_cost, notes } = req.body ?? {};
+    const orderId = parseInt(String(order_id ?? ""), 10);
+    const branchId = parseInt(String(branch_id ?? ""), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "order_id tidak valid" });
+    }
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: "branch_id wajib diisi" });
+    }
+
+    const role = (req.user?.role ?? "").toString().trim().toLowerCase();
+    const allowedRoles = new Set(["superadmin", "admin_toko", "admin_workshop", "tukang"]);
+    if (!allowedRoles.has(role)) {
+      return res.status(403).json({ error: "Role tidak diizinkan update biaya" });
+    }
+
+    const orderRes = await db.query(
+      `
+        SELECT order_id, branch_id, order_type
+        FROM orders
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+    const order = orderRes.rows[0];
+    if (parseInt(order.branch_id, 10) !== branchId) {
+      return res.status(403).json({ error: "Order bukan milik branch ini" });
+    }
+    const orderType = String(order.order_type ?? "").toLowerCase();
+    if (orderType !== "service" && orderType !== "custom") {
+      return res.status(400).json({ error: "Hanya order service/custom" });
+    }
+
+    const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
+    if (!hasBreakdownTable) {
+      return res.status(400).json({ error: "Tabel order_cost_breakdowns belum tersedia" });
+    }
+
+    const materialCost = Math.max(0, parseFloat(String(material_cost ?? 0)) || 0);
+    const laborCost = Math.max(0, parseFloat(String(labor_cost ?? 0)) || 0);
+    const otherCost = Math.max(0, parseFloat(String(other_cost ?? 0)) || 0);
+    const cleanNotes = String(notes ?? "").trim() || null;
+    const updatedBy = parseInt(String(req.user?.user_id ?? req.body?.technician_id ?? 0), 10);
+    const safeUpdatedBy = Number.isFinite(updatedBy) && updatedBy > 0 ? updatedBy : null;
+
+    await db.query("BEGIN");
+    const revRes = await db.query(
+      `
+        SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision
+        FROM order_cost_breakdowns
+        WHERE order_id = $1
+      `,
+      [orderId]
+    );
+    const nextRevision = parseInt(revRes.rows?.[0]?.next_revision ?? 1, 10) || 1;
+
+    const inserted = await db.query(
+      `
+        INSERT INTO order_cost_breakdowns (
+          order_id,
+          revision,
+          material_cost,
+          labor_cost,
+          other_cost,
+          notes,
+          created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [orderId, nextRevision, materialCost, laborCost, otherCost, cleanNotes, safeUpdatedBy]
+    );
+
+    const hasOrdersMetadata = await ordersHasMetadataColumn(db);
+    if (hasOrdersMetadata) {
+      await db.query(
+        `
+          UPDATE orders
+          SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+              updated_at = NOW()
+          WHERE order_id = $2
+        `,
+        [
+          JSON.stringify({
+            material_cost: materialCost,
+            labor_cost: laborCost,
+            other_cost: otherCost,
+            actual_total_cost: materialCost + laborCost + otherCost,
+            cost_revision: nextRevision,
+            cost_updated_at: new Date().toISOString(),
+          }),
+          orderId,
+        ]
+      );
+    }
+
+    await db.query("COMMIT");
+    const row = inserted.rows[0] || {};
+    return res.status(200).json({
+      success: true,
+      breakdown: {
+        ...row,
+        breakdown_id: row.breakdown_id == null ? null : String(row.breakdown_id),
+        order_id: row.order_id == null ? null : String(row.order_id),
+        revision: parseInt(row.revision ?? 0, 10) || 0,
+        material_cost: parseFloat(row.material_cost ?? 0) || 0,
+        labor_cost: parseFloat(row.labor_cost ?? 0) || 0,
+        other_cost: parseFloat(row.other_cost ?? 0) || 0,
+        created_by: row.created_by == null ? null : String(row.created_by),
+      },
+    });
+  } catch (error) {
+    try { await db.query("ROLLBACK"); } catch (_) {}
+    console.error("Error saving order cost breakdown:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.post("/api/workshop/update-progress", async (req, res) => {
   try {
-    const { order_id, status, technician_id, notes } = req.body;
+    const { order_id, status, technician_id, notes, branch_id } = req.body;
+    const orderId = parseInt(String(order_id ?? ''), 10);
+    const branchId = parseInt(
+      String(branch_id ?? req.query?.branch_id ?? ''),
+      10
+    );
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'order_id tidak valid' });
+    }
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id wajib diisi' });
+    }
+
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const allowedRoles = new Set([
+      'superadmin',
+      'admin_toko',
+      'admin_workshop',
+      'tukang',
+    ]);
+    if (!allowedRoles.has(role)) {
+      return res
+        .status(403)
+        .json({ error: 'Role tidak diizinkan update progress workshop' });
+    }
+
+    const curRes = await db.query(
+      `
+        SELECT order_id, order_type, branch_id, status
+        FROM orders
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+    if (curRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    }
+    const order = curRes.rows[0];
+    if (parseInt(order.branch_id, 10) !== branchId) {
+      return res.status(403).json({ error: 'Order bukan milik branch ini' });
+    }
+    const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
+    if (orderType !== 'service' && orderType !== 'custom') {
+      return res.status(400).json({
+        error: 'Hanya order service/custom untuk workflow workshop',
+      });
+    }
+
+    const incoming = (status ?? '').toString().trim().toLowerCase();
+    const statusAlias = {
+      pending: 'in_workshop',
+      in_progress: 'repairing',
+      completed: 'done_workshop',
+    };
+    const nextStatus = statusAlias[incoming] ?? incoming;
+
+    const allowedByRole = {
+      admin_toko: new Set(['sent-to-workshop', 'ready_for_pickup']),
+      admin_workshop: new Set([
+        'in_workshop',
+        'repairing',
+        'polishing',
+        'done_workshop',
+      ]),
+      tukang: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
+      superadmin: new Set([
+        'sent-to-workshop',
+        'in_workshop',
+        'repairing',
+        'polishing',
+        'done_workshop',
+        'ready_for_pickup',
+      ]),
+    };
+    const roleAllowedSet = allowedByRole[role] ?? new Set();
+    if (!roleAllowedSet.has(nextStatus)) {
+      return res.status(400).json({
+        error: `Status "${nextStatus}" tidak diizinkan untuk role ${role}`,
+      });
+    }
+
+    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
+    const validTransitions = {
+      pending: new Set(['sent-to-workshop']),
+      completed: new Set(['sent-to-workshop']),
+      'sent-to-workshop': new Set(['in_workshop']),
+      in_workshop: new Set(['repairing', 'polishing', 'done_workshop']),
+      repairing: new Set(['polishing', 'done_workshop']),
+      polishing: new Set(['done_workshop']),
+      custom_work: new Set(['done_workshop']),
+      'done_workshop': new Set(['ready_for_pickup']),
+      'ready_for_pickup': new Set(['completed']),
+    };
+    if (
+      validTransitions[currentStatus] &&
+      !validTransitions[currentStatus].has(nextStatus) &&
+      currentStatus !== nextStatus
+    ) {
+      return res.status(400).json({
+        error: `Transisi status tidak valid (${currentStatus} -> ${nextStatus})`,
+      });
+    }
 
     await db.query(`
       UPDATE orders
       SET status = $1, updated_at = NOW(),
           metadata = metadata || $2
       WHERE order_id = $3
-    `, [status, JSON.stringify({
+    `, [nextStatus, JSON.stringify({
       "last_updated_by": technician_id,
       "last_update_notes": notes,
       "updated_at": new Date().toISOString()
-    }), order_id]);
+    }), orderId]);
 
     res.status(200).json({ success: true, message: "Progress updated successfully" });
   } catch (error) {
@@ -4377,7 +6670,7 @@ app.post("/api/workshop/update-stock", async (req, res) => {
 
 app.get("/api/workshop/work-history", async (req, res) => {
   try {
-    const { technician_id, branch_id, period = 'all' } = req.query;
+    const { technician_id: _technician_id, branch_id, period = 'all' } = req.query;
 
     let dateFilter = '';
     if (period === 'today') {
@@ -4442,7 +6735,7 @@ app.get("/api/workshop/work-history", async (req, res) => {
 
 app.get("/api/workshop/technician-reports", async (req, res) => {
   try {
-    const { technician_id, branch_id, period = 'month' } = req.query;
+    const { technician_id: _technician_id, branch_id, period = 'month' } = req.query;
 
     let dateFilter = '';
     if (period === 'week') {
@@ -4458,8 +6751,8 @@ app.get("/api/workshop/technician-reports", async (req, res) => {
       SELECT
         COUNT(*) as total_orders,
         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_orders,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_orders,
+        COUNT(CASE WHEN status IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_orders,
+        COUNT(CASE WHEN status IN ('in_workshop', 'sent-to-workshop', 'pending') THEN 1 END) as pending_orders,
         AVG(CASE
           WHEN status = 'completed' THEN
             EXTRACT(EPOCH FROM (updated_at - created_at))/3600
@@ -4479,15 +6772,20 @@ app.get("/api/workshop/technician-reports", async (req, res) => {
     // Get material usage statistics
     const materialStats = await db.query(`
       SELECT
-        i.material as material_type,
-        SUM(i.weight) as total_weight_used,
-        COUNT(*) as usage_count
+        COALESCE(
+          NULLIF(BTRIM(oi.jenis), ''),
+          NULLIF(BTRIM(i.material), ''),
+          'Unknown'
+        ) as material_type,
+        SUM(COALESCE(oi.weight, i.weight, 0) * COALESCE(oi.qty, 1)) as total_weight_used,
+        SUM(COALESCE(oi.qty, 1)) as usage_count
       FROM orders o
-      JOIN items i ON o.item_id = i.item_id
+      LEFT JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN items i ON oi.item_id = i.item_id
       WHERE o.branch_id = $1 AND o.status = 'completed'
         AND o.order_type IN ('service', 'custom')
         ${dateFilter}
-      GROUP BY i.material
+      GROUP BY 1
       ORDER BY total_weight_used DESC
     `, [branch_id]);
 
@@ -4509,19 +6807,24 @@ app.get("/api/workshop/technician-reports", async (req, res) => {
     // Get work type distribution
     const workTypeStats = await db.query(`
       SELECT
-        i.kategori as item_type,
-        COUNT(*) as count,
+        COALESCE(
+          NULLIF(BTRIM(oi.kategori), ''),
+          NULLIF(BTRIM(i.kategori), ''),
+          'Unknown'
+        ) as item_type,
+        SUM(COALESCE(oi.qty, 1)) as count,
         AVG(CASE
           WHEN o.status = 'completed' THEN
             EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
           ELSE NULL
         END) as avg_duration
       FROM orders o
-      JOIN items i ON o.item_id = i.item_id
+      LEFT JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN items i ON oi.item_id = i.item_id
       WHERE o.branch_id = $1
         AND o.order_type IN ('service', 'custom')
         ${dateFilter}
-      GROUP BY i.kategori
+      GROUP BY 1
       ORDER BY count DESC
     `, [branch_id]);
 
@@ -4554,7 +6857,7 @@ app.get("/api/workshop/technician-reports", async (req, res) => {
 // Technician Dashboard endpoint
 app.get("/api/technician/dashboard", async (req, res) => {
   try {
-    const { branch_id, user_id } = req.query;
+    const { branch_id, user_id: _user_id } = req.query;
 
     // Get technician-specific statistics (consistent with other role dashboards)
     const statsResult = await db.query(`
@@ -4680,6 +6983,102 @@ app.get('/workshop-orders', async (req, res) => {
   } catch (error) {
     console.error('Error fetching workshop orders:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+// Update status order workshop (service/custom) by admin_workshop/admin_toko/tukang
+app.put('/workshop-orders/:id/status', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    const nextStatusRaw = (req.body?.status ?? '').toString().trim().toLowerCase();
+    const branchId = parseInt(String(req.body?.branch_id ?? req.query?.branch_id ?? ''), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'order_id tidak valid' });
+    }
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id wajib diisi' });
+    }
+
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const allowedRoles = new Set(['superadmin', 'admin_toko', 'admin_workshop', 'tukang']);
+    if (!allowedRoles.has(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan update status workshop' });
+    }
+
+    const curRes = await db.query(
+      `
+        SELECT order_id, order_type, branch_id, status
+        FROM orders
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+    if (curRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    }
+    const order = curRes.rows[0];
+    if (parseInt(order.branch_id, 10) !== branchId) {
+      return res.status(403).json({ error: 'Order bukan milik branch ini' });
+    }
+    const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
+    if (orderType !== 'service' && orderType !== 'custom') {
+      return res.status(400).json({ error: 'Hanya order service/custom untuk workflow workshop' });
+    }
+    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
+
+    const allowedByRole = {
+      admin_toko: new Set(['sent-to-workshop', 'ready_for_pickup']),
+      admin_workshop: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
+      tukang: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
+      superadmin: new Set(['sent-to-workshop', 'in_workshop', 'repairing', 'polishing', 'done_workshop', 'ready_for_pickup']),
+    };
+    const roleAllowedSet = allowedByRole[role] ?? new Set();
+    if (!roleAllowedSet.has(nextStatusRaw)) {
+      return res.status(400).json({
+        error: `Status "${nextStatusRaw}" tidak diizinkan untuk role ${role}`,
+      });
+    }
+
+    // Guard transitions to keep service flow consistent
+    const validTransitions = {
+      pending: new Set(['sent-to-workshop']),
+      completed: new Set(['sent-to-workshop']),
+      'sent-to-workshop': new Set(['in_workshop']),
+      in_workshop: new Set(['repairing', 'polishing', 'done_workshop']),
+      repairing: new Set(['polishing', 'done_workshop']),
+      polishing: new Set(['done_workshop']),
+      custom_work: new Set(['done_workshop']),
+      'done_workshop': new Set(['ready_for_pickup']),
+      'ready_for_pickup': new Set(['completed']),
+    };
+    if (
+      validTransitions[currentStatus] &&
+      !validTransitions[currentStatus].has(nextStatusRaw) &&
+      currentStatus !== nextStatusRaw
+    ) {
+      return res.status(400).json({
+        error: `Transisi status tidak valid (${currentStatus} -> ${nextStatusRaw})`,
+      });
+    }
+
+    await db.query(
+      `
+        UPDATE orders
+        SET status = $1, updated_at = NOW()
+        WHERE order_id = $2
+      `,
+      [nextStatusRaw, orderId]
+    );
+    return res.status(200).json({
+      success: true,
+      order_id: String(orderId),
+      old_status: currentStatus,
+      new_status: nextStatusRaw,
+    });
+  } catch (error) {
+    console.error('Error updating workshop order status:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

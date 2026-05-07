@@ -124,6 +124,7 @@ class ApiClient {
     final response = await request().timeout(_timeout);
     if (response.statusCode == 401) {
       NetworkConfig.setAuthToken(null);
+      NetworkConfig.notifyUnauthorized();
       throw UnauthorizedException(_errorMessageFromResponse(response));
     }
     if (response.statusCode == 403) {

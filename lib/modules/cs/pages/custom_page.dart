@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'customers_page.dart';
 import 'faktur_page.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -48,6 +48,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   final TextEditingController _kadarController = TextEditingController();
   final TextEditingController _estimasiWaktuController =
       TextEditingController();
+  final TextEditingController _totalBiayaController = TextEditingController();
+  final TextEditingController _uangMukaController = TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
   File? _fotoFile;
@@ -57,6 +59,14 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   String _asalMaterial = 'TOKO'; // Material source: BAWA SENDIRI or TOKO
   String _asalTambahan =
       'TOKO'; // Additional material source: BAWA SENDIRI or TOKO
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(customersProvider.notifier).fetchCustomers();
+    });
+  }
 
   Future<String?> _uploadFoto(File? foto) async {
     if (foto == null) return null;
@@ -79,6 +89,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
       return url;
     }
     return null;
+  }
+
+  double _parseMoney(String raw) {
+    final s = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    final v = double.tryParse(s);
+    return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
   }
 
   Future<void> _pickFoto() async {
@@ -253,14 +269,39 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     }
 
     final userState = ref.read(userStateProvider);
-    final branchId = int.tryParse(userState.branch);
-    final userId = userState.userId;
+    final branchId = toInt(userState.branch);
+    final userId = toInt(userState.userId);
+    final customerId = toInt(
+      _selectedCustomer?['customer_id'] ?? _selectedCustomer?['id'],
+    );
 
     if (userId == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('User belum login. Silakan login ulang.'),
+          ),
+        );
+      }
+      return;
+    }
+    if (branchId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cabang user tidak valid. Silakan login ulang.'),
+          ),
+        );
+      }
+      return;
+    }
+    if (customerId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Customer belum valid. Pilih ulang customer dari daftar.',
+            ),
           ),
         );
       }
@@ -281,19 +322,28 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     }
 
     final weightVal = double.tryParse(_beratTargetController.text.trim()) ?? 0;
+    final totalBiayaVal = _parseMoney(_totalBiayaController.text);
+    final uangMukaVal = _parseMoney(_uangMukaController.text);
+    final initialCustomStatus =
+        (totalBiayaVal > 0 && uangMukaVal > 0)
+            ? 'pending'
+            : 'sent-to-workshop';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
         : 'CUST-${DateTime.now().millisecondsSinceEpoch}';
 
     final orderData = {
       'order_type': 'custom',
+      'status': initialCustomStatus,
       'order_number': _notaOrderController.text.isNotEmpty
           ? _notaOrderController.text
           : null,
       'branch_id': branchId,
       'user_id': userId,
       'mode': _modeToko.toLowerCase(),
-      'customer_id': _selectedCustomer!['customer_id'],
+      'customer_id': customerId,
+      'service_estimated_total': totalBiayaVal,
+      'service_dp_amount': uangMukaVal,
       'diskon': 0,
       'order_items': [
         {
@@ -302,6 +352,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
           'weight': weightVal,
           'qty': 1,
           'harga_per_gram': 0,
+          'manual_total': totalBiayaVal,
           'photo_produk': fotoUrl,
           'kategori': 'custom',
           'jenis': _jenisBarang,
@@ -332,6 +383,25 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final createdOrderId = data['order_id'] ?? data['orderId'];
+
+        if (uangMukaVal > 0 && createdOrderId != null) {
+          try {
+            await http.post(
+              Uri.parse('$baseUrl/payments'),
+              headers: NetworkConfig.defaultHeaders,
+              body: jsonEncode({
+                'order_id': createdOrderId,
+                'amount': uangMukaVal,
+                'method': 'cash',
+                'status': 'pending',
+                'notes': 'Uang muka (custom)',
+              }),
+            );
+          } catch (_) {
+            // best-effort
+          }
+        }
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(
@@ -495,143 +565,267 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                     width: 120,
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text('Customer'),
+                      child: Row(
+                        children: [
+                          Text('Customer'),
+                          Tooltip(
+                            message:
+                                'Cari berdasarkan nama atau nomor telepon (minimal 2 karakter)',
+                            child: Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: StatefulBuilder(
-                      builder: (context, setState) => Autocomplete<Map<String, dynamic>>(
-                        optionsBuilder: (TextEditingValue textEditingValue) {
-                          if (textEditingValue.text == '') {
-                            return const Iterable<Map<String, dynamic>>.empty();
-                          }
-                          final input = textEditingValue.text.toLowerCase();
-                          final suggestions = customerList.customers.where((c) {
-                            final name = (c['name'] ?? c['nama'] ?? '')
-                                .toString()
-                                .toLowerCase();
-                            return name.contains(input);
-                          }).toList();
-                          return suggestions;
-                        },
-                        displayStringForOption: (option) =>
-                            option['name'] ?? option['nama'] ?? '',
-                        onSelected: (customer) {
-                          setState(() {
-                            _selectedCustomer = customer;
-                            _customerController.text =
-                                customer['name'] ?? customer['nama'] ?? '';
-                            _customerPhoneController.text =
-                                customer['phone'] ?? customer['no_hp'] ?? '';
-                            _customerAddressController.text =
-                                customer['address'] ?? customer['alamat'] ?? '';
-                          });
-                        },
-                        fieldViewBuilder:
-                            (
-                              context,
-                              textEditingController,
-                              focusNode,
-                              onFieldSubmitted,
-                            ) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: textEditingController,
-                                          focusNode: focusNode,
-                                          decoration: const InputDecoration(
-                                            border: OutlineInputBorder(),
-                                            labelText: 'Nama Customer',
-                                          ),
-                                          validator: (value) {
-                                            if (value == null ||
-                                                value.isEmpty) {
-                                              return 'Customer wajib dipilih';
-                                            }
-                                            return null;
-                                          },
-                                        ),
+                      builder: (context, setFieldState) {
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: customerList.isLoading
+                                  ? const TextField(
+                                      decoration: InputDecoration(
+                                        labelText: 'Loading customers...',
                                       ),
-                                      Builder(
-                                        builder: (context) {
-                                          final input = textEditingController
-                                              .text
-                                              .trim()
-                                              .toLowerCase();
-                                          final exists = ref
-                                              .read(customersProvider)
-                                              .customers
-                                              .any((c) {
-                                                final name =
-                                                    (c['name'] ??
-                                                            c['nama'] ??
-                                                            '')
-                                                        .toString()
-                                                        .toLowerCase();
-                                                return name == input &&
-                                                    input.isNotEmpty;
-                                              });
-                                          if (!exists && input.isNotEmpty) {
-                                            return Row(
-                                              mainAxisSize: MainAxisSize.min,
+                                      enabled: false,
+                                    )
+                                  : Autocomplete<Map<String, dynamic>>(
+                                      initialValue: _selectedCustomer != null
+                                          ? TextEditingValue(
+                                              text:
+                                                  _selectedCustomer!['name'] ??
+                                                      _selectedCustomer!['nama'] ??
+                                                      '',
+                                            )
+                                          : null,
+                                      optionsBuilder:
+                                          (
+                                            TextEditingValue textEditingValue,
+                                          ) {
+                                            if (textEditingValue.text == '') {
+                                              return const Iterable<
+                                                Map<String, dynamic>
+                                              >.empty();
+                                            }
+                                            final input = textEditingValue.text
+                                                .toLowerCase();
+                                            final suggestions =
+                                                customerList.customers.where((c) {
+                                              final name =
+                                                  (c['name'] ?? c['nama'] ?? '')
+                                                      .toString()
+                                                      .toLowerCase();
+                                              return name.contains(input);
+                                            }).toList();
+                                            return suggestions;
+                                          },
+                                      displayStringForOption: (option) =>
+                                          option['name'] ??
+                                          option['nama'] ??
+                                          '',
+                                      onSelected: (customer) {
+                                        setState(() {
+                                          _customerPhoneController.text =
+                                              customer['phone'] ??
+                                              customer['no_hp'] ??
+                                              '';
+                                          _customerAddressController.text =
+                                              customer['address'] ??
+                                              customer['alamat'] ??
+                                              '';
+                                          _selectedCustomer = customer;
+                                          _customerController.text =
+                                              customer['name'] ??
+                                              customer['nama'] ??
+                                              '';
+                                        });
+                                      },
+                                      fieldViewBuilder:
+                                          (
+                                            context,
+                                            controller,
+                                            focusNode,
+                                            onFieldSubmitted,
+                                          ) {
+                                            return Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
-                                                IconButton(
-                                                  icon: const Icon(
-                                                    Icons.person_add,
-                                                  ),
-                                                  tooltip: 'Tambah Customer',
-                                                  onPressed: () =>
-                                                      _showAddCustomerDialog(
-                                                        textEditingController
-                                                            .text,
-                                                        textEditingController,
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: TextFormField(
+                                                        controller: controller,
+                                                        focusNode: focusNode,
+                                                        decoration: const InputDecoration(
+                                                          hintText:
+                                                              'Cari customer...',
+                                                          border:
+                                                              OutlineInputBorder(),
+                                                          contentPadding:
+                                                              EdgeInsets.symmetric(
+                                                                vertical: 12,
+                                                                horizontal: 12,
+                                                              ),
+                                                        ),
+                                                        onChanged: (_) =>
+                                                            setState(() {}),
+                                                        onFieldSubmitted:
+                                                            (value) =>
+                                                                onFieldSubmitted(),
+                                                        validator: (value) {
+                                                          if (value == null ||
+                                                              value.isEmpty) {
+                                                            return 'Customer wajib dipilih';
+                                                          }
+                                                          return null;
+                                                        },
                                                       ),
+                                                    ),
+                                                    Builder(
+                                                      builder: (context) {
+                                                        final input = controller
+                                                            .text
+                                                            .trim()
+                                                            .toLowerCase();
+                                                        final exists = ref
+                                                            .read(
+                                                              customersProvider,
+                                                            )
+                                                            .customers
+                                                            .any((c) {
+                                                              final name =
+                                                                  (c['name'] ??
+                                                                          c['nama'] ??
+                                                                          '')
+                                                                      .toString()
+                                                                      .toLowerCase();
+                                                              return name ==
+                                                                      input &&
+                                                                  input
+                                                                      .isNotEmpty;
+                                                            });
+                                                        if (!exists &&
+                                                            input.isNotEmpty) {
+                                                          return Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              IconButton(
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .person_add,
+                                                                  size: 20,
+                                                                ),
+                                                                tooltip:
+                                                                    'Tambah Customer',
+                                                                onPressed: () => _showAddCustomerDialog(
+                                                                  controller
+                                                                      .text,
+                                                                  controller,
+                                                                ),
+                                                                padding:
+                                                                    EdgeInsets
+                                                                        .zero,
+                                                                constraints:
+                                                                    const BoxConstraints(),
+                                                              ),
+                                                              IconButton(
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .qr_code_scanner,
+                                                                  size: 20,
+                                                                ),
+                                                                tooltip:
+                                                                    'Scan QR Customer',
+                                                                onPressed: () =>
+                                                                    _scanAndFill(
+                                                                      controller,
+                                                                    ),
+                                                                padding:
+                                                                    EdgeInsets
+                                                                        .zero,
+                                                                constraints:
+                                                                    const BoxConstraints(),
+                                                              ),
+                                                            ],
+                                                          );
+                                                        } else {
+                                                          return Row(
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              IconButton(
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .person_add,
+                                                                  size: 20,
+                                                                ),
+                                                                tooltip:
+                                                                    'Tambah Customer',
+                                                                onPressed: () => _showAddCustomerDialog(
+                                                                  controller
+                                                                      .text,
+                                                                  controller,
+                                                                ),
+                                                                padding:
+                                                                    EdgeInsets
+                                                                        .zero,
+                                                                constraints:
+                                                                    const BoxConstraints(),
+                                                              ),
+                                                              IconButton(
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .qr_code_scanner,
+                                                                  size: 20,
+                                                                ),
+                                                                tooltip:
+                                                                    'Scan QR Customer',
+                                                                onPressed: () =>
+                                                                    _scanAndFill(
+                                                                      controller,
+                                                                    ),
+                                                                padding:
+                                                                    EdgeInsets
+                                                                        .zero,
+                                                                constraints:
+                                                                    const BoxConstraints(),
+                                                              ),
+                                                            ],
+                                                          );
+                                                        }
+                                                      },
+                                                    ),
+                                                  ],
                                                 ),
-                                                IconButton(
-                                                  icon: const Icon(
-                                                    Icons.qr_code_scanner,
+                                                if (_selectedCustomer !=
+                                                    null) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.grey,
+                                                    ),
                                                   ),
-                                                  tooltip: 'Scan QR Customer',
-                                                  onPressed: () => _scanAndFill(
-                                                    textEditingController,
-                                                  ),
-                                                ),
+                                                ],
                                               ],
                                             );
-                                          } else {
-                                            return IconButton(
-                                              icon: const Icon(
-                                                Icons.qr_code_scanner,
-                                              ),
-                                              tooltip: 'Scan QR Customer',
-                                              onPressed: () => _scanAndFill(
-                                                textEditingController,
-                                              ),
-                                            );
-                                          }
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                  if (_selectedCustomer != null) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey,
-                                      ),
+                                          },
                                     ),
-                                  ],
-                                ],
-                              );
-                            },
-                      ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -705,6 +899,68 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                           },
                         ),
                       ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Estimasi Biaya'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _totalBiayaController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                        hintText: 'Contoh: 500000',
+                      ),
+                      validator: (value) {
+                        final raw = (value ?? '').trim();
+                        if (raw.isEmpty) return 'Estimasi biaya wajib diisi';
+                        final v = _parseMoney(raw);
+                        if (v < 0) return 'Estimasi biaya tidak valid';
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Uang Muka'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _uangMukaController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                        hintText: 'Opsional (boleh 0)',
+                      ),
+                      validator: (value) {
+                        final dp = _parseMoney(value ?? '');
+                        final total = _parseMoney(_totalBiayaController.text);
+                        if (dp < 0) return 'Uang muka tidak valid';
+                        if (dp > total) return 'Uang muka melebihi total biaya';
+                        return null;
+                      },
                     ),
                   ),
                 ],
@@ -1026,6 +1282,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     _materialTambahanController.dispose();
     _kadarController.dispose();
     _estimasiWaktuController.dispose();
+    _totalBiayaController.dispose();
+    _uangMukaController.dispose();
     super.dispose();
   }
 }

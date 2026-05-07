@@ -138,9 +138,13 @@ router.post('/customers', async (req, res) => {
   try {
     const { name, email, phone, address, branch_id } = req.body;
 
-    console.log('Request received at POST /api/customers');
-    console.log('Request body:', req.body); // Log request body
-    console.log('Connecting to database...');
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Request received at POST /api/customers (fields: %s)', Object.keys(req.body || {}).join(', '));
+    } else {
+      console.log('Request received at POST /api/customers');
+      console.log('Request body:', req.body);
+      console.log('Connecting to database...');
+    }
 
     // Validasi data
     if (!name || !phone) {

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class WorkHistoryPage extends ConsumerStatefulWidget {
   const WorkHistoryPage({super.key});
@@ -166,50 +167,207 @@ class _WorkHistoryPageState extends ConsumerState<WorkHistoryPage> {
                       ],
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    itemCount: _workHistory.length,
-                    itemBuilder: (context, index) {
-                      final work = _workHistory[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: _getStatusColor(work['status']),
-                            child: Icon(
-                              _getStatusIcon(work['status']),
-                              color: Colors.white,
-                              size: 20,
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final narrow = constraints.maxWidth < 560;
+                        final cs = Theme.of(context).colorScheme;
+const desktopW = 920.0;
+                        final w = constraints.maxWidth;
+                        final BoxConstraints box;
+                        if (narrow) {
+                          box = BoxConstraints.tightFor(width: w);
+                        } else if (w >= desktopW) {
+                          box = BoxConstraints.tightFor(width: desktopW);
+                        } else {
+                          box = const BoxConstraints(minWidth: desktopW);
+                        }
+
+                        final rows = <DataRow>[];
+                        for (var i = 0; i < _workHistory.length; i++) {
+                          final work = _workHistory[i];
+                          final st = work['status']?.toString() ?? '';
+                          final stColor = _getStatusColor(st);
+                          final oid = (work['order_id'] ?? '—').toString();
+                          final item =
+                              (work['item_name'] ?? 'N/A').toString();
+                          final itype =
+                              (work['item_type'] ?? '').toString();
+                          final cust =
+                              (work['customer_name'] ?? 'N/A').toString();
+                          final dateStr = _formatDate(
+                            work['completed_at'] ?? work['created_at'],
+                          );
+                          final dur = work['duration_hours'];
+                          final durStr = dur == null
+                              ? '—'
+                              : '${(dur as num).toStringAsFixed(1)} j';
+
+                          final detailBtn = DataCell(
+                            IconButton(
+                              tooltip: 'Detail',
+                              icon: const Icon(Icons.info_outline),
+                              onPressed: () =>
+                                  _showWorkDetail(context, work),
+                            ),
+                          );
+
+                          rows.add(
+                            DataRow(
+                              color: WidgetStateProperty.resolveWith((states) {
+                                if (states.contains(WidgetState.hovered)) {
+                                  return cs.primary.withValues(alpha: 0.06);
+                                }
+                                return i.isOdd
+                                    ? cs.surfaceContainerHighest
+                                        .withValues(alpha: 0.45)
+                                    : null;
+                              }),
+                              cells: narrow
+                                  ? [
+                                      DataCell(
+                                        Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              '#$oid · $item',
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            Text(
+                                              '$dateStr · ${_getStatusText(st)}',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: stColor,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      detailBtn,
+                                    ]
+                                  : [
+                                      DataCell(Text('#$oid')),
+                                      DataCell(
+                                        Text(
+                                          '$item ($itype)',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        Text(
+                                          cust,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        Text(
+                                          dateStr,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: cs.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ),
+                                      DataCell(Text(durStr)),
+                                      DataCell(
+                                        Text(
+                                          _getStatusText(st),
+                                          style: TextStyle(
+                                            color: stColor,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      detailBtn,
+                                    ],
+                            ),
+                          );
+                        }
+
+                        return Material(
+                          elevation: 0,
+                          color: cs.surfaceContainerLow
+                              .withValues(alpha: 0.65),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(
+                              color: cs.outlineVariant
+                                  .withValues(alpha: 0.45),
                             ),
                           ),
-                          title: Text('Order #${work['order_id']}'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${work['item_name']} (${work['item_type']})',
-                              ),
-                              Text('Pelanggan: ${work['customer_name']}'),
-                              Text(
-                                'Tanggal: ${_formatDate(work['completed_at'] ?? work['created_at'])}',
-                              ),
-                              if (work['duration_hours'] != null)
-                                Text(
-                                  'Waktu: ${work['duration_hours'].toStringAsFixed(1)} jam',
+                          clipBehavior: Clip.antiAlias,
+                          child: Scrollbar(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.vertical,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: ConstrainedBox(
+                                    constraints: box,
+                                    child: DataTable(
+                                      headingRowColor:
+                                          WidgetStateProperty.all(
+                                        cs.surfaceContainerHigh,
+                                      ),
+dataRowMinHeight: narrow ? 52 : 48,
+                                      dataRowMaxHeight: narrow ? 64 : 56,
+                                      columnSpacing: narrow ? 6 : 10,
+                                      horizontalMargin: narrow ? 6 : 10,
+                                      showCheckboxColumn: false,
+                                      dividerThickness: 0.5,
+                                      columns: narrow
+                                          ? [
+                                              DataColumn(
+                                                label: dataTableColumnLabel('Riwayat'),
+                                              ),
+                                              const DataColumn(
+                                                label: SizedBox(width: 44),
+                                              ),
+                                            ]
+                                          : [
+                                              DataColumn(label: dataTableColumnLabel('Order')),
+                                              DataColumn(label: dataTableColumnLabel('Item')),
+                                              DataColumn(
+                                                label: dataTableColumnLabel('Pelanggan'),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel('Tanggal'),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel('Durasi'),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel('Status'),
+                                              ),
+                                              const DataColumn(
+                                                label: SizedBox(width: 44),
+                                              ),
+                                            ],
+                                      rows: rows,
+                                    ),
+                                  ),
                                 ),
-                            ],
-                          ),
-                          trailing: Text(
-                            _getStatusText(work['status']),
-                            style: TextStyle(
-                              color: _getStatusColor(work['status']),
-                              fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
-                          onTap: () => _showWorkDetail(context, work),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
           ),
         ],
@@ -246,9 +404,10 @@ class _WorkHistoryPageState extends ConsumerState<WorkHistoryPage> {
   String _calculateSatisfactionRate() {
     if (_workHistory.isEmpty) return '0%';
 
-    final completedWorks = _workHistory
-        .where((work) => work['status'] == 'completed')
-        .length;
+    final completedWorks = _workHistory.where((work) {
+      final st = (work['status'] ?? '').toString().trim().toLowerCase();
+      return st == 'done_workshop' || st == 'ready_for_pickup' || st == 'completed';
+    }).length;
     final rate = (completedWorks / _workHistory.length) * 100;
     return '${rate.toStringAsFixed(0)}%';
   }
@@ -282,6 +441,17 @@ class _WorkHistoryPageState extends ConsumerState<WorkHistoryPage> {
 
   String _getStatusText(String status) {
     switch (status) {
+      case 'in_workshop':
+        return 'Diterima Workshop';
+      case 'repairing':
+        return 'Dikerjakan';
+      case 'polishing':
+        return 'Poles/Finishing';
+      case 'custom_work':
+        return 'Custom Work';
+      case 'done_workshop':
+        return 'Selesai Tukang';
+      case 'ready_for_pickup':
       case 'completed':
         return 'Selesai';
       case 'cancelled':
@@ -293,23 +463,21 @@ class _WorkHistoryPageState extends ConsumerState<WorkHistoryPage> {
 
   Color _getStatusColor(String status) {
     switch (status) {
+      case 'in_workshop':
+        return Colors.blueGrey;
+      case 'repairing':
+      case 'polishing':
+      case 'custom_work':
+        return Colors.blue;
+      case 'done_workshop':
+        return Colors.teal;
+      case 'ready_for_pickup':
       case 'completed':
         return Colors.green;
       case 'cancelled':
         return Colors.red;
       default:
         return Colors.grey;
-    }
-  }
-
-  IconData _getStatusIcon(String status) {
-    switch (status) {
-      case 'completed':
-        return Icons.check_circle;
-      case 'cancelled':
-        return Icons.cancel;
-      default:
-        return Icons.help;
     }
   }
 

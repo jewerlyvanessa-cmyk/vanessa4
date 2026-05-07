@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../routes/app_routes.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 
 class SwitchBranchRolePage extends ConsumerStatefulWidget {
   const SwitchBranchRolePage({super.key});

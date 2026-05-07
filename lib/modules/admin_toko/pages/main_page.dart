@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'daily_orders_payments_page.dart';
 import 'goods_transfer_page.dart';
@@ -14,6 +14,7 @@ import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/store_dashboard_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 String getMainModuleForRole(String role) {
@@ -71,7 +72,7 @@ void navigateToMainModule(BuildContext context, String mainModule) {
   }
 }
 
-// Hapus definisi lokal userStateProvider, gunakan yang dari main.dart
+// userStateProvider: package:vanessa3/providers/user_state_provider.dart
 
 class AdminTokoMainPage extends ConsumerWidget {
   const AdminTokoMainPage({super.key});
@@ -171,18 +172,13 @@ class AdminTokoMainPage extends ConsumerWidget {
                 children: const [UserBranchRoleHeader()],
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
-              child: GridView.count(
-                crossAxisCount: 4,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 0.75,
-                physics: const NeverScrollableScrollPhysics(),
-                shrinkWrap: true,
-                children: [
-                  _MenuButton(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: ModuleMenuGrid(
+                minCrossAxisCount: 4,
+                entries: [
+                  ModuleMenuEntry(
                     icon: Icons.receipt_long,
                     label: 'Order & Bayar',
                     iconColor: Colors.blue,
@@ -193,7 +189,7 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.inventory_2,
                     label: 'Stok',
                     iconColor: Colors.teal,
@@ -202,7 +198,7 @@ class AdminTokoMainPage extends ConsumerWidget {
                       MaterialPageRoute(builder: (context) => const StockPage()),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.local_shipping,
                     label: 'Transfer',
                     iconColor: Colors.orange,
@@ -213,7 +209,7 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.inventory,
                     label: 'Mutasi Stok',
                     iconColor: Colors.green,
@@ -224,8 +220,8 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  _MenuButton(
-                    icon: Icons.people,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.kelolaPengguna,
                     label: 'Karyawan',
                     iconColor: Colors.purple,
                     onTap: () => Navigator.push(
@@ -235,8 +231,8 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  _MenuButton(
-                    icon: Icons.groups_2,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.pelanggan,
                     label: 'Pelanggan',
                     iconColor: Colors.cyan,
                     onTap: () => Navigator.push(
@@ -246,12 +242,18 @@ class AdminTokoMainPage extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  ModuleMenuEntry(
+                    icon: Icons.qr_code_scanner,
+                    label: 'Cek Stok',
+                    iconColor: Colors.teal,
+                    onTap: () => Navigator.pushNamed(context, '/cek_stok'),
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _AdminTokoPendingTransfersCard(
                 key: pendingKey,
                 onSeeAll: () => Navigator.push(
@@ -278,61 +280,6 @@ class AdminTokoMainPage extends ConsumerWidget {
           onPressed: () {
             // Handle notification action
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final VoidCallback? onTap;
-  const _MenuButton({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    this.onTap,
-  });
-
-  String _twoLineLabel(String text) {
-    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.length <= 1) return text;
-    final mid = (words.length / 2).ceil();
-    final first = words.sublist(0, mid).join(' ');
-    final second = words.sublist(mid).join(' ');
-    if (second.isEmpty) return first;
-    return '$first\n$second';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 28, color: iconColor),
-            const SizedBox(height: 6),
-            Text(
-              _twoLineLabel(label),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -408,6 +355,26 @@ class _AdminTokoPendingTransfersCardState
 
   int _asInt(dynamic v) => int.tryParse(v?.toString() ?? '') ?? 0;
 
+  String _namaBarang(Map<String, dynamic> t) {
+    return (t['item_name'] ?? t['nama_item'] ?? '-').toString().trim();
+  }
+
+  /// Masuk: cabang pengirim. Keluar: tujuan pengiriman (barang dari toko ini).
+  String _asalBarang(Map<String, dynamic> t, String currentBranchId) {
+    final fromN =
+        (t['from_branch_name'] ?? t['from_branch_id'] ?? '-').toString();
+    final toN = (t['to_branch_name'] ?? t['to_branch_id'] ?? '-').toString();
+    final isIncoming = (t['to_branch_id']?.toString() ?? '') == currentBranchId;
+    if (isIncoming) return fromN.isEmpty ? '-' : fromN;
+    return toN.isEmpty ? '-' : 'Ke $toN';
+  }
+
+  int _comparePendingCreated(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final ta = a['created_at']?.toString() ?? '';
+    final tb = b['created_at']?.toString() ?? '';
+    return tb.compareTo(ta);
+  }
+
   @override
   Widget build(BuildContext context) {
     final branchId = ref.watch(userStateProvider).branch.toString();
@@ -456,31 +423,34 @@ class _AdminTokoPendingTransfersCardState
               )
             else ...[
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    child: Column(
-                      children: [
-                        _PendingChip(
-                          label: 'Masuk',
-                          count: incoming.length,
-                          color: Colors.blue,
-                          icon: Icons.arrow_downward,
-                        ),
-                        const SizedBox(height: 10),
-                        _PendingChip(
-                          label: 'Keluar',
-                          count: outgoing.length,
-                          color: Colors.orange,
-                          icon: Icons.arrow_upward,
-                        ),
-                      ],
+                    child: _PendingChip(
+                      label: 'Masuk',
+                      count: incoming.length,
+                      color: Colors.blue,
+                      icon: Icons.arrow_downward,
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _PendingChip(
+                      label: 'Keluar',
+                      count: outgoing.length,
+                      color: Colors.orange,
+                      icon: Icons.arrow_upward,
+                    ),
+                  ),
                   IconButton(
                     tooltip: 'Refresh',
                     onPressed: _load,
-                    icon: const Icon(Icons.refresh),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 40,
+                    ),
+                    icon: const Icon(Icons.refresh_rounded),
                   ),
                 ],
               ),
@@ -491,43 +461,139 @@ class _AdminTokoPendingTransfersCardState
                   child: Text('Tidak ada transfer pending'),
                 )
               else
-                ..._pending.take(5).map((t) {
-                  final item = (t['item_name'] ?? t['nama_item'] ?? '-').toString();
-                  final qty = _asInt(t['quantity'] ?? t['qty']);
-                  final from =
-                      (t['from_branch_name'] ?? t['from_branch_id'] ?? '-').toString();
-                  final to = (t['to_branch_name'] ?? t['to_branch_id'] ?? '-').toString();
-                  final courier = (t['courier'] ?? t['kurir'] ?? '-').toString().trim();
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      radius: 16,
-                      backgroundColor: Colors.orange.withValues(alpha: 0.15),
-                      child: Text(
-                        qty.toString(),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.orange,
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final sorted = List<Map<String, dynamic>>.from(_pending)
+                      ..sort(_comparePendingCreated);
+                    final cs = Theme.of(context).colorScheme;
+                    final rows = <DataRow>[];
+                    for (var i = 0; i < sorted.length && i < 12; i++) {
+                      final t = sorted[i];
+                      final isIncoming =
+                          (t['to_branch_id']?.toString() ?? '') == branchId;
+                      rows.add(
+                        DataRow(
+                          color: WidgetStateProperty.resolveWith((states) {
+                            if (states.contains(WidgetState.hovered)) {
+                              return cs.primary.withValues(alpha: 0.05);
+                            }
+                            return i.isOdd
+                                ? cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.4)
+                                : null;
+                          }),
+                          cells: [
+                            DataCell(
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _namaBarang(t),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  Text(
+                                    isIncoming ? 'Masuk' : 'Keluar',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: isIncoming
+                                          ? Colors.blue.shade800
+                                          : Colors.orange.shade800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                _asalBarang(t, branchId),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  '${_asInt(t['quantity'] ?? t['qty'])}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 280),
+                      child: Scrollbar(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.vertical,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minWidth: constraints.maxWidth,
+                              ),
+                              child: DataTable(
+                                headingRowColor: WidgetStateProperty.all(
+                                  cs.surfaceContainerHigh,
+                                ),
+dataRowMinHeight: 44,
+                                dataRowMaxHeight: 72,
+                                columnSpacing: 12,
+                                horizontalMargin: 8,
+                                showCheckboxColumn: false,
+                                dividerThickness: 0.5,
+                                columns: const [
+                                  DataColumn(
+                                    label: Text(
+                                      'Nama barang',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  DataColumn(
+                                    label: Text(
+                                      'Asal',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  DataColumn(
+                                    numeric: true,
+                                    label: Text(
+                                      'Qty',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                rows: rows,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    title: Text(
-                      item,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text('$from → $to • Kurir: ${courier.isEmpty ? '-' : courier}'),
-                    trailing: const Text(
-                      'pending',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.orange,
-                      ),
-                    ),
-                  );
-                }),
+                    );
+                  },
+                ),
             ],
           ],
         ),
@@ -551,7 +617,7 @@ class _PendingChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
@@ -559,19 +625,32 @@ class _PendingChip extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 8),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
               label,
-              style: TextStyle(fontWeight: FontWeight.w700, color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: color,
+              ),
             ),
           ),
           Chip(
             visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: EdgeInsets.zero,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 6),
             label: Text(
               count.toString(),
-              style: TextStyle(fontWeight: FontWeight.w800, color: color),
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+                color: color,
+              ),
             ),
             backgroundColor: color.withValues(alpha: 0.10),
             side: BorderSide(color: color.withValues(alpha: 0.20)),

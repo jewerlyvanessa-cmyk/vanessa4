@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
 import '../features/auth/domain/auth_repository.dart';
 
 // Conditional imports for platform-specific packages
@@ -17,7 +19,7 @@ import '../modules/cs/pages/custom_page.dart';
 import '../modules/cs/pages/customers_page.dart';
 import '../modules/kasir/pages/main_page.dart';
 import '../modules/superadmin/pages/main_page.dart';
-import '../modules/dashboard/pages/main_page.dart';
+// Order Today lives under CS module (shared view)
 import '../modules/admin_toko/pages/main_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
 import '../modules/tukang/pages/main_page.dart';
@@ -25,13 +27,18 @@ import '../modules/manajer/pages/main_page.dart';
 import '../modules/manajer/pages/completed_orders_today_page.dart';
 import '../modules/manajer/pages/branch_performance_page.dart';
 import '../modules/manajer/pages/sales_report_today_page.dart';
+import '../modules/manajer/pages/buyback_report_today_page.dart';
 import '../modules/manajer/pages/global_stock_page.dart';
+import '../modules/manajer/pages/stock_report_page.dart';
 import '../modules/manajer/pages/simple_protected_page.dart';
 import '../modules/manajer/pages/users_page.dart';
 import '../modules/stockist/pages/main_page.dart';
 import '../pages/switch_branch_role_page.dart';
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import '../pages/stock_check_page.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import '../providers/websocket_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
+import '../modules/cs/pages/order_today_page.dart';
 
 class AppRoutes {
   static const String cs = '/cs';
@@ -47,15 +54,18 @@ class AppRoutes {
   static const String manajerCompletedOrdersToday = '/manager/completed_orders_today';
   static const String manajerBranchPerformance = '/manager/branch_performance';
   static const String manajerSalesToday = '/manager/sales_today';
+  static const String manajerBuybackReport = '/manager/buyback_report';
   static const String manajerGlobalStock = '/manager/global_stock';
+  static const String manajerStockReport = '/manager/stock_report';
   static const String manajerEmployees = '/manager/employees';
   static const String manajerSystemSettings = '/manager/system_settings';
   static const String stockist = '/stockist';
   static const String switchBranchRole = '/switch_branch_role';
   static const String orderDetail = '/order_detail';
+  static const String stockCheck = '/cek_stok';
   static Map<String, WidgetBuilder> get routes => {
     login: (context) => const LoginPage(),
-    dashboard: (context) => const DashboardPage(),
+    dashboard: (context) => const OrderTodayPage(),
     cs: (context) => const CSMainPage(),
     kasir: (context) => const KasirMainPage(),
     superadmin: (context) => const SuperadminMainPage(),
@@ -66,7 +76,9 @@ class AppRoutes {
     manajerCompletedOrdersToday: (context) => const CompletedOrdersTodayPage(),
     manajerBranchPerformance: (context) => const BranchPerformancePage(),
     manajerSalesToday: (context) => const SalesReportTodayPage(),
+    manajerBuybackReport: (context) => const BuybackReportTodayPage(),
     manajerGlobalStock: (context) => const GlobalStockPage(),
+    manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
     manajerSystemSettings: (context) => const SimpleProtectedPage(
           title: 'Pengaturan Sistem',
@@ -81,6 +93,7 @@ class AppRoutes {
     '/service': (context) => const ServicePage(),
     '/custom': (context) => const CustomPage(),
     '/ambil': (context) => const AmbilPage(),
+    stockCheck: (context) => const StockCheckPage(),
   };
 }
 
@@ -519,7 +532,18 @@ class _ScanQRUploadPhotoPageState extends State<ScanQRUploadPhotoPage> {
             if (_image != null)
               Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Image.file(File(_image!.path)),
+                child: FutureBuilder<Uint8List>(
+                  future: _image!.readAsBytes(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const SizedBox(
+                        height: 120,
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    return Image.memory(snapshot.data!);
+                  },
+                ),
               ),
           ],
         ),
@@ -681,20 +705,66 @@ class _WorkshopPageState extends State<WorkshopPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+final rows = <DataRow>[];
+    for (var i = 0; i < _workOrders.length; i++) {
+      final order = _workOrders[i];
+      rows.add(
+        DataRow(
+          color: WidgetStateProperty.resolveWith((s) {
+            if (s.contains(WidgetState.hovered)) {
+              return cs.primary.withValues(alpha: 0.06);
+            }
+            return i.isOdd
+                ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                : null;
+          }),
+          cells: [
+            DataCell(Text(order['id'] ?? '—')),
+            DataCell(Text(order['type'] ?? '—')),
+            DataCell(Text(order['status'] ?? '—')),
+          ],
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('Workshop Orders')),
-      body: ListView.builder(
-        itemCount: _workOrders.length,
-        itemBuilder: (context, index) {
-          final order = _workOrders[index];
-          return ListTile(
-            title: Text('Order ID: ${order['id']}'),
-            subtitle: Text(
-              'Type: ${order['type']} - Status: ${order['status']}',
+      body: LayoutBuilder(
+        builder: (context, c) {
+          final minW = math.max(c.maxWidth, 480.0);
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Material(
+              elevation: 0,
+              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.45),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: minW),
+                    child: DataTable(
+                      headingRowColor: WidgetStateProperty.all(
+                        cs.surfaceContainerHigh,
+                      ),
+showCheckboxColumn: false,
+                      columns: [
+                        DataColumn(label: dataTableColumnLabel('Order ID')),
+                        DataColumn(label: dataTableColumnLabel('Type')),
+                        DataColumn(label: dataTableColumnLabel('Status')),
+                      ],
+                      rows: rows,
+                    ),
+                  ),
+                ),
+              ),
             ),
-            onTap: () {
-              // Navigate to order details
-            },
           );
         },
       ),

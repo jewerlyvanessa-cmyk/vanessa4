@@ -4,15 +4,16 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 import 'stock_warehouse_page.dart';
 import 'stock_cabang_page.dart';
-import 'qr_code_maker_page.dart';
+import 'package:vanessa3/modules/manajer/pages/global_stock_page.dart';
 import 'dari_toko_page.dart';
 import 'kirim_ke_toko_page.dart';
 import 'reports_page.dart';
@@ -146,18 +147,13 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                 children: const [UserBranchRoleHeader()],
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: GridView.count(
-                crossAxisCount: 4,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.75,
-                physics: const NeverScrollableScrollPhysics(),
-                shrinkWrap: true,
-                children: [
-                  _MenuButton(
+              child: ModuleMenuGrid(
+                minCrossAxisCount: 4,
+                entries: [
+                  ModuleMenuEntry(
                     icon: Icons.warehouse,
                     label: 'STOCK WAREHOUSE',
                     iconColor: Colors.blue,
@@ -168,7 +164,7 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                       ),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.store,
                     label: 'STOCK CABANG',
                     iconColor: Colors.green,
@@ -179,18 +175,18 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                       ),
                     ),
                   ),
-                  _MenuButton(
-                    icon: Icons.qr_code_2,
-                    label: 'QR CODE MAKER',
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.stokGlobal,
+                    label: 'STOK GLOBAL',
                     iconColor: Colors.purple,
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const QrCodeMakerPage(),
+                        builder: (context) => const GlobalStockPage(),
                       ),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.call_received,
                     label: 'DARI TOKO',
                     iconColor: Colors.orange,
@@ -201,7 +197,7 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                       ),
                     ),
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.local_shipping,
                     label: 'KIRIM KE TOKO',
                     iconColor: Colors.teal,
@@ -212,8 +208,8 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                       ),
                     ),
                   ),
-                  _MenuButton(
-                    icon: Icons.assessment,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.laporan,
                     label: 'LAPORAN',
                     iconColor: Colors.indigo,
                     onTap: () => Navigator.push(
@@ -222,6 +218,12 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                         builder: (context) => const StockistReportsPage(),
                       ),
                     ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.qr_code_scanner,
+                    label: 'CEK STOK',
+                    iconColor: Colors.teal,
+                    onTap: () => Navigator.pushNamed(context, '/cek_stok'),
                   ),
                 ],
               ),
@@ -371,63 +373,6 @@ class _PendingSection extends StatelessWidget {
                   ),
                 );
               }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final VoidCallback? onTap;
-
-  const _MenuButton({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    this.onTap,
-  });
-
-  String _twoLineLabel(String text) {
-    final words =
-        text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.length <= 1) return text;
-    final mid = (words.length / 2).ceil();
-    final first = words.sublist(0, mid).join(' ');
-    final second = words.sublist(mid).join(' ');
-    if (second.isEmpty) return first;
-    return '$first\n$second';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 28, color: iconColor),
-            const SizedBox(height: 6),
-            Text(
-              _twoLineLabel(label),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
           ],
         ),
       ),

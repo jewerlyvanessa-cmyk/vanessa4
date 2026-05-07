@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../main.dart';
+import '../providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 
 class MainModulePage extends ConsumerStatefulWidget {

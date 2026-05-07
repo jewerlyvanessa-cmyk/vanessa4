@@ -16,6 +16,11 @@ if (!isStrictDbEnv && missingDbEnv.length > 0) {
     `[db] Missing env vars (${missingDbEnv.join(', ')}). Falling back to local defaults for development.`
   );
 }
+if (!isStrictDbEnv && (!process.env.DB_PASSWORD || process.env.DB_PASSWORD === 'password')) {
+  console.warn(
+    '[db] Using default DB password — set DB_* and STRICT_DB_ENV=true for production-like deployments.'
+  );
+}
 
 // Konfigurasi koneksi database
 const pool = new Pool({

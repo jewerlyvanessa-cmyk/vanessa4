@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vanessa3/main.dart'; // Import global userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/technician_dashboard_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'work_queue_page.dart';
 import 'update_progress_page.dart';
 import 'material_usage_page.dart';
@@ -135,20 +136,20 @@ class TukangMainPage extends ConsumerWidget {
             ),
           ),
 
-          // Menu Grid
+          // Menu Grid (ukuran/layout selaras dashboard CS)
+          const SizedBox(height: 16),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: GridView.count(
-                crossAxisCount: 4,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.75,
-                children: [
-                  _MenuButton(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: ModuleMenuGrid(
+                  minCrossAxisCount: 4,
+                  entries: [
+                  ModuleMenuEntry(
                     icon: Icons.queue,
                     label: 'ANTRIAN KERJA',
                     iconColor: Colors.blue,
+                    outlined: true,
                     badgeCount: dashboardAsync.maybeWhen(
                       data: (data) => data.pendingWorkOrders,
                       orElse: () => 0,
@@ -162,10 +163,11 @@ class TukangMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.update,
                     label: 'UPDATE PROGRESS',
                     iconColor: Colors.orange,
+                    outlined: true,
                     badgeCount: dashboardAsync.maybeWhen(
                       data: (data) => data.inProgressWorkOrders,
                       orElse: () => 0,
@@ -179,10 +181,11 @@ class TukangMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.inventory,
                     label: 'PENGGUNAAN MATERIAL',
                     iconColor: Colors.green,
+                    outlined: true,
                     onTap: () {
                       Navigator.push(
                         context,
@@ -192,10 +195,11 @@ class TukangMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.history,
                     label: 'RIWAYAT PEKERJAAN',
                     iconColor: Colors.purple,
+                    outlined: true,
                     onTap: () {
                       Navigator.push(
                         context,
@@ -205,10 +209,11 @@ class TukangMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
-                    icon: Icons.assessment,
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.laporan,
                     label: 'LAPORAN',
                     iconColor: Colors.red,
+                    outlined: true,
                     onTap: () {
                       Navigator.push(
                         context,
@@ -218,10 +223,11 @@ class TukangMainPage extends ConsumerWidget {
                       );
                     },
                   ),
-                  _MenuButton(
+                  ModuleMenuEntry(
                     icon: Icons.refresh,
                     label: 'REFRESH DATA',
                     iconColor: Colors.teal,
+                    outlined: true,
                     onTap: () {
                       ref.read(technicianDashboardProvider.notifier).refresh();
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -232,6 +238,7 @@ class TukangMainPage extends ConsumerWidget {
                     },
                   ),
                 ],
+                ),
               ),
             ),
           ),
@@ -338,94 +345,6 @@ class _SummaryCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
               textAlign: TextAlign.center,
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color iconColor;
-  final int? badgeCount;
-  final VoidCallback? onTap;
-
-  const _MenuButton({
-    required this.icon,
-    required this.label,
-    required this.iconColor,
-    this.badgeCount,
-    this.onTap,
-  });
-
-  String _twoLineLabel(String text) {
-    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    if (words.length <= 1) return text;
-    final mid = (words.length / 2).ceil();
-    final first = words.sublist(0, mid).join(' ');
-    final second = words.sublist(mid).join(' ');
-    if (second.isEmpty) return first;
-    return '$first\n$second';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: iconColor.withValues(alpha: 0.2), width: 1),
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Stack(
-          children: [
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 28, color: iconColor),
-                const SizedBox(height: 6),
-                Text(
-                  _twoLineLabel(label),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            if (badgeCount != null && badgeCount! > 0)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                  constraints: const BoxConstraints(
-                    minWidth: 20,
-                    minHeight: 20,
-                  ),
-                  child: Text(
-                    badgeCount.toString(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
           ],
         ),
       ),

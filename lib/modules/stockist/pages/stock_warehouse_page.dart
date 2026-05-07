@@ -3,9 +3,85 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
+import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
+import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_item_qr_print.dart';
+
+/// One logical row from bulk paste: `kode,nama,berat,qty,kadar`.
+class _BulkStockLine {
+  const _BulkStockLine({
+    required this.displayLine,
+    required this.kode,
+    required this.nama,
+    required this.berat,
+    required this.qty,
+    required this.purity,
+  });
+
+  final int displayLine;
+  final String kode;
+  final String nama;
+  final double berat;
+  final int qty;
+  final String purity;
+}
+
+List<_BulkStockLine> _parseBulkStockLines(String raw) {
+  final out = <_BulkStockLine>[];
+  final lines = raw.split(RegExp(r'\r?\n'));
+  var lineNo = 0;
+  for (final rawLine in lines) {
+    lineNo++;
+    final line = rawLine.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final parts = line.contains(';')
+        ? line.split(';').map((s) => s.trim()).toList()
+        : line.split(',').map((s) => s.trim()).toList();
+    if (parts.length < 5) {
+      throw FormatException(
+        'Baris $lineNo: butuh 5 kolom — kode, nama, berat, qty, kadar '
+        '(pisah koma atau titik koma; jika nama mengandung koma gunakan titik koma).',
+      );
+    }
+    final kode = parts[0];
+    final nama = parts[1];
+    final berat = double.tryParse(parts[2].replaceAll(',', '.'));
+    final qty = int.tryParse(parts[3]);
+    final purity = parts[4].trim();
+    if (kode.isEmpty) {
+      throw FormatException('Baris $lineNo: kode kosong.');
+    }
+    if (nama.isEmpty) {
+      throw FormatException('Baris $lineNo: nama kosong.');
+    }
+    if (berat == null || berat <= 0) {
+      throw FormatException('Baris $lineNo: berat tidak valid.');
+    }
+    if (qty == null || qty <= 0) {
+      throw FormatException('Baris $lineNo: qty tidak valid.');
+    }
+    if (purity.isEmpty) {
+      throw FormatException('Baris $lineNo: kadar kosong.');
+    }
+    out.add(
+      _BulkStockLine(
+        displayLine: lineNo,
+        kode: kode,
+        nama: nama,
+        berat: berat,
+        qty: qty,
+        purity: purity,
+      ),
+    );
+  }
+  if (out.isEmpty) {
+    throw const FormatException('Tidak ada baris data (kosong atau hanya komentar #).');
+  }
+  return out;
+}
 
 class StockWarehousePage extends ConsumerStatefulWidget {
   const StockWarehousePage({super.key});
@@ -19,6 +95,9 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   String _error = '';
   List<dynamic> _items = [];
   String _search = '';
+  String _selectedStatus = 'all';
+  /// `null` = hanya tampilkan daftar jenis; non-null = detail stok untuk jenis itu.
+  String? _jenisDetailFocus;
   // Note: saving state is handled inside the add dialog to avoid
   // setState+Navigator.pop race conditions that can trigger framework asserts.
 
@@ -29,6 +108,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   }
 
   Future<void> _showAddStockDialog() async {
+    final shelfContext = context;
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController();
     final kodeBarangController = TextEditingController();
@@ -253,7 +333,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                       : () async {
                           if (formKey.currentState?.validate() != true) return;
                           setDialogState(() => isSaving = true);
-                          final ok = await _addStockItem(
+                          final created = await _addStockItem(
                             name: nameController.text.trim(),
                             kodeBarang: kodeBarangController.text.trim(),
                             weight: double.parse(weightController.text.trim()),
@@ -265,9 +345,15 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                             tipe: selectedTipe.trim(),
                           );
                           if (!context.mounted) return;
-                          if (ok) {
+                          if (created != null) {
                             Navigator.pop(context);
-                            return; // avoid setState after route pop
+                            if (shelfContext.mounted) {
+                              await promptPrintStockItemQr(
+                                shelfContext,
+                                item: created,
+                              );
+                            }
+                            return;
                           }
                           setDialogState(() => isSaving = false);
                         },
@@ -298,7 +384,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
     });
   }
 
-  Future<bool> _addStockItem({
+  Future<({Map<String, dynamic>? created, String? error})> _postStockItem({
     required String name,
     required String kodeBarang,
     required double weight,
@@ -336,100 +422,240 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
         body: jsonEncode(payload),
       );
 
-      if (!mounted) return false;
-
       if (resp.statusCode == 201 || resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Stok berhasil ditambahkan')),
-        );
-        await _loadItems();
-        return true;
-      } else {
-        // Try to extract a meaningful error from backend
-        String backendMsg = resp.body;
+        Map<String, dynamic>? created;
         try {
           final decoded = jsonDecode(resp.body);
-          if (decoded is Map && decoded['error'] != null) {
-            backendMsg = decoded['error'].toString();
-          } else if (decoded is Map && decoded['detail'] != null) {
-            backendMsg = decoded['detail'].toString();
+          if (decoded is Map) {
+            created = Map<String, dynamic>.from(decoded);
           }
         } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Gagal menambah stok (${resp.statusCode}): $backendMsg'),
-          ),
-        );
-        return false;
+        return (created: created, error: null);
       }
-    } catch (e) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
+
+      String backendMsg = resp.body;
+      try {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map && decoded['error'] != null) {
+          backendMsg = decoded['error'].toString();
+        } else if (decoded is Map && decoded['detail'] != null) {
+          backendMsg = decoded['detail'].toString();
+        }
+      } catch (_) {}
+      return (
+        created: null,
+        error: '(${resp.statusCode}) $backendMsg',
       );
-      return false;
+    } catch (e) {
+      return (created: null, error: e.toString());
     }
   }
 
-  Future<void> _showRestockDialog(Map<String, dynamic> item) async {
-    final formKey = GlobalKey<FormState>();
-    final qtyController = TextEditingController(text: '1');
-
-    final itemId = item['item_id'];
-    final kode = (item['item_code'] ?? item['kode_produk'] ?? '').toString();
-    final name = (item['name'] ?? '-').toString();
-
-    if (itemId == null) {
-      if (!mounted) return;
+  Future<Map<String, dynamic>?> _addStockItem({
+    required String name,
+    required String kodeBarang,
+    required double weight,
+    required int quantity,
+    required String material,
+    required String purity,
+    required String kategori,
+    required String jenis,
+    required String tipe,
+  }) async {
+    final r = await _postStockItem(
+      name: name,
+      kodeBarang: kodeBarang,
+      weight: weight,
+      quantity: quantity,
+      material: material,
+      purity: purity,
+      kategori: kategori,
+      jenis: jenis,
+      tipe: tipe,
+    );
+    if (!mounted) return null;
+    if (r.created != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Item ID tidak ditemukan')),
+        const SnackBar(content: Text('Stok berhasil ditambahkan')),
       );
-      return;
+      await _loadItems();
+      return r.created;
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Gagal menambah stok ${r.error ?? ''}'),
+      ),
+    );
+    return null;
+  }
+
+  Future<void> _showBulkAddStockDialog() async {
+    final shelfContext = context;
+    final formKey = GlobalKey<FormState>();
+    final bulkTextController = TextEditingController();
+
+    String selectedKategori = 'PERHIASAN';
+    String selectedJenis = '';
+    String selectedTipe = 'BIASA';
+    String selectedMaterial = 'EMAS';
+
+    final kategoriOptions = ['PERHIASAN', 'LOGAM MULIA', 'AKSESORIES'];
+    final Map<String, List<String>> jenisOptions = {
+      'PERHIASAN': ['CINCIN', 'GELANG', 'KALUNG', 'ANTING', 'LIONTIN', 'BRO'],
+      'LOGAM MULIA': ['ANTAM', 'UBS', 'BATANGAN'],
+      'AKSESORIES': ['GELANG', 'KALUNG', 'ANTING', 'BRO'],
+    };
+    final tipeOptions = ['BIASA', 'GRESS'];
+    final materialOptions = ['EMAS', 'PERAK', 'LAINNYA'];
 
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) {
+      builder: (context) {
         var isSaving = false;
+        var progressLabel = '';
         return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
+          builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Restock'),
+              title: const Text('Tambah stok massal'),
               content: SizedBox(
-                width: 420,
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        kode.isNotEmpty ? '$kode • $name' : name,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: qtyController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Qty tambah',
-                          border: OutlineInputBorder(),
-                          isDense: true,
+                width: 480,
+                child: SingleChildScrollView(
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Satu baris = satu kode stok. Format: kode, nama, berat (gram), qty, kadar '
+                          '(pisah koma atau titik koma). Jika nama mengandung koma, pisahkan kolom dengan titik koma. '
+                          'Baris kosong atau yang diawali # diabaikan.',
+                          style: TextStyle(fontSize: 13),
                         ),
-                        validator: (v) {
-                          final parsed = int.tryParse((v ?? '').trim());
-                          if (parsed == null || parsed <= 0) return 'Invalid';
-                          return null;
-                        },
-                      ),
-                    ],
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: bulkTextController,
+                          maxLines: 12,
+                          decoration: const InputDecoration(
+                            labelText: 'Data (paste dari spreadsheet)',
+                            hintText:
+                                'KB001,Cincin emas,5.2,1,75%\nKB002;Gelang motif;10;2;22K',
+                            alignLabelWithHint: true,
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Wajib diisi';
+                            }
+                            try {
+                              _parseBulkStockLines(v);
+                            } on FormatException catch (e) {
+                              return e.message;
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedKategori,
+                          decoration: const InputDecoration(
+                            labelText: 'Kategori',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: kategoriOptions
+                              .map(
+                                (k) =>
+                                    DropdownMenuItem(value: k, child: Text(k)),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() {
+                              selectedKategori = value;
+                              selectedJenis = '';
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedJenis.isEmpty ? null : selectedJenis,
+                          decoration: const InputDecoration(
+                            labelText: 'Jenis',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: (jenisOptions[selectedKategori] ?? const [])
+                              .map(
+                                (j) =>
+                                    DropdownMenuItem(value: j, child: Text(j)),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            setDialogState(() => selectedJenis = value ?? '');
+                          },
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Jenis wajib dipilih';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedTipe,
+                          decoration: const InputDecoration(
+                            labelText: 'Tipe',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: tipeOptions
+                              .map(
+                                (t) =>
+                                    DropdownMenuItem(value: t, child: Text(t)),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() => selectedTipe = value);
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedMaterial,
+                          decoration: const InputDecoration(
+                            labelText: 'Material',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: materialOptions
+                              .map(
+                                (m) => DropdownMenuItem(
+                                  value: m,
+                                  child: Text(m),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() => selectedMaterial = value);
+                          },
+                        ),
+                        if (isSaving && progressLabel.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(progressLabel),
+                          const SizedBox(height: 8),
+                          const LinearProgressIndicator(),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
               actions: [
                 TextButton(
-                  onPressed:
-                      isSaving ? null : () => Navigator.pop(dialogContext),
+                  onPressed: isSaving ? null : () => Navigator.pop(context),
                   child: const Text('Batal'),
                 ),
                 ElevatedButton(
@@ -437,18 +663,89 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                       ? null
                       : () async {
                           if (formKey.currentState?.validate() != true) return;
-                          setDialogState(() => isSaving = true);
-                          final deltaQty = int.parse(qtyController.text.trim());
-                          final ok = await _restockItem(
-                            itemId: itemId,
-                            deltaQty: deltaQty,
-                          );
-                          if (!dialogContext.mounted) return;
-                          if (ok) {
-                            Navigator.pop(dialogContext);
+                          List<_BulkStockLine> rows;
+                          try {
+                            rows = _parseBulkStockLines(bulkTextController.text);
+                          } on FormatException catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(e.message)),
+                              );
+                            }
                             return;
                           }
-                          setDialogState(() => isSaving = false);
+                          setDialogState(() {
+                            isSaving = true;
+                            progressLabel = '0 / ${rows.length}';
+                          });
+                          var ok = 0;
+                          final failures = <String>[];
+                          final createdItems = <Map<String, dynamic>>[];
+                          for (var i = 0; i < rows.length; i++) {
+                            if (!context.mounted) break;
+                            final line = rows[i];
+                            setDialogState(
+                              () => progressLabel = '${i + 1} / ${rows.length}',
+                            );
+                            final r = await _postStockItem(
+                              name: line.nama,
+                              kodeBarang: line.kode,
+                              weight: line.berat,
+                              quantity: line.qty,
+                              material: selectedMaterial,
+                              purity: line.purity,
+                              kategori: selectedKategori.trim(),
+                              jenis: selectedJenis.trim(),
+                              tipe: selectedTipe.trim(),
+                            );
+                            if (r.created != null) {
+                              ok++;
+                              createdItems.add(
+                                Map<String, dynamic>.from(r.created!),
+                              );
+                            } else {
+                              failures.add('${line.kode}: ${r.error ?? "gagal"}');
+                            }
+                          }
+                          if (!context.mounted) return;
+                          Navigator.pop(context);
+                          await _loadItems();
+                          if (!shelfContext.mounted) return;
+                          final messenger = ScaffoldMessenger.of(shelfContext);
+                          messenger.showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Massal selesai: berhasil $ok, gagal ${failures.length}',
+                              ),
+                            ),
+                          );
+                          if (createdItems.isNotEmpty && shelfContext.mounted) {
+                            await promptPrintStockItemsQrBulk(
+                              shelfContext,
+                              items: createdItems,
+                            );
+                          }
+                          if (failures.isNotEmpty && shelfContext.mounted) {
+                            await showDialog<void>(
+                              context: shelfContext,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Baris gagal'),
+                                content: SizedBox(
+                                  width: 420,
+                                  height: 280,
+                                  child: SingleChildScrollView(
+                                    child: Text(failures.join('\n')),
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Tutup'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
                         },
                   child: isSaving
                       ? const SizedBox(
@@ -466,59 +763,8 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      qtyController.dispose();
+      bulkTextController.dispose();
     });
-  }
-
-  Future<bool> _restockItem({
-    required dynamic itemId,
-    required int deltaQty,
-  }) async {
-    try {
-      final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
-      final resp = await http.post(
-        Uri.parse('$baseUrl/items/$itemId/restock'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(<String, dynamic>{
-          'delta_quantity': deltaQty,
-          'branch_id': userState.branch,
-        }),
-      );
-
-      if (!mounted) return false;
-
-      if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Restock berhasil')),
-        );
-        await _loadItems();
-        return true;
-      }
-
-      String backendMsg = resp.body;
-      try {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map && decoded['error'] != null) {
-          backendMsg = decoded['error'].toString();
-        } else if (decoded is Map && decoded['detail'] != null) {
-          backendMsg = decoded['detail'].toString();
-        }
-      } catch (_) {}
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Gagal restock (${resp.statusCode}): $backendMsg'),
-        ),
-      );
-      return false;
-    } catch (e) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-      return false;
-    }
   }
 
   Future<void> _loadItems() async {
@@ -557,32 +803,20 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   }
 
   List<dynamic> get _filteredItems {
+    var list = _items;
+    if (_selectedStatus != 'all') {
+      list = list
+          .where((it) =>
+              stockItemVisibleForStatusFilter(it, _selectedStatus))
+          .toList();
+    }
     final q = _search.trim().toLowerCase();
-    if (q.isEmpty) return _items;
-    return _items.where((it) {
+    if (q.isEmpty) return list;
+    return list.where((it) {
       final code = (it['item_code'] ?? it['kode_produk'] ?? '').toString();
       final name = (it['name'] ?? '').toString();
       return code.toLowerCase().contains(q) || name.toLowerCase().contains(q);
     }).toList();
-  }
-
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'ready':
-        return Colors.green;
-      case 'reserved':
-        return Colors.orange;
-      case 'sold':
-        return Colors.red;
-      case 'buyback':
-        return Colors.blue;
-      case 'on-service':
-        return Colors.purple;
-      case 'on-custom':
-        return Colors.indigo;
-      default:
-        return Colors.grey;
-    }
   }
 
   @override
@@ -591,6 +825,11 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
       appBar: AppBar(
         title: const Text('Stock Warehouse'),
         actions: [
+          IconButton(
+            tooltip: 'Tambah stok massal',
+            onPressed: _showBulkAddStockDialog,
+            icon: const Icon(Icons.playlist_add),
+          ),
           IconButton(
             tooltip: 'Tambah stok',
             onPressed: _showAddStockDialog,
@@ -625,7 +864,18 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
               : Column(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                      child: StockStatusFilterSummaryHeader(
+                        selectedStatus: _selectedStatus,
+                        onStatusChanged: (v) => setState(() {
+                          _selectedStatus = v;
+                          _jenisDetailFocus = null;
+                        }),
+                        summaryItems: _filteredItems,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                       child: TextField(
                         decoration: const InputDecoration(
                           prefixIcon: Icon(Icons.search),
@@ -633,323 +883,33 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
-                        onChanged: (v) => setState(() => _search = v),
+                        onChanged: (v) => setState(() {
+                          _search = v;
+                          _jenisDetailFocus = null;
+                        }),
                       ),
                     ),
                     Expanded(
-                      child: _filteredItems.isEmpty
-                          ? const Center(child: Text('Stok kosong'))
-                          : ListView.separated(
-                              itemCount: _filteredItems.length,
-                              separatorBuilder: (context, index) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final item = _filteredItems[index]
-                                    as Map<String, dynamic>;
-                                final kodeProduk =
-                                    (item['kode_produk'] ?? item['item_code'] ?? '')
-                                        .toString();
-                                final name = (item['name'] ?? '-').toString();
-                                final status = (item['status'] ?? '-').toString();
-                                final weight = item['weight'];
-                                final weightText = weight == null
-                                    ? ''
-                                    : (weight is num
-                                        ? '${weight.toString()} g'
-                                        : '$weight g');
-                                final qtyRaw = item['quantity'] ?? item['qty'];
-                                final qty = (qtyRaw is num)
-                                    ? qtyRaw.toString()
-                                    : (qtyRaw?.toString().trim().isNotEmpty == true)
-                                        ? qtyRaw.toString()
-                                        : '1';
-
-                                return ListTile(
-                                  title: Text(name),
-                                  subtitle: Text(
-                                    [
-                                      if (kodeProduk.isNotEmpty) 'Kode: $kodeProduk',
-                                      'Qty: $qty',
-                                      if (weightText.isNotEmpty) weightText,
-                                    ].join(' • '),
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Chip(
-                                        label: Text(status),
-                                        side: BorderSide(
-                                          color: _statusColor(status),
-                                        ),
-                                      ),
-                                      PopupMenuButton<String>(
-                                        tooltip: 'Aksi',
-                                        onSelected: (value) async {
-                                          if (value == 'restock') {
-                                            await _showRestockDialog(item);
-                                          } else if (value == 'history') {
-                                            await showModalBottomSheet<void>(
-                                              context: context,
-                                              isScrollControlled: true,
-                                              useSafeArea: true,
-                                              showDragHandle: true,
-                                              builder: (ctx) => SizedBox(
-                                                height:
-                                                    MediaQuery.sizeOf(ctx)
-                                                            .height *
-                                                        0.68,
-                                                child: _StockHistoryBottomSheet(
-                                                  item: item,
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        itemBuilder: (_) => const [
-                                          PopupMenuItem(
-                                            value: 'history',
-                                            child: ListTile(
-                                              contentPadding: EdgeInsets.zero,
-                                              leading: Icon(Icons.history),
-                                              title: Text('Riwayat stok'),
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: 'restock',
-                                            child: ListTile(
-                                              contentPadding: EdgeInsets.zero,
-                                              leading: Icon(Icons.add_box),
-                                              title: Text('Restock'),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-    );
-  }
-}
-
-class _StockHistoryBottomSheet extends ConsumerStatefulWidget {
-  const _StockHistoryBottomSheet({required this.item});
-
-  final Map<String, dynamic> item;
-
-  @override
-  ConsumerState<_StockHistoryBottomSheet> createState() =>
-      _StockHistoryBottomSheetState();
-}
-
-class _StockHistoryBottomSheetState
-    extends ConsumerState<_StockHistoryBottomSheet> {
-  late Future<List<Map<String, dynamic>>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-  }
-
-  Future<List<Map<String, dynamic>>> _load() async {
-    final userState = ref.read(userStateProvider);
-    final id = widget.item['item_id'];
-    if (id == null) return [];
-    final uri = Uri.parse(
-      '${NetworkConfig.baseUrl}/stock-mutations?branch_id=${userState.branch}&item_id=$id&limit=100',
-    );
-    final r = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-    if (r.statusCode != 200) {
-      throw Exception('Gagal memuat riwayat (${r.statusCode})');
-    }
-    final decoded = jsonDecode(r.body);
-    if (decoded is! List) return [];
-    return decoded
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-  }
-
-  static String _typeLabel(String? t) {
-    switch ((t ?? '').toLowerCase()) {
-      case 'in':
-        return 'Masuk';
-      case 'out':
-        return 'Keluar';
-      case 'transfer':
-        return 'Transfer';
-      case 'adjustment':
-        return 'Koreksi';
-      default:
-        return t?.isNotEmpty == true ? t! : '-';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final kode =
-        (widget.item['kode_produk'] ?? widget.item['item_code'] ?? '')
-            .toString();
-    final name = (widget.item['name'] ?? '-').toString();
-    final subtitle = kode.isNotEmpty ? '$kode · $name' : name;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 8, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Riwayat stok',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+                      child: StockJenisTwoStepPanel(
+                        filteredItems: _filteredItems,
+                        selectedJenisLabel: _jenisDetailFocus,
+                        onSelectedJenisLabelChanged: (v) =>
+                            setState(() => _jenisDetailFocus = v),
+                        detailBuilder: (context, items) =>
+                            StockInventoryGroupedTable(
+                          filteredItems: items,
+                          branchIdForMutations:
+                              ref.read(userStateProvider).branch,
+                          branchDisplayNameForHistory: stockBranchDisplayName(
+                            branches: ref.watch(userStateProvider).branches,
+                            branchId: ref.watch(userStateProvider).branch,
                           ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        fontSize: 13,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                tooltip: 'Tutup',
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: FutureBuilder<List<Map<String, dynamic>>>(
-            future: _future,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (snapshot.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      '${snapshot.error}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                );
-              }
-              final rows = snapshot.data ?? [];
-              if (rows.isEmpty) {
-                return const Center(
-                  child: Text('Belum ada riwayat mutasi untuk item ini'),
-                );
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                itemCount: rows.length,
-                separatorBuilder: (context, index) =>
-                    const Divider(height: 1),
-                itemBuilder: (context, i) {
-                  final row = rows[i];
-                  final ts = row['created_at'];
-                  String dateStr = '-';
-                  if (ts != null) {
-                    try {
-                      dateStr = DateFormat('dd MMM yyyy, HH:mm').format(
-                        DateTime.parse(ts.toString()).toLocal(),
-                      );
-                    } catch (_) {
-                      dateStr = ts.toString();
-                    }
-                  }
-                  final type = _typeLabel(row['type']?.toString());
-                  final qty = row['quantity'];
-                  final prev = row['previous_stock'];
-                  final cur = row['current_stock'];
-                  final notes = (row['notes'] ?? '').toString().trim();
-                  final by = (row['created_by_name'] ?? '').toString().trim();
-                  final refType =
-                      (row['reference_type'] ?? '').toString().trim();
-                  final refId = row['reference_id'];
-
-                  return ListTile(
-                    dense: true,
-                    title: Text(
-                      '$type · qty ${qty ?? '-'}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          dateStr,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[700],
-                          ),
+                          onReload: _loadItems,
                         ),
-                        if (prev != null || cur != null)
-                          Text(
-                            'Stok: ${prev ?? '?'} → ${cur ?? '?'}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        if (refType.isNotEmpty || refId != null)
-                          Text(
-                            [
-                              if (refType.isNotEmpty) 'Ref: $refType',
-                              if (refId != null) '#$refId',
-                            ].join(' '),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        if (notes.isNotEmpty)
-                          Text(
-                            notes,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        if (by.isNotEmpty)
-                          Text(
-                            'Oleh: $by',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                      ],
+                      ),
                     ),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
+                  ],
+                ),
     );
   }
 }
-

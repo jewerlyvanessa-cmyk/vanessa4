@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
+import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
 class StockPage extends ConsumerStatefulWidget {
   const StockPage({super.key});
@@ -71,71 +74,13 @@ class _StockPageState extends ConsumerState<StockPage> {
     if (_selectedStatus == 'all') {
       return _items;
     }
-    return _items.where((item) => item['status'] == _selectedStatus).toList();
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'ready':
-        return Colors.green;
-      case 'reserved':
-        return Colors.orange;
-      case 'sold':
-        return Colors.red;
-      case 'buyback':
-        return Colors.blue;
-      case 'on-service':
-        return Colors.purple;
-      case 'on-custom':
-        return Colors.indigo;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getStatusText(String status) {
-    switch (status) {
-      case 'ready':
-        return 'Ready';
-      case 'reserved':
-        return 'Reserved';
-      case 'sold':
-        return 'Sold';
-      case 'buyback':
-        return 'Buyback';
-      case 'on-service':
-        return 'On Service';
-      case 'on-custom':
-        return 'On Custom';
-      default:
-        return status;
-    }
-  }
-
-  double _calculateTotalWeight(String statusFilter) {
-    double totalWeight = 0.0;
-    for (var item in _items) {
-      if (statusFilter == 'all' || item['status'] == statusFilter) {
-        final rawWeight = item['weight'];
-        final rawQty = item['quantity'];
-
-        final weightPerItem = rawWeight is num
-            ? rawWeight.toDouble()
-            : double.tryParse(rawWeight?.toString() ?? '') ?? 0.0;
-
-        final qty = rawQty is int
-            ? rawQty
-            : int.tryParse(rawQty?.toString() ?? '') ?? 1;
-
-        if (weightPerItem > 0 && qty > 0) {
-          totalWeight += weightPerItem * qty;
-        }
-      }
-    }
-    return totalWeight;
+    return _items
+        .where((item) => stockItemVisibleForStatusFilter(item, _selectedStatus))
+        .toList();
   }
 
   Future<void> _showAddStockDialog() async {
+    final shelfContext = context;
     final formKey = GlobalKey<FormState>();
 
     // Controllers
@@ -352,18 +297,24 @@ class _StockPageState extends ConsumerState<StockPage> {
             ),
             ElevatedButton(
               onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  await _addStockItem(
-                    name: nameController.text,
-                    kodeBarang: kodeBarangController.text,
-                    kategori: selectedKategori,
-                    jenis: selectedJenis,
-                    tipe: selectedTipe,
-                    weight: double.parse(weightController.text),
-                    quantity: int.parse(quantityController.text),
-                    material: selectedMaterial,
-                    purity: purityController.text,
-                  );
+                if (!formKey.currentState!.validate()) return;
+                final created = await _addStockItem(
+                  name: nameController.text,
+                  kodeBarang: kodeBarangController.text,
+                  kategori: selectedKategori,
+                  jenis: selectedJenis,
+                  tipe: selectedTipe,
+                  weight: double.parse(weightController.text),
+                  quantity: int.parse(quantityController.text),
+                  material: selectedMaterial,
+                  purity: purityController.text,
+                );
+                if (!context.mounted) return;
+                if (created != null) {
+                  Navigator.of(context).pop();
+                  if (shelfContext.mounted) {
+                    await promptPrintStockItemQr(shelfContext, item: created);
+                  }
                 }
               },
               child: const Text('Simpan'),
@@ -374,7 +325,7 @@ class _StockPageState extends ConsumerState<StockPage> {
     );
   }
 
-  Future<bool> _addStockItem({
+  Future<Map<String, dynamic>?> _addStockItem({
     required String name,
     required String kodeBarang,
     required String kategori,
@@ -409,17 +360,20 @@ class _StockPageState extends ConsumerState<StockPage> {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
+        Map<String, dynamic>? created;
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            created = Map<String, dynamic>.from(decoded);
+          }
+        } catch (_) {}
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Stok berhasil ditambahkan')),
           );
-          // Close dialog after showing success message
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (mounted) Navigator.of(context).pop();
-          });
         }
-        _loadItems(); // Refresh data
-        return true;
+        _loadItems();
+        return created;
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -428,7 +382,7 @@ class _StockPageState extends ConsumerState<StockPage> {
             ),
           );
         }
-        return false;
+        return null;
       }
     } catch (e) {
       if (mounted) {
@@ -436,7 +390,7 @@ class _StockPageState extends ConsumerState<StockPage> {
           context,
         ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
-      return false;
+      return null;
     }
   }
 
@@ -460,133 +414,12 @@ class _StockPageState extends ConsumerState<StockPage> {
       ),
       body: Column(
         children: [
-          // Filter Status
           Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                const Text('Filter Status: '),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButton<String>(
-                    value: _selectedStatus,
-                    isExpanded: true,
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'all',
-                        child: Text('Semua Status'),
-                      ),
-                      DropdownMenuItem(value: 'ready', child: Text('Ready')),
-                      DropdownMenuItem(
-                        value: 'reserved',
-                        child: Text('Reserved'),
-                      ),
-                      DropdownMenuItem(value: 'sold', child: Text('Sold')),
-                      DropdownMenuItem(
-                        value: 'buyback',
-                        child: Text('Buyback'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'on-service',
-                        child: Text('On Service'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'on-custom',
-                        child: Text('On Custom'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedStatus = value!;
-                      });
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Summary Cards - JUMLAH STOK
-          Container(
-            padding: const EdgeInsets.all(16.0),
-            color: Colors.grey[100],
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '📊 JUMLAH STOK',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Total Item',
-                        _items.length.toString(),
-                        Colors.blue,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Ready Dijual',
-                        _items
-                            .where((item) => item['status'] == 'ready')
-                            .length
-                            .toString(),
-                        Colors.green,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Dipesan',
-                        _items
-                            .where((item) => item['status'] == 'reserved')
-                            .length
-                            .toString(),
-                        Colors.orange,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Berat Ready',
-                        '${_calculateTotalWeight('ready').toStringAsFixed(2)}g',
-                        Colors.teal,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Berat Total',
-                        '${_calculateTotalWeight('all').toStringAsFixed(2)}g',
-                        Colors.purple,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildSummaryCard(
-                        'Terjual',
-                        _items
-                            .where((item) => item['status'] == 'sold')
-                            .length
-                            .toString(),
-                        Colors.red,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+            child: StockStatusFilterSummaryHeader(
+              selectedStatus: _selectedStatus,
+              onStatusChanged: (v) => setState(() => _selectedStatus = v),
+              summaryItems: _filteredItems,
             ),
           ),
 
@@ -609,102 +442,22 @@ class _StockPageState extends ConsumerState<StockPage> {
                     ),
                   )
                 : _filteredItems.isEmpty
-                ? const Center(child: Text('Tidak ada data stok'))
-                : ListView.builder(
-                    itemCount: _filteredItems.length,
-                    itemBuilder: (context, index) {
-                      final item = _filteredItems[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 4,
+                    ? const Center(child: Text('Tidak ada data stok'))
+                    : StockInventoryGroupedTable(
+                        filteredItems: _filteredItems,
+                        branchIdForMutations: ref.read(userStateProvider).branch,
+                        branchDisplayNameForHistory: stockBranchDisplayName(
+                          branches: ref.watch(userStateProvider).branches,
+                          branchId: ref.watch(userStateProvider).branch,
                         ),
-                        child: ListTile(
-                          leading: (() {
-                            final url = _normalizePhotoUrl(
-                              item['photo_produk'] ?? item['photo_url'],
-                            );
-                            if (url == null) {
-                              return const CircleAvatar(
-                                child: Icon(Icons.inventory),
-                              );
-                            }
-                            return CircleAvatar(
-                              backgroundImage: NetworkImage(url),
-                              onBackgroundImageError: (exception, stackTrace) =>
-                                  const Icon(Icons.inventory),
-                            );
-                          })(),
-                          title: Text(item['name'] ?? 'Unknown'),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('ID: ${item['item_id']}'),
-                              if (item['kode_produk'] != null &&
-                                  item['kode_produk'].isNotEmpty)
-                                Text('Kode: ${item['kode_produk']}'),
-                              Text('Berat: ${item['weight'] ?? 0} gram'),
-                              Text('Qty: ${item['quantity'] ?? 1}'),
-                              Text('Material: ${item['material'] ?? '-'}'),
-                              Text('Kadar: ${item['purity'] ?? '-'}'),
-                            ],
-                          ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _getStatusColor(
-                                item['status'] ?? 'unknown',
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              _getStatusText(item['status'] ?? 'unknown'),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          onTap: () {
-                            // Show item details
-                            _showItemDetails(context, item);
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                        showStockistActions: false,
+                        showReadOnlyHistory: true,
+                        onOpenItemDetail: (Map<String, dynamic> item) {
+                          _showItemDetails(context, item);
+                        },
+                      ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard(String title, String value, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -738,7 +491,9 @@ class _StockPageState extends ConsumerState<StockPage> {
               _buildDetailRow('Kadar', item['purity'] ?? '-'),
               _buildDetailRow(
                 'Status',
-                _getStatusText(item['status'] ?? 'unknown'),
+                stockItemStatusLabel(
+                  (item['status'] ?? 'unknown').toString(),
+                ),
               ),
               _buildDetailRow('Kategori', item['kategori'] ?? '-'),
               _buildDetailRow('Jenis', item['jenis'] ?? '-'),

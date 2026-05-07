@@ -18,7 +18,7 @@ import 'package:image_picker/image_picker.dart'
 import 'package:mobile_scanner/mobile_scanner.dart'
     if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
 import 'faktur_page.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 
 class JualPage extends ConsumerStatefulWidget {
   const JualPage({super.key, this.client});
@@ -362,12 +362,23 @@ class _JualPageState extends ConsumerState<JualPage> {
         return data.map((e) => e as Map<String, dynamic>).toList();
       }
 
+      Future<List<Map<String, dynamic>>> fetchSellableOnly() async {
+        final uri = Uri.parse(
+          '$baseUrl/items?item_code=$query&sellable_only=true&limit=5'
+          '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}',
+        );
+        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+        if (resp.statusCode != 200) return [];
+        final List<dynamic> data = jsonDecode(resp.body);
+        return data.map((e) => e as Map<String, dynamic>).toList();
+      }
+
       List<Map<String, dynamic>> suggestions = [];
-      // Some DBs use status 'ready', others use 'available'. Try both, then no status filter.
+      // Hanya stok layak jual (bukan buyback / servis / custom).
       suggestions = await fetchExact(status: 'ready');
       if (suggestions.isEmpty) suggestions = await fetchExact(status: 'available');
-      if (suggestions.isEmpty) suggestions = await fetchExact(status: null);
-      // If still empty, fallback to search (best effort).
+      if (suggestions.isEmpty) suggestions = await fetchSellableOnly();
+      // If still empty, fallback to search (hanya stok layak jual).
       if (suggestions.isEmpty) suggestions = await _fetchItemSuggestions(query);
       if (!mounted) return;
 
@@ -394,7 +405,25 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
   }
 
+  bool _isSellableStockStatus(String? raw) {
+    final s = (raw ?? '').toString().trim().toLowerCase();
+    return s == 'ready' || s == 'available' || s == 'reserved';
+  }
+
   void _applySelectedStockItem(Map<String, dynamic> item) {
+    if (!_isSellableStockStatus(item['status']?.toString())) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Barang status "${item['status']}" tidak boleh dijual langsung '
+              '(mis. buyback — kirim ke gudang dulu setelah diproses).',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     setState(() {
       _saleType = 'from_stock';
       _selectedItem = item;
@@ -830,7 +859,7 @@ class _JualPageState extends ConsumerState<JualPage> {
       final uri = Uri.parse(
         '$baseUrl/items?search=$query&limit=10'
         '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
-        '${isFromStock ? '&status=ready' : ''}',
+        '${isFromStock ? '&sellable_only=true' : ''}',
       );
       final response = await http.get(
         uri,

@@ -1,5 +1,9 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:image_picker/image_picker.dart';
+
 import '../../../utils/network_config.dart';
 
 class BranchApiService {
@@ -7,36 +11,65 @@ class BranchApiService {
 
   BranchApiService({required this.baseUrl});
 
-  Future<List<Map<String, dynamic>>> fetchBranches() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches'),
-        headers: NetworkConfig.defaultHeaders,
-      );
-      if (response.statusCode == 200) {
-        final List data = json.decode(response.body);
-        return data.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to load branches: ${response.statusCode}');
-      }
-    } catch (e) {
-      throw Exception('Error fetching branches: $e');
+  static List<Map<String, dynamic>> _decodeBranchList(String body) {
+    final decoded = json.decode(body);
+    if (decoded is List) {
+      return decoded
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
     }
+    if (decoded is Map && decoded['error'] != null) {
+      throw Exception(decoded['error'].toString());
+    }
+    throw Exception('Respons cabang tidak valid (bukan daftar JSON).');
+  }
+
+  /// GET daftar cabang: coba `/branches` lalu `/api/branches` (proxy/prod sering hanya `/api`).
+  Future<List<Map<String, dynamic>>> fetchBranches() async {
+    final headers = NetworkConfig.defaultHeaders;
+    Object? lastError;
+
+    for (final path in const ['/branches', '/api/branches']) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl$path'),
+          headers: headers,
+        );
+        if (response.statusCode == 200) {
+          return _decodeBranchList(response.body);
+        }
+        if (response.statusCode == 404) {
+          lastError = 'HTTP 404 $path';
+          continue;
+        }
+        throw Exception(
+          'Gagal memuat cabang (${response.statusCode}) $path: ${response.body}',
+        );
+      } catch (e) {
+        lastError = e;
+        if (path == '/api/branches') {
+          throw Exception('Error fetching branches: $e');
+        }
+      }
+    }
+    throw Exception('Error fetching branches: $lastError');
   }
 
   Future<Map<String, dynamic>?> fetchBranchById(String branchId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches/$branchId'),
-        headers: NetworkConfig.defaultHeaders,
-      );
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      } else if (response.statusCode == 404) {
-        return null;
-      } else {
-        throw Exception('Failed to load branch: ${response.statusCode}');
+      for (final prefix in const ['/branches/', '/api/branches/']) {
+        final response = await http.get(
+          Uri.parse('$baseUrl$prefix$branchId'),
+          headers: NetworkConfig.defaultHeaders,
+        );
+        if (response.statusCode == 200) {
+          return json.decode(response.body) as Map<String, dynamic>;
+        }
+        if (response.statusCode != 404) {
+          throw Exception('Failed to load branch: ${response.statusCode}');
+        }
       }
+      return null;
     } catch (e) {
       throw Exception('Error fetching branch: $e');
     }
@@ -172,6 +205,69 @@ class BranchApiService {
       }
     } catch (e) {
       throw Exception('Error exporting branches: $e');
+    }
+  }
+
+  /// Upload file logo cabang (field multipart: `logo`). Mengembalikan path relatif, mis. `/uploads/...`.
+  Future<String> uploadBranchLogo(String branchId, XFile file) async {
+    final token = NetworkConfig.authToken;
+    if (token == null || token.isEmpty) {
+      throw Exception('Tidak ada token autentikasi');
+    }
+    final uri = Uri.parse('$baseUrl/branches/$branchId/logo');
+    final req = http.MultipartRequest('POST', uri);
+    req.headers['Authorization'] = 'Bearer $token';
+    final bytes = await file.readAsBytes();
+    final mime = file.mimeType ?? 'image/jpeg';
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'logo',
+        bytes,
+        filename: file.name.isNotEmpty ? file.name : 'logo.jpg',
+        contentType: MediaType.parse(mime),
+      ),
+    );
+    final streamed = await req.send().timeout(NetworkConfig.connectionTimeout);
+    final resp = await http.Response.fromStream(streamed);
+    if (resp.statusCode == 200) {
+      final decoded = json.decode(resp.body);
+      if (decoded is Map && decoded['logo_url'] != null) {
+        return decoded['logo_url'].toString();
+      }
+      throw Exception('Respons server tidak valid');
+    }
+    String msg = 'HTTP ${resp.statusCode}';
+    try {
+      final decoded = json.decode(resp.body);
+      if (decoded is Map && decoded['error'] != null) {
+        msg = decoded['error'].toString();
+      }
+    } catch (_) {
+      if (resp.body.isNotEmpty) msg = resp.body;
+    }
+    throw Exception(msg);
+  }
+
+  Future<void> deleteBranchLogo(String branchId) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/branches/$branchId/logo'),
+      headers: {
+        'Accept': 'application/json',
+        if (NetworkConfig.authToken != null && NetworkConfig.authToken!.isNotEmpty)
+          'Authorization': 'Bearer ${NetworkConfig.authToken}',
+      },
+    ).timeout(NetworkConfig.connectionTimeout);
+    if (response.statusCode != 200) {
+      String msg = 'HTTP ${response.statusCode}';
+      try {
+        final decoded = json.decode(response.body);
+        if (decoded is Map && decoded['error'] != null) {
+          msg = decoded['error'].toString();
+        }
+      } catch (_) {
+        if (response.body.isNotEmpty) msg = response.body;
+      }
+      throw Exception(msg);
     }
   }
 

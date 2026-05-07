@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 

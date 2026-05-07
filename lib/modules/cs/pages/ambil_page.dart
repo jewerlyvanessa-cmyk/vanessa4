@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
-import 'faktur_page.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class AmbilPage extends ConsumerStatefulWidget {
   const AmbilPage({super.key, this.client});
@@ -31,12 +32,15 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       TextEditingController();
   final TextEditingController _namaItemController = TextEditingController();
   final TextEditingController _beratController = TextEditingController();
+  final TextEditingController _estimasiBiayaController = TextEditingController();
+  final TextEditingController _dpController = TextEditingController();
   final TextEditingController _keteranganController = TextEditingController();
 
   File? _fotoFile;
   bool _isLoading = false;
   List<dynamic> _readyItems = [];
   bool _isLoadingItems = false;
+  int? _selectedOrderId;
 
   static const Set<String> _allowedReadyPickupOrderTypes = {'service', 'custom'};
 
@@ -47,6 +51,8 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     _customerPhoneController.dispose();
     _namaItemController.dispose();
     _beratController.dispose();
+    _estimasiBiayaController.dispose();
+    _dpController.dispose();
     _keteranganController.dispose();
     super.dispose();
   }
@@ -65,7 +71,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
       final response = await (widget.client ?? http.Client()).get(
         Uri.parse(
-          '$baseUrl/orders?branch_id=${userState.branch}&status=completed',
+          '$baseUrl/orders?branch_id=${userState.branch}&status=ready_for_pickup',
         ),
         headers: NetworkConfig.defaultHeaders,
       );
@@ -108,6 +114,11 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     final uri = Uri.parse('$storageUrl/upload');
     final request = http.MultipartRequest('POST', uri)
       ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+    final token = NetworkConfig.authToken;
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+      request.headers['Accept'] = 'application/json';
+    }
     final response = await request.send();
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
@@ -115,6 +126,47 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       return data['url'] ?? data['fileUrl'] ?? data['path'];
     }
     return null;
+  }
+
+  Future<void> _fetchAndApplyPaymentSummary(int orderId) async {
+    try {
+      final baseUrl = NetworkConfig.baseUrl;
+      final resp = await (widget.client ?? http.Client()).get(
+        Uri.parse('$baseUrl/orders/payment-summary?order_id=$orderId'),
+        headers: NetworkConfig.defaultHeaders,
+      );
+      if (resp.statusCode != 200) return;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) return;
+      final m = Map<String, dynamic>.from(decoded);
+      final total = m['total'];
+      final dp = m['dp_amount'];
+      setState(() {
+        _estimasiBiayaController.text = (total ?? 0).toString();
+        _dpController.text = (dp ?? 0).toString();
+      });
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  void _applyReadyOrderToForm(Map<String, dynamic> order) {
+    final id = int.tryParse(order['order_id']?.toString() ?? '');
+    setState(() {
+      _selectedOrderId = id;
+      _orderNumberController.text = (order['order_number'] ?? '').toString();
+      _customerController.text = (order['customer_name'] ?? '').toString();
+      _customerPhoneController.text =
+          (order['customer_phone'] ?? order['phone'] ?? '').toString();
+      _namaItemController.text =
+          (order['nama_item'] ?? order['item_name'] ?? '').toString();
+      _beratController.text = (order['berat'] ?? order['weight'] ?? '').toString();
+      _estimasiBiayaController.text = (order['total'] ?? 0).toString();
+      _dpController.text = '0';
+    });
+    if (id != null) {
+      _fetchAndApplyPaymentSummary(id);
+    }
   }
 
   Future<void> _submitForm() async {
@@ -136,39 +188,28 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
         fotoUrl = await _uploadFoto(_fotoFile);
       }
 
-      final orderData = {
-        'branch_id': branchId,
-        'order_number': _orderNumberController.text,
-        'customer_name': _customerController.text,
-        'customer_phone': _customerPhoneController.text,
-        'nama_item': _namaItemController.text,
-        'berat': _beratController.text,
-        'keterangan': _keteranganController.text,
-        'foto_new': fotoUrl,
-        'user_id': userId,
-        'order_type': 'ambil',
-        'status': 'completed',
-      };
-
       final baseUrl = NetworkConfig.baseUrl;
       final response = await (widget.client ?? http.Client()).post(
-        Uri.parse('$baseUrl/orders'),
+        Uri.parse('$baseUrl/orders/pickup'),
         headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(orderData),
+        body: jsonEncode({
+          'branch_id': branchId,
+          'order_id': _selectedOrderId,
+          'order_number': _orderNumberController.text.trim(),
+          'notes': _keteranganController.text.trim(),
+          'photo_url': fotoUrl,
+        }),
       );
 
-      if (response.statusCode == 201) {
-        final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        await _loadReadyItems();
         if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => FakturPage(orderData: data),
-            ),
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Barang berhasil diambil')),
           );
         }
       } else {
-        throw Exception('Failed to create order: ${response.statusCode}');
+        throw Exception('Gagal proses ambil barang: ${response.body}');
       }
     } catch (e) {
       if (mounted) {
@@ -196,10 +237,11 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Ambil Barang'),
-        backgroundColor: Colors.blue,
+        // follow global AppBarTheme (primary background)
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -239,7 +281,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                     onPressed: _scanQRCode,
                     icon: const Icon(Icons.qr_code_scanner),
                     tooltip: 'Scan QR Code',
-                    color: Colors.blue,
+                    color: cs.primary,
                   ),
                 ],
               ),
@@ -361,6 +403,53 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                 ],
               ),
               const SizedBox(height: 12),
+              // Estimasi Biaya + DP (read-only, dari order service/custom)
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Estimasi Biaya'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _estimasiBiayaController,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('DP'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _dpController,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixText: 'Rp ',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               // Keterangan
               Row(
                 children: [
@@ -415,7 +504,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                         width: 100,
                         height: 100,
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
+                          border: Border.all(color: cs.outlineVariant),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Image.file(_fotoFile!, fit: BoxFit.cover),
@@ -428,18 +517,24 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
               // Submit Button
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
+                child: FilledButton(
                   onPressed: _isLoading ? null : _submitForm,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: cs.onPrimary,
+                          ),
+                        )
+                      : Text(
                           'SIMPAN',
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: AppTypography.section,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -448,67 +543,108 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
               const SizedBox(height: 24),
 
               // Daftar Barang Siap Ambil
-              const Text(
+              Text(
                 'DAFTAR BARANG SIAP AMBIL',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: AppTypography.section,
                   fontWeight: FontWeight.bold,
-                  color: Colors.blue,
+                  color: cs.primary,
                 ),
               ),
               const SizedBox(height: 12),
               if (_isLoadingItems)
                 const Center(child: CircularProgressIndicator())
               else if (_readyItems.isEmpty)
-                const Center(
+                Center(
                   child: Text(
                     'Tidak ada barang siap ambil',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(color: cs.onSurfaceVariant),
                   ),
                 )
               else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _readyItems.length,
-                  itemBuilder: (context, index) {
-                    final item = _readyItems[index];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.inventory, color: Colors.blue),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    '${item['order_number'] ?? ''} - ${item['customer_name'] ?? ''}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                    ),
-                                  ),
+                LayoutBuilder(
+                  builder: (context, c) {
+                    final cs = Theme.of(context).colorScheme;
+final rows = <DataRow>[];
+                    for (var i = 0; i < _readyItems.length; i++) {
+                      final item = _readyItems[i] as Map;
+                      rows.add(
+                        DataRow(
+                          onSelectChanged: (_) {
+                            _applyReadyOrderToForm(
+                              Map<String, dynamic>.from(item),
+                            );
+                          },
+                          color: WidgetStateProperty.resolveWith((s) {
+                            if (s.contains(WidgetState.hovered)) {
+                              return cs.primary.withValues(alpha: 0.06);
+                            }
+                            return i.isOdd
+                                ? cs.surfaceContainerHighest
+                                    .withValues(alpha: 0.45)
+                                : null;
+                          }),
+                          cells: [
+                            DataCell(
+                              Text(
+                                '${item['order_number'] ?? '—'}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
                                 ),
-                              ],
+                              ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Item: ${item['nama_item'] ?? ''}',
-                              style: const TextStyle(fontSize: 12),
+                            DataCell(Text('${item['customer_name'] ?? '—'}')),
+                            DataCell(Text('${item['nama_item'] ?? '—'}')),
+                            DataCell(
+                              Text('${item['berat'] ?? '—'} gr'),
                             ),
-                            Text(
-                              'Berat: ${item['berat'] ?? ''} gr',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            Text(
-                              'No. HP: ${item['customer_phone'] ?? ''}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
+                            DataCell(Text('${item['customer_phone'] ?? '—'}')),
                           ],
+                        ),
+                      );
+                    }
+                    final tableH = math.max(
+                      200.0,
+                      48 + _readyItems.length * 52.0,
+                    );
+                    return SizedBox(
+                      height: tableH,
+                      child: Material(
+                        elevation: 0,
+                        color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: cs.outlineVariant.withValues(alpha: 0.45),
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Scrollbar(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(minWidth: c.maxWidth),
+                              child: DataTable(
+                                headingRowColor: WidgetStateProperty.all(
+                                  cs.surfaceContainerHigh,
+                                ),
+dataRowMinHeight: 44,
+                                dataRowMaxHeight: 56,
+                                columnSpacing: 12,
+                                horizontalMargin: 10,
+                                showCheckboxColumn: false,
+                                dividerThickness: 0.5,
+                                columns: [
+                                  DataColumn(label: dataTableColumnLabel('No. Order')),
+                                  DataColumn(label: dataTableColumnLabel('Pelanggan')),
+                                  DataColumn(label: dataTableColumnLabel('Item')),
+                                  DataColumn(label: dataTableColumnLabel('Berat')),
+                                  DataColumn(label: dataTableColumnLabel('No. HP')),
+                                ],
+                                rows: rows,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     );

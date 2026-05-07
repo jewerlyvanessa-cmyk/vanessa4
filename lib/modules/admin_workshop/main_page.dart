@@ -1,13 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/state/user_state.dart';
+import '../../providers/user_state_provider.dart';
 import '../../providers/websocket_provider.dart';
-
-final userStateProvider = StateNotifierProvider<UserStateNotifier, UserState>((
-  ref,
-) {
-  return UserStateNotifier();
-});
 
 class AdminWorkshopMainPage extends ConsumerWidget {
   const AdminWorkshopMainPage({super.key});

@@ -2,14 +2,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
-import 'package:vanessa3/main.dart'; // Import for userStateProvider
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
+import 'package:vanessa3/core/state/user_state.dart';
 
 /// Tanggal kalender lokal perangkat (sama dengan filter "hari ini" di backend WIB).
 String _localCalendarDateKey() =>
     DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+/// CS: order hari ini hanya yang dibuat user itu. Role lain: semua order cabang tersebut.
+bool _orderTodayOwnUserOnlyScope(UserState s) {
+  return s.role.trim().toLowerCase() == 'cs';
+}
+
+String _orderTodayScopeCacheSegment(UserState s) {
+  if (_orderTodayOwnUserOnlyScope(s) && s.userId != null) {
+    return 'own_${s.userId}';
+  }
+  return 'branch';
+}
+
+/// Cabang aktif dari [UserState.branch] — tidak ada fallback ke cabang lain.
+int? activeBranchIdFromUserState(UserState s) {
+  final v = int.tryParse(s.branch.trim());
+  if (v == null || v <= 0) return null;
+  return v;
+}
 
 // Model untuk Order Today
 class OrderTodayStats {
@@ -19,6 +39,9 @@ class OrderTodayStats {
   final Map<String, int> ordersByType;
   final Map<String, int> ordersByStatus;
   final double totalRevenue;
+  final Map<String, double> revenueByTypeCompleted;
+  final double revenueJualCompleted;
+  final double expenseBuybackCompleted;
   final DateTime date;
 
   OrderTodayStats({
@@ -28,10 +51,23 @@ class OrderTodayStats {
     required this.ordersByType,
     required this.ordersByStatus,
     required this.totalRevenue,
+    required this.revenueByTypeCompleted,
+    required this.revenueJualCompleted,
+    required this.expenseBuybackCompleted,
     required this.date,
   });
 
   factory OrderTodayStats.fromJson(Map<String, dynamic> json) {
+    final rbt = json['revenue_by_type_completed'];
+    final revenueMap = <String, double>{};
+    if (rbt is Map) {
+      for (final e in rbt.entries) {
+        final k = e.key.toString();
+        final v = e.value;
+        final d = v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
+        revenueMap[k] = d;
+      }
+    }
     return OrderTodayStats(
       totalOrders: json['total_orders'] ?? 0,
       completedOrders: json['completed_orders'] ?? 0,
@@ -39,6 +75,9 @@ class OrderTodayStats {
       ordersByType: Map<String, int>.from(json['orders_by_type'] ?? {}),
       ordersByStatus: Map<String, int>.from(json['orders_by_status'] ?? {}),
       totalRevenue: (json['total_revenue'] ?? 0).toDouble(),
+      revenueByTypeCompleted: revenueMap,
+      revenueJualCompleted: (json['revenue_jual_completed'] ?? 0).toDouble(),
+      expenseBuybackCompleted: (json['expense_buyback_completed'] ?? 0).toDouble(),
       date: DateTime.parse(json['date'] ?? DateTime.now().toIso8601String()),
     );
   }
@@ -57,6 +96,7 @@ class OrderTodayStatsNotifier
   final Ref _ref;
   int? _lastUserId;
   String? _lastBranch;
+  String _lastRole = '';
 
   OrderTodayStatsNotifier(this._ref) : super(const AsyncValue.loading()) {
     // Check if user is already logged in and load data
@@ -75,9 +115,12 @@ class OrderTodayStatsNotifier
   // Method untuk mendengarkan perubahan user state
   void listenToUserStateChanges() {
     final userState = _ref.read(userStateProvider);
-    if (_lastUserId != userState.userId || _lastBranch != userState.branch) {
+    if (_lastUserId != userState.userId ||
+        _lastBranch != userState.branch ||
+        _lastRole != userState.role) {
       _lastUserId = userState.userId;
       _lastBranch = userState.branch;
+      _lastRole = userState.role;
       _checkAndFetch();
     }
   }
@@ -88,12 +131,22 @@ class OrderTodayStatsNotifier
     try {
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
-      final branchId = int.tryParse(userState.branch) ?? 1;
+      final branchId = activeBranchIdFromUserState(userState);
+      if (branchId == null) {
+        state = AsyncValue.error(
+          Exception(
+            'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
+          ),
+          StackTrace.current,
+        );
+        return;
+      }
       final dateKey = _localCalendarDateKey();
+      final scopeSeg = _orderTodayScopeCacheSegment(userState);
 
-      final cacheKey = 'orderTodayStats/v1'
+      final cacheKey = 'orderTodayStats/v2'
           '?branch_id=$branchId'
-          '&user_id=${userId ?? ''}'
+          '&scope=$scopeSeg'
           '&date=$dateKey';
 
       final networkState = _ref.read(networkStatusProvider);
@@ -115,8 +168,7 @@ class OrderTodayStatsNotifier
         'date': dateKey, // YYYY-MM-DD format
       };
 
-      // CS page requirement: show only today's orders created by current user
-      if (userId != null) {
+      if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
         queryParams['user_id'] = userId.toString();
       }
 
@@ -146,18 +198,20 @@ class OrderTodayStatsNotifier
       // Fallback to cache if request failed.
       try {
         final userState = _ref.read(userStateProvider);
-        final userId = userState.userId;
-        final branchId = int.tryParse(userState.branch) ?? 1;
-        final dateKey = _localCalendarDateKey();
-        final cacheKey = 'orderTodayStats/v1'
-            '?branch_id=$branchId'
-            '&user_id=${userId ?? ''}'
-            '&date=$dateKey';
-        final cached =
-            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
-        if (cached != null) {
-          state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
-          return;
+        final branchId = activeBranchIdFromUserState(userState);
+        if (branchId != null) {
+          final dateKey = _localCalendarDateKey();
+          final scopeSeg = _orderTodayScopeCacheSegment(userState);
+          final cacheKey = 'orderTodayStats/v2'
+              '?branch_id=$branchId'
+              '&scope=$scopeSeg'
+              '&date=$dateKey';
+          final cached =
+              await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+          if (cached != null) {
+            state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
+            return;
+          }
         }
       } catch (_) {
         // ignore cache errors
@@ -191,6 +245,7 @@ class TodayOrdersNotifier
   final Ref _ref;
   int? _lastUserId;
   String? _lastBranch;
+  String _lastRole = '';
 
   TodayOrdersNotifier(this._ref) : super(const AsyncValue.loading()) {
     // Check if user is already logged in and load data
@@ -209,9 +264,12 @@ class TodayOrdersNotifier
   // Method untuk mendengarkan perubahan user state
   void listenToUserStateChanges() {
     final userState = _ref.read(userStateProvider);
-    if (_lastUserId != userState.userId || _lastBranch != userState.branch) {
+    if (_lastUserId != userState.userId ||
+        _lastBranch != userState.branch ||
+        _lastRole != userState.role) {
       _lastUserId = userState.userId;
       _lastBranch = userState.branch;
+      _lastRole = userState.role;
       _checkAndFetch();
     }
   }
@@ -222,12 +280,22 @@ class TodayOrdersNotifier
     try {
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
-      final branchId = int.tryParse(userState.branch) ?? 1;
+      final branchId = activeBranchIdFromUserState(userState);
+      if (branchId == null) {
+        state = AsyncValue.error(
+          Exception(
+            'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
+          ),
+          StackTrace.current,
+        );
+        return;
+      }
       final todayKey = _localCalendarDateKey();
+      final scopeSeg = _orderTodayScopeCacheSegment(userState);
 
-      // v4: /api/orders/daily (proxy-friendly) + date di cache key.
+      // v5: scope branch vs own (CS) — backend juga memaksa dari JWT.
       final cacheKey =
-          'todayOrders/v4?branch_id=$branchId&user_id=${userId ?? ''}&date=$todayKey';
+          'todayOrders/v5?branch_id=$branchId&scope=$scopeSeg&date=$todayKey';
 
       final networkState = _ref.read(networkStatusProvider);
       if (!networkState.isOnline || !networkState.isBackendReachable) {
@@ -251,8 +319,7 @@ class TodayOrdersNotifier
         'date': todayKey, // ensure server uses the same "today" boundary
       };
 
-      // CS page requirement: show only today's orders created by current user
-      if (userId != null) {
+      if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
         queryParams['user_id'] = userId.toString();
       }
 
@@ -321,19 +388,21 @@ class TodayOrdersNotifier
       // Fallback to cache if request failed.
       try {
         final userState = _ref.read(userStateProvider);
-        final userId = userState.userId;
-        final branchId = int.tryParse(userState.branch) ?? 1;
-        final fallbackDate = _localCalendarDateKey();
-        final cacheKey =
-            'todayOrders/v4?branch_id=$branchId&user_id=${userId ?? ''}&date=$fallbackDate';
-        final cached =
-            await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
-        if (cached != null) {
-          final list = (cached.value)
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList();
-          state = AsyncValue.data(list);
-          return;
+        final branchId = activeBranchIdFromUserState(userState);
+        if (branchId != null) {
+          final fallbackDate = _localCalendarDateKey();
+          final scopeSeg = _orderTodayScopeCacheSegment(userState);
+          final cacheKey =
+              'todayOrders/v5?branch_id=$branchId&scope=$scopeSeg&date=$fallbackDate';
+          final cached =
+              await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
+          if (cached != null) {
+            final list = (cached.value)
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList();
+            state = AsyncValue.data(list);
+            return;
+          }
         }
       } catch (_) {
         // ignore cache errors

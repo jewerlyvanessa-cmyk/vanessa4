@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class MaterialUsagePage extends ConsumerStatefulWidget {
   const MaterialUsagePage({super.key});
@@ -288,50 +291,284 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
                                     )
                                   : RefreshIndicator(
                                       onRefresh: _loadData,
-                                      child: ListView.builder(
-                                        padding: const EdgeInsets.all(16.0),
-                                        itemCount: _workQueue.length,
-                                        itemBuilder: (context, index) {
-                                          final work = _workQueue[index];
-                                          return Card(
-                                            margin: const EdgeInsets.only(
-                                              bottom: 8,
+                                      child: ListView(
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(),
+                                        padding: const EdgeInsets.all(12),
+                                        children: [
+                                          SizedBox(
+                                            height: math.max(
+                                              360.0,
+                                              MediaQuery.sizeOf(context)
+                                                      .height *
+                                                  0.45,
                                             ),
-                                            child: ListTile(
-                                              leading: CircleAvatar(
-                                                backgroundColor:
-                                                    _getStatusColor(
-                                                      work['status'],
+                                            child: LayoutBuilder(
+                                              builder: (context, c) {
+                                                final narrow = c.maxWidth < 520;
+                                                final cs = Theme.of(context)
+                                                    .colorScheme;
+final w = c.maxWidth;
+                                                final box = narrow
+                                                    ? BoxConstraints.tightFor(
+                                                        width: w,
+                                                      )
+                                                    : (w >= 880
+                                                        ? BoxConstraints
+                                                            .tightFor(
+                                                            width: 880,
+                                                          )
+                                                        : const BoxConstraints(
+                                                            minWidth: 880,
+                                                          ));
+
+                                                final rows = <DataRow>[];
+                                                for (var i = 0;
+                                                    i < _workQueue.length;
+                                                    i++) {
+                                                  final work = _workQueue[i];
+                                                  final st = work['status']
+                                                          ?.toString() ??
+                                                      '';
+                                                  final stC =
+                                                      _getStatusColor(st);
+                                                  final oid = (work['order_id'] ??
+                                                          '—')
+                                                      .toString();
+                                                  final item = (work['item_name'] ??
+                                                          'N/A')
+                                                      .toString();
+                                                  final itype = (work['item_type'] ??
+                                                          '')
+                                                      .toString();
+                                                  final cust = (work['customer_name'] ??
+                                                          'N/A')
+                                                      .toString();
+                                                  final stT =
+                                                      _getStatusText(st);
+                                                  rows.add(
+                                                    DataRow(
+                                                      color: WidgetStateProperty
+                                                          .resolveWith((s) {
+                                                        if (s.contains(
+                                                          WidgetState.hovered,
+                                                        )) {
+                                                          return cs.primary
+                                                              .withValues(
+                                                            alpha: 0.06,
+                                                          );
+                                                        }
+                                                        return i.isOdd
+                                                            ? cs.surfaceContainerHighest
+                                                                .withValues(
+                                                                alpha: 0.45,
+                                                              )
+                                                            : null;
+                                                      }),
+                                                      cells: narrow
+                                                          ? [
+                                                              DataCell(
+                                                                Row(
+                                                                  children: [
+                                                                    CircleAvatar(
+                                                                      radius:
+                                                                          16,
+                                                                      backgroundColor:
+                                                                          stC,
+                                                                      child: Icon(
+                                                                        _getStatusIcon(
+                                                                          st,
+                                                                        ),
+                                                                        color: Colors
+                                                                            .white,
+                                                                        size:
+                                                                            16,
+                                                                      ),
+                                                                    ),
+                                                                    const SizedBox(
+                                                                      width: 8,
+                                                                    ),
+                                                                    Expanded(
+                                                                      child:
+                                                                          Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisAlignment:
+                                                                            MainAxisAlignment.center,
+                                                                        children: [
+                                                                          Text(
+                                                                            '#$oid · $item',
+                                                                            maxLines:
+                                                                                2,
+                                                                            overflow:
+                                                                                TextOverflow.ellipsis,
+                                                                            style:
+                                                                                const TextStyle(
+                                                                              fontWeight: FontWeight.w600,
+                                                                              fontSize: 12,
+                                                                            ),
+                                                                          ),
+                                                                          Text(
+                                                                            '$cust · $stT',
+                                                                            maxLines:
+                                                                                1,
+                                                                            overflow:
+                                                                                TextOverflow.ellipsis,
+                                                                            style:
+                                                                                TextStyle(
+                                                                              fontSize: 11,
+                                                                              color: stC,
+                                                                            ),
+                                                                          ),
+                                                                        ],
+                                                                      ),
+                                                                    ),
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                            ]
+                                                          : [
+                                                              DataCell(
+                                                                Text('#$oid'),
+                                                              ),
+                                                              DataCell(
+                                                                Text(
+                                                                  '$item ($itype)',
+                                                                  maxLines: 2,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ),
+                                                              DataCell(
+                                                                Text(
+                                                                  cust,
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis,
+                                                                ),
+                                                              ),
+                                                              DataCell(
+                                                                Text(
+                                                                  stT,
+                                                                  style:
+                                                                      TextStyle(
+                                                                    color: stC,
+                                                                    fontWeight:
+                                                                        FontWeight
+                                                                            .w600,
+                                                                    fontSize:
+                                                                        12,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ],
                                                     ),
-                                                child: Icon(
-                                                  _getStatusIcon(
-                                                    work['status'],
+                                                  );
+                                                }
+
+                                                return Material(
+                                                  elevation: 0,
+                                                  color: cs.surfaceContainerLow
+                                                      .withValues(alpha: 0.65),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                    side: BorderSide(
+                                                      color: cs.outlineVariant
+                                                          .withValues(
+                                                        alpha: 0.45,
+                                                      ),
+                                                    ),
                                                   ),
-                                                  color: Colors.white,
-                                                  size: 20,
-                                                ),
-                                              ),
-                                              title: Text(
-                                                'Order #${work['order_id']}',
-                                              ),
-                                              subtitle: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    '${work['item_name']} (${work['item_type']})',
+                                                  clipBehavior: Clip.antiAlias,
+                                                  child: Scrollbar(
+                                                    child:
+                                                        SingleChildScrollView(
+                                                      scrollDirection:
+                                                          Axis.vertical,
+                                                      child:
+                                                          SingleChildScrollView(
+                                                        scrollDirection:
+                                                            Axis.horizontal,
+                                                        child: Align(
+                                                          alignment:
+                                                              Alignment
+                                                                  .topLeft,
+                                                          child:
+                                                              ConstrainedBox(
+                                                            constraints: box,
+                                                            child: DataTable(
+                                                              headingRowColor:
+                                                                  WidgetStateProperty
+                                                                      .all(
+                                                                cs.surfaceContainerHigh,
+                                                              ),
+                                                              dataRowMinHeight:
+                                                                  narrow
+                                                                      ? 52
+                                                                      : 44,
+                                                              dataRowMaxHeight:
+                                                                  narrow
+                                                                      ? 64
+                                                                      : 52,
+                                                              columnSpacing:
+                                                                  narrow
+                                                                      ? 6
+                                                                      : 12,
+                                                              horizontalMargin:
+                                                                  narrow
+                                                                      ? 6
+                                                                      : 10,
+                                                              showCheckboxColumn:
+                                                                  false,
+                                                              dividerThickness:
+                                                                  0.5,
+                                                              columns: narrow
+                                                                  ? [
+                                                                      DataColumn(
+                                                                        label: dataTableColumnLabel(
+                                                                          'Pekerjaan',
+                                                                        ),
+                                                                      ),
+                                                                    ]
+                                                                  : [
+                                                                      DataColumn(
+                                                                        label: dataTableColumnLabel(
+                                                                          'Order',
+                                                                        ),
+                                                                      ),
+                                                                      DataColumn(
+                                                                        label: dataTableColumnLabel(
+                                                                          'Item',
+                                                                        ),
+                                                                      ),
+                                                                      DataColumn(
+                                                                        label: dataTableColumnLabel(
+                                                                          'Pelanggan',
+                                                                        ),
+                                                                      ),
+                                                                      DataColumn(
+                                                                        label: dataTableColumnLabel(
+                                                                          'Status',
+                                                                        ),
+                                                                      ),
+                                                                    ],
+                                                              rows: rows,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
                                                   ),
-                                                  Text(
-                                                    'Pelanggan: ${work['customer_name']}',
-                                                  ),
-                                                  Text(
-                                                    'Status: ${_getStatusText(work['status'])}',
-                                                  ),
-                                                ],
-                                              ),
+                                                );
+                                              },
                                             ),
-                                          );
-                                        },
+                                          ),
+                                        ],
                                       ),
                                     ),
 
@@ -354,72 +591,207 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
                                     )
                                   : RefreshIndicator(
                                       onRefresh: _loadData,
-                                      child: ListView.builder(
-                                        padding: const EdgeInsets.all(16.0),
-                                        itemCount: _materialStock.length,
-                                        itemBuilder: (context, index) {
-                                          final material =
-                                              _materialStock[index];
-                                          return Card(
-                                            margin: const EdgeInsets.only(
-                                              bottom: 8,
+                                      child: ListView(
+                                        physics:
+                                            const AlwaysScrollableScrollPhysics(),
+                                        padding: const EdgeInsets.all(12),
+                                        children: [
+                                          SizedBox(
+                                            height: math.max(
+                                              360.0,
+                                              MediaQuery.sizeOf(context)
+                                                      .height *
+                                                  0.45,
                                             ),
-                                            child: ListTile(
-                                              leading: CircleAvatar(
-                                                backgroundColor: Colors.blue,
-                                                child: const Icon(
-                                                  Icons.inventory,
-                                                  color: Colors.white,
-                                                  size: 20,
-                                                ),
-                                              ),
-                                              title: Text(
-                                                material['item_name'],
-                                              ),
-                                              subtitle: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    'Tipe: ${material['item_type']}',
-                                                  ),
-                                                  Text(
-                                                    'Stok: ${material['quantity']} ${material['unit'] ?? 'pcs'}',
-                                                  ),
-                                                  Text(
-                                                    'Material: ${material['material_type'] ?? 'N/A'}',
-                                                  ),
-                                                ],
-                                              ),
-                                              trailing: Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4,
+                                            child: LayoutBuilder(
+                                              builder: (context, c) {
+                                                final cs = Theme.of(context)
+                                                    .colorScheme;
+final rows = <DataRow>[];
+                                                for (var i = 0;
+                                                    i < _materialStock.length;
+                                                    i++) {
+                                                  final m = _materialStock[i];
+                                                  final q = (m['quantity'] is num)
+                                                      ? (m['quantity'] as num)
+                                                      : num.tryParse(m['quantity']
+                                                              ?.toString() ??
+                                                          '') ??
+                                                          0;
+                                                  final hi = q > 10;
+                                                  rows.add(
+                                                    DataRow(
+                                                      color: WidgetStateProperty
+                                                          .resolveWith((s) {
+                                                        if (s.contains(
+                                                          WidgetState.hovered,
+                                                        )) {
+                                                          return cs.primary
+                                                              .withValues(
+                                                            alpha: 0.06,
+                                                          );
+                                                        }
+                                                        return i.isOdd
+                                                            ? cs.surfaceContainerHighest
+                                                                .withValues(
+                                                                alpha: 0.45,
+                                                              )
+                                                            : null;
+                                                      }),
+                                                      cells: [
+                                                        DataCell(
+                                                          Text(
+                                                            m['item_name']
+                                                                    ?.toString() ??
+                                                                '—',
+                                                            style: const TextStyle(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        DataCell(
+                                                          Text(
+                                                            m['item_type']
+                                                                    ?.toString() ??
+                                                                '—',
+                                                          ),
+                                                        ),
+                                                        DataCell(
+                                                          Text(
+                                                            '$q ${m['unit'] ?? 'pcs'}',
+                                                          ),
+                                                        ),
+                                                        DataCell(
+                                                          Text(
+                                                            m['material_type']
+                                                                    ?.toString() ??
+                                                                '—',
+                                                            style: TextStyle(
+                                                              fontSize: 12,
+                                                              color: cs
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        DataCell(
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
+                                                            ),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: hi
+                                                                  ? Colors.green
+                                                                  : Colors
+                                                                      .orange,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                10,
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              hi
+                                                                  ? 'Tersedia'
+                                                                  : 'Terbatas',
+                                                              style:
+                                                                  const TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ),
-                                                decoration: BoxDecoration(
-                                                  color:
-                                                      (material['quantity']
-                                                              as num) >
-                                                          10
-                                                      ? Colors.green
-                                                      : Colors.orange,
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  material['quantity'] > 10
-                                                      ? 'Tersedia'
-                                                      : 'Terbatas',
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 12,
+                                                  );
+                                                }
+                                                return Material(
+                                                  elevation: 0,
+                                                  color: cs.surfaceContainerLow
+                                                      .withValues(alpha: 0.65),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                      12,
+                                                    ),
+                                                    side: BorderSide(
+                                                      color: cs.outlineVariant
+                                                          .withValues(
+                                                        alpha: 0.45,
+                                                      ),
+                                                    ),
                                                   ),
-                                                ),
-                                              ),
+                                                  clipBehavior: Clip.antiAlias,
+                                                  child: Scrollbar(
+                                                    child:
+                                                        SingleChildScrollView(
+                                                      scrollDirection:
+                                                          Axis.horizontal,
+                                                      child: ConstrainedBox(
+                                                        constraints:
+                                                            BoxConstraints(
+                                                          minWidth: c.maxWidth,
+                                                        ),
+                                                        child: DataTable(
+                                                          headingRowColor:
+                                                              WidgetStateProperty
+                                                                  .all(
+                                                            cs.surfaceContainerHigh,
+                                                          ),
+dataRowMinHeight: 44,
+                                                          dataRowMaxHeight: 52,
+                                                          columnSpacing: 12,
+                                                          horizontalMargin: 10,
+                                                          showCheckboxColumn:
+                                                              false,
+                                                          dividerThickness: 0.5,
+                                                          columns: [
+                                                            DataColumn(
+                                                              label: dataTableColumnLabel(
+                                                                'Item',
+                                                              ),
+                                                            ),
+                                                            DataColumn(
+                                                              label: dataTableColumnLabel(
+                                                                'Tipe',
+                                                              ),
+                                                            ),
+                                                            DataColumn(
+                                                              label: dataTableColumnLabel(
+                                                                'Stok',
+                                                              ),
+                                                            ),
+                                                            DataColumn(
+                                                              label: dataTableColumnLabel(
+                                                                'Material',
+                                                              ),
+                                                            ),
+                                                            DataColumn(
+                                                              label: dataTableColumnLabel(
+                                                                'Level',
+                                                              ),
+                                                            ),
+                                                          ],
+                                                          rows: rows,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
                                             ),
-                                          );
-                                        },
+                                          ),
+                                        ],
                                       ),
                                     ),
                             ],
@@ -436,10 +808,17 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'pending':
-        return 'Menunggu';
-      case 'in_progress':
-        return 'Dalam Proses';
+      case 'in_workshop':
+        return 'Diterima Workshop';
+      case 'repairing':
+        return 'Dikerjakan';
+      case 'polishing':
+        return 'Poles/Finishing';
+      case 'custom_work':
+        return 'Custom Work';
+      case 'done_workshop':
+        return 'Selesai Tukang';
+      case 'ready_for_pickup':
       case 'completed':
         return 'Selesai';
       case 'cancelled':
@@ -451,10 +830,15 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'pending':
-        return Colors.orange;
-      case 'in_progress':
+      case 'in_workshop':
+        return Colors.blueGrey;
+      case 'repairing':
+      case 'polishing':
+      case 'custom_work':
         return Colors.blue;
+      case 'done_workshop':
+        return Colors.teal;
+      case 'ready_for_pickup':
       case 'completed':
         return Colors.green;
       case 'cancelled':
@@ -466,10 +850,15 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
 
   IconData _getStatusIcon(String status) {
     switch (status) {
-      case 'pending':
-        return Icons.schedule;
-      case 'in_progress':
+      case 'in_workshop':
+        return Icons.inventory_2_outlined;
+      case 'repairing':
+      case 'polishing':
+      case 'custom_work':
         return Icons.engineering;
+      case 'done_workshop':
+        return Icons.local_shipping_outlined;
+      case 'ready_for_pickup':
       case 'completed':
         return Icons.check_circle;
       case 'cancelled':

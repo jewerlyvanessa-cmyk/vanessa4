@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
-import 'package:vanessa3/main.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 
 class UpdateProgressPage extends ConsumerStatefulWidget {
   const UpdateProgressPage({super.key});
@@ -88,12 +91,26 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
               initialValue: statusController.text,
               decoration: const InputDecoration(labelText: 'Status'),
               items: const [
-                DropdownMenuItem(value: 'pending', child: Text('Menunggu')),
                 DropdownMenuItem(
-                  value: 'in_progress',
-                  child: Text('Dalam Proses'),
+                  value: 'in_workshop',
+                  child: Text('Diterima Workshop'),
                 ),
-                DropdownMenuItem(value: 'completed', child: Text('Selesai')),
+                DropdownMenuItem(
+                  value: 'repairing',
+                  child: Text('Dikerjakan'),
+                ),
+                DropdownMenuItem(
+                  value: 'polishing',
+                  child: Text('Poles/Finishing'),
+                ),
+                DropdownMenuItem(
+                  value: 'custom_work',
+                  child: Text('Custom Work'),
+                ),
+                DropdownMenuItem(
+                  value: 'done_workshop',
+                  child: Text('Selesai Tukang (Siap Kirim)'),
+                ),
                 DropdownMenuItem(value: 'cancelled', child: Text('Dibatalkan')),
               ],
               onChanged: (value) {
@@ -178,47 +195,253 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
                   )
                 : RefreshIndicator(
                     onRefresh: _loadWorkQueue,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      itemCount: _workQueue.length,
-                      itemBuilder: (context, index) {
-                        final work = _workQueue[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: _getStatusColor(work['status']),
-                              child: Icon(
-                                _getStatusIcon(work['status']),
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
-                            title: Text('Order #${work['order_id']}'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${work['item_name']} (${work['item_type']})',
-                                ),
-                                Text('Pelanggan: ${work['customer_name']}'),
-                                Text(
-                                  'Status: ${_getStatusText(work['status'])}',
-                                ),
-                                if (work['notes'] != null &&
-                                    work['notes'].isNotEmpty)
-                                  Text('Catatan: ${work['notes']}'),
-                              ],
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.edit),
-                              onPressed: () => _showUpdateDialog(work),
-                              tooltip: 'Update Progress',
-                            ),
-                            onTap: () => _showUpdateDialog(work),
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      children: [
+                        SizedBox(
+                          height: math.max(
+                            420.0,
+                            MediaQuery.sizeOf(context).height * 0.55,
                           ),
-                        );
-                      },
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final narrow = constraints.maxWidth < 560;
+                              final cs = Theme.of(context).colorScheme;
+const desktopW = 920.0;
+                              final w = constraints.maxWidth;
+                              final BoxConstraints box;
+                              if (narrow) {
+                                box = BoxConstraints.tightFor(width: w);
+                              } else if (w >= desktopW) {
+                                box = BoxConstraints.tightFor(width: desktopW);
+                              } else {
+                                box = const BoxConstraints(minWidth: desktopW);
+                              }
+
+                              final rows = <DataRow>[];
+                              for (var i = 0; i < _workQueue.length; i++) {
+                                final work = _workQueue[i];
+                                final st = work['status']?.toString() ?? '';
+                                final stColor = _getStatusColor(st);
+                                final oid =
+                                    (work['order_id'] ?? '—').toString();
+                                final item =
+                                    (work['item_name'] ?? 'N/A').toString();
+                                final itype =
+                                    (work['item_type'] ?? '').toString();
+                                final cust =
+                                    (work['customer_name'] ?? 'N/A')
+                                        .toString();
+                                final stText = _getStatusText(st);
+                                final notes = (work['notes'] ?? '')
+                                    .toString()
+                                    .trim();
+
+                                final editCell = DataCell(
+                                  IconButton(
+                                    tooltip: 'Update progress',
+                                    icon: const Icon(Icons.edit),
+                                    onPressed: () =>
+                                        _showUpdateDialog(work),
+                                  ),
+                                );
+
+                                rows.add(
+                                  DataRow(
+                                    color: WidgetStateProperty.resolveWith(
+                                      (states) {
+                                        if (states.contains(
+                                          WidgetState.hovered,
+                                        )) {
+                                          return cs.primary
+                                              .withValues(alpha: 0.06);
+                                        }
+                                        return i.isOdd
+                                            ? cs.surfaceContainerHighest
+                                                .withValues(alpha: 0.45)
+                                            : null;
+                                      },
+                                    ),
+                                    cells: narrow
+                                        ? [
+                                            DataCell(
+                                              Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  CircleAvatar(
+                                                    radius: 18,
+                                                    backgroundColor: stColor,
+                                                    child: Icon(
+                                                      _getStatusIcon(st),
+                                                      color: Colors.white,
+                                                      size: 18,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Text(
+                                                          '#$oid · $item',
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style:
+                                                              const TextStyle(
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w600,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                        Text(
+                                                          '$cust · $stText',
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: TextStyle(
+                                                            fontSize: 11,
+                                                            color: stColor,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            editCell,
+                                          ]
+                                        : [
+                                            DataCell(Text('#$oid')),
+                                            DataCell(
+                                              Text(
+                                                '$item ($itype)',
+                                                maxLines: 2,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            DataCell(
+                                              Text(
+                                                cust,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            DataCell(
+                                              Text(
+                                                stText,
+                                                style: TextStyle(
+                                                  color: stColor,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                            DataCell(
+                                              Text(
+                                                notes.isEmpty ? '—' : notes,
+                                                maxLines: 1,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: cs.onSurfaceVariant,
+                                                ),
+                                              ),
+                                            ),
+                                            editCell,
+                                          ],
+                                  ),
+                                );
+                              }
+
+                              return Material(
+                                elevation: 0,
+                                color: cs.surfaceContainerLow
+                                    .withValues(alpha: 0.65),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(
+                                    color: cs.outlineVariant
+                                        .withValues(alpha: 0.45),
+                                  ),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Scrollbar(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.vertical,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Align(
+                                        alignment: Alignment.topLeft,
+                                        child: ConstrainedBox(
+                                          constraints: box,
+                                          child: DataTable(
+                                            headingRowColor:
+                                                WidgetStateProperty.all(
+                                              cs.surfaceContainerHigh,
+                                            ),
+dataRowMinHeight: narrow ? 56 : 48,
+                                            dataRowMaxHeight:
+                                                narrow ? 72 : 56,
+                                            columnSpacing: narrow ? 6 : 10,
+                                            horizontalMargin:
+                                                narrow ? 6 : 10,
+                                            showCheckboxColumn: false,
+                                            dividerThickness: 0.5,
+                                            columns: narrow
+                                                ? [
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Pekerjaan'),
+                                                    ),
+                                                    const DataColumn(
+                                                      label: SizedBox(width: 44),
+                                                    ),
+                                                  ]
+                                                : [
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Order'),
+                                                    ),
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Item'),
+                                                    ),
+                                                    DataColumn(
+                                                      label:
+                                                          dataTableColumnLabel('Pelanggan'),
+                                                    ),
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Status'),
+                                                    ),
+                                                    DataColumn(
+                                                      label: dataTableColumnLabel('Catatan'),
+                                                    ),
+                                                    const DataColumn(
+                                                      label: SizedBox(width: 48),
+                                                    ),
+                                                  ],
+                                            rows: rows,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
           ),
@@ -229,10 +452,17 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'pending':
-        return 'Menunggu';
-      case 'in_progress':
-        return 'Dalam Proses';
+      case 'in_workshop':
+        return 'Diterima Workshop';
+      case 'repairing':
+        return 'Dikerjakan';
+      case 'polishing':
+        return 'Poles/Finishing';
+      case 'custom_work':
+        return 'Custom Work';
+      case 'done_workshop':
+        return 'Selesai Tukang';
+      case 'ready_for_pickup':
       case 'completed':
         return 'Selesai';
       case 'cancelled':
@@ -244,10 +474,15 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'pending':
-        return Colors.orange;
-      case 'in_progress':
+      case 'in_workshop':
+        return Colors.blueGrey;
+      case 'repairing':
+      case 'polishing':
+      case 'custom_work':
         return Colors.blue;
+      case 'done_workshop':
+        return Colors.teal;
+      case 'ready_for_pickup':
       case 'completed':
         return Colors.green;
       case 'cancelled':
@@ -259,10 +494,15 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
 
   IconData _getStatusIcon(String status) {
     switch (status) {
-      case 'pending':
-        return Icons.schedule;
-      case 'in_progress':
+      case 'in_workshop':
+        return Icons.inventory_2_outlined;
+      case 'repairing':
+      case 'polishing':
+      case 'custom_work':
         return Icons.engineering;
+      case 'done_workshop':
+        return Icons.local_shipping_outlined;
+      case 'ready_for_pickup':
       case 'completed':
         return Icons.check_circle;
       case 'cancelled':
