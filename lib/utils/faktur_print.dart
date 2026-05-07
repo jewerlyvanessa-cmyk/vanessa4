@@ -356,7 +356,20 @@ Future<void> printFakturOrder(
     }
 
     final transactionLabel = transactionLabelByOrderType(orderType);
-    final primaryPhotoUrl = photoUrl(orderItemSource['photo_produk']);
+    final primaryPhotoUrl = (() {
+      for (final raw in [
+        orderItemSource['photo_produk'],
+        orderItemSource['photo_url'],
+        orderItemSource['item_photo_produk'],
+        orderItemSource['item_photo_url'],
+        primaryItem['photo_produk'],
+        primaryItem['photo_url'],
+      ]) {
+        final u = photoUrl(raw);
+        if (u != null && u.isNotEmpty) return u;
+      }
+      return null;
+    })();
     final branchLogoUrlFast = branchLogoUrlFromOrderData(orderData);
     final fetchedBytes = await Future.wait<Uint8List?>([
       (() async {

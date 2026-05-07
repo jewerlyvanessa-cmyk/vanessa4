@@ -93,6 +93,34 @@ async function getItemsPhotoColumn(client) {
   return _cachedItemsPhotoColumn;
 }
 
+let _cachedOrderItemsPhotoColumn = null; // 'photo_produk' | 'photo_url' | null
+async function getOrderItemsPhotoColumn(client) {
+  if (_cachedOrderItemsPhotoColumn !== null) return _cachedOrderItemsPhotoColumn;
+  try {
+    const r = await client.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'order_items'
+          AND column_name IN ('photo_produk', 'photo_url')
+      `,
+      []
+    );
+    const cols = new Set(r.rows.map((x) => x.column_name));
+    if (cols.has('photo_produk')) {
+      _cachedOrderItemsPhotoColumn = 'photo_produk';
+    } else if (cols.has('photo_url')) {
+      _cachedOrderItemsPhotoColumn = 'photo_url';
+    } else {
+      _cachedOrderItemsPhotoColumn = null;
+    }
+  } catch (_) {
+    _cachedOrderItemsPhotoColumn = null;
+  }
+  return _cachedOrderItemsPhotoColumn;
+}
+
 let _cachedPaymentsProofColumnExists = null; // boolean | null (unknown)
 async function paymentsHasProofUrlColumn(client) {
   if (_cachedPaymentsProofColumnExists !== null) return _cachedPaymentsProofColumnExists;
@@ -660,6 +688,10 @@ app.get('/orders', async (req, res) => {
     const { branch_id, status, order_number } = req.query;
     console.log('GET /orders called with query:', req.query);
     const itemsPhotoCol = await getItemsPhotoColumn(db);
+    const orderItemsPhotoCol = await getOrderItemsPhotoColumn(db);
+    const orderItemsPhotoSelect = orderItemsPhotoCol
+      ? `oi.${orderItemsPhotoCol} as oi_photo_produk`
+      : `NULL as oi_photo_produk`;
     const itemsPhotoSelect = itemsPhotoCol
       ? `i.${itemsPhotoCol} as item_photo_produk`
       : `NULL as item_photo_produk`;
@@ -675,7 +707,7 @@ app.get('/orders', async (req, res) => {
         oi.qty,
         oi.harga_per_gram,
         oi.total,
-        oi.photo_produk,
+        ${orderItemsPhotoSelect},
         oi.material,
         oi.purity,
         oi.kategori,
@@ -750,7 +782,7 @@ app.get('/orders', async (req, res) => {
         qty: row.qty,
         harga_per_gram: parseFloat(row.harga_per_gram || 0),
         total: parseFloat(row.total || 0),
-        photo_produk: row.photo_produk || row.item_photo_produk,
+        photo_produk: row.oi_photo_produk || row.item_photo_produk,
         material: row.material || row.item_material,
         purity: row.purity || row.item_purity,
         // Keep explicit fallbacks so clients can decide precedence
