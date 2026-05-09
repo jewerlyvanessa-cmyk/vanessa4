@@ -12,6 +12,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/widgets/pickup_branch_field.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 int? toInt(dynamic value) {
@@ -59,6 +60,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   String _asalMaterial = 'TOKO'; // Material source: BAWA SENDIRI or TOKO
   String _asalTambahan =
       'TOKO'; // Additional material source: BAWA SENDIRI or TOKO
+  /// `null` = sama dengan cabang order (tidak kirim `pickup_branch_id`).
+  int? _pickupBranchId;
 
   @override
   void initState() {
@@ -332,7 +335,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
         ? _notaOrderController.text.trim()
         : 'CUST-${DateTime.now().millisecondsSinceEpoch}';
 
-    final orderData = {
+    final orderData = <String, dynamic>{
       'order_type': 'custom',
       'status': initialCustomStatus,
       'order_number': _notaOrderController.text.isNotEmpty
@@ -371,6 +374,9 @@ class _CustomPageState extends ConsumerState<CustomPage> {
       'customer_phone': _customerPhoneController.text,
       'customer_address': _customerAddressController.text,
     };
+    if (_pickupBranchId != null && _pickupBranchId != branchId) {
+      orderData['pickup_branch_id'] = _pickupBranchId;
+    }
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
@@ -473,6 +479,11 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
     // Listen to user state changes to regenerate order number when branch changes
     ref.listen(userStateProvider, (previous, next) {
+      final branchChanged =
+          previous == null || previous.branch != next.branch;
+      if (branchChanged && mounted) {
+        setState(() => _pickupBranchId = null);
+      }
       if (next.branch.isNotEmpty && next.branches.isNotEmpty) {
         _generateOrderNumber();
       }
@@ -531,6 +542,13 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12.0),
+              PickupBranchField(
+                orderBranchId: userState.branch,
+                branches: userState.branches,
+                value: _pickupBranchId,
+                onChanged: (v) => setState(() => _pickupBranchId = v),
               ),
               const SizedBox(height: 12.0),
               // Order Number

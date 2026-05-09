@@ -39,6 +39,7 @@ Future<void> printOrderTodayReportPdf(
   required DateTime reportDate,
   required String branchLabel,
   required Map<String, int> ordersByType,
+  Map<String, int>? ordersByMode,
   required int totalOrders,
   required int pendingOrders,
   required int completedOrders,
@@ -49,6 +50,8 @@ Future<void> printOrderTodayReportPdf(
 }) async {
   if (!context.mounted) return;
   try {
+    int modeN(String k) => ordersByMode?[k] ?? 0;
+
     final doc = pw.Document();
     final dateLabel = DateFormat('EEEE, dd MMMM yyyy', 'id_ID').format(reportDate);
 
@@ -87,6 +90,14 @@ Future<void> printOrderTodayReportPdf(
           pw.Text('Revenue jual (completed): ${_money(revenueJualCompleted)}'),
           pw.Text('Buyback (keluar) (completed): ${_money(expenseBuybackCompleted)}'),
           pw.Text('Net: ${_money(netRevenue)}'),
+          pw.SizedBox(height: 12),
+          pw.Text(
+            'Order per mode',
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Bullet(text: 'Toko: ${modeN('toko')}'),
+          pw.Bullet(text: 'Online: ${modeN('online')}'),
           pw.SizedBox(height: 12),
           pw.Text(
             'Order per jenis',

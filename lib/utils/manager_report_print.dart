@@ -73,6 +73,8 @@ Future<void> printManagerBranchPerformancePdf(
             pw.TableHelper.fromTextArray(
               headers: const [
                 'Cabang',
+                'Mode toko',
+                'Mode online',
                 'Jual',
                 'Buyback',
                 'Service',
@@ -85,6 +87,8 @@ Future<void> printManagerBranchPerformancePdf(
                 final note = hasErr ? err : '—';
                 return [
                   (r['branch_alias'] ?? r['branch_name'] ?? '-').toString(),
+                  hasErr ? '—' : _intPdf(r['mode_toko']),
+                  hasErr ? '—' : _intPdf(r['mode_online']),
                   hasErr ? '—' : _intPdf(r['jual']),
                   hasErr ? '—' : _intPdf(r['buyback']),
                   hasErr ? '—' : _intPdf(r['service']),

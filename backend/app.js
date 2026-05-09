@@ -51,6 +51,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Request log awal rantai — berlaku untuk semua route yang didaftarkan setelahnya.
+app.use((req, res, next) => {
+  console.log(`HTTP ${req.method} ${req.url}`);
+  next();
+});
+
 module.exports = {
   app,
   port,

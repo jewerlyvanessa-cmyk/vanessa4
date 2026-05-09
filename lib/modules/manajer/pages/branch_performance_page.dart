@@ -105,9 +105,19 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
           return int.tryParse(v?.toString() ?? '') ?? 0;
         }
 
+        final byMode = decoded['orders_by_mode'];
+        int nMode(String k) {
+          if (byMode is! Map) return 0;
+          final v = byMode[k];
+          if (v is num) return v.toInt();
+          return int.tryParse(v?.toString() ?? '') ?? 0;
+        }
+
         return <String, dynamic>{
           'branch_id': branchId,
           'branch_alias': alias,
+          'mode_toko': nMode('toko'),
+          'mode_online': nMode('online'),
           'jual': nType('jual'),
           'buyback': nType('buyback'),
           'service': nType('service'),
@@ -252,6 +262,28 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                 Expanded(
                   child: _metricChip(
                     cs,
+                    label: 'Toko (mode)',
+                    value: _cellInt(r, 'mode_toko'),
+                    showDash: hasErr,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _metricChip(
+                    cs,
+                    label: 'Online',
+                    value: _cellInt(r, 'mode_online'),
+                    showDash: hasErr,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _metricChip(
+                    cs,
                     label: 'Jual',
                     value: _cellInt(r, 'jual'),
                     showDash: hasErr,
@@ -362,7 +394,7 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                           leading: const Icon(Icons.analytics_outlined),
                           title: Text(dateLabel),
                           subtitle: Text(
-                            'Order per cabang • $periodHint',
+                            'Order per cabang (mode Toko/Online + jenis) • $periodHint',
                           ),
                           trailing: Chip(label: Text('${_rows.length}')),
                         ),
@@ -461,6 +493,20 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                                             Text(
                                               hasErr
                                                   ? '—'
+                                                  : '${_cellInt(r, 'mode_toko')}',
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              hasErr
+                                                  ? '—'
+                                                  : '${_cellInt(r, 'mode_online')}',
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text(
+                                              hasErr
+                                                  ? '—'
                                                   : '${_cellInt(r, 'jual')}',
                                             ),
                                           ),
@@ -536,6 +582,18 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                                                     label: dataTableColumnLabel(
                                                       'Alias',
                                                     ),
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel(
+                                                      'Mode toko',
+                                                    ),
+                                                    numeric: true,
+                                                  ),
+                                                  DataColumn(
+                                                    label: dataTableColumnLabel(
+                                                      'Mode online',
+                                                    ),
+                                                    numeric: true,
                                                   ),
                                                   DataColumn(
                                                     label: dataTableColumnLabel(

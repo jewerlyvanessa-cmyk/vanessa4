@@ -20,6 +20,31 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
   bool _isLoading = true;
   String? _error;
 
+  static const _allowedProgressStatuses = <String>{
+    'in_workshop',
+    'repairing',
+    'polishing',
+    'custom_work',
+    'done_workshop',
+    'cancelled',
+  };
+
+  /// Map backend statuses to dropdown values so [DropdownButtonFormField] never gets an unknown value.
+  String _statusForProgressDropdown(String? raw) {
+    final s = raw?.trim() ?? '';
+    if (_allowedProgressStatuses.contains(s)) return s;
+    switch (s.toLowerCase()) {
+      case 'sent-to-workshop':
+      case 'sent_to_workshop':
+        return 'in_workshop';
+      case 'ready_for_pickup':
+      case 'completed':
+        return 'done_workshop';
+      default:
+        return 'in_workshop';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -34,8 +59,16 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        setState(() {
+          _error = block;
+          _isLoading = false;
+        });
+        return;
+      }
       final workQueue = await ApiService.getWorkQueue(
-        userState.userId.toString(),
+        userState.userId!.toString(),
         userState.branch,
       );
 
@@ -66,10 +99,19 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
   Future<void> _updateProgress(int orderId, String status, String notes) async {
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(block)),
+          );
+        }
+        return;
+      }
       await ApiService.updateWorkProgress(
         orderId,
         status,
-        userState.userId.toString(),
+        userState.userId!.toString(),
         notes: notes,
         branchId: userState.branch,
       );
@@ -92,7 +134,10 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
   }
 
   void _showUpdateDialog(Map<String, dynamic> work) {
-    final statusController = TextEditingController(text: work['status']);
+    final initialStatus = _statusForProgressDropdown(
+      work['status']?.toString(),
+    );
+    final statusController = TextEditingController(text: initialStatus);
     final notesController = TextEditingController(text: work['notes'] ?? '');
 
     showDialog(
@@ -150,9 +195,11 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
           ),
           ElevatedButton(
             onPressed: () {
+              final oid = int.tryParse(work['order_id']?.toString() ?? '');
+              if (oid == null) return;
               Navigator.of(context).pop();
               _updateProgress(
-                work['order_id'],
+                oid,
                 statusController.text,
                 notesController.text,
               );

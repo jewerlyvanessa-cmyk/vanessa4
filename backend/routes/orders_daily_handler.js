@@ -7,6 +7,32 @@ const ORDER_CALENDAR_TIMEZONE =
     ? String(process.env.BUSINESS_TIMEZONE).trim()
     : 'Asia/Jakarta';
 
+/** @type {boolean | null} */
+let _cachedPaymentsRevenueBranchColumn = null;
+
+async function paymentsHasRevenueBranchColumn() {
+  if (_cachedPaymentsRevenueBranchColumn !== null) {
+    return _cachedPaymentsRevenueBranchColumn;
+  }
+  try {
+    const r = await db.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'revenue_branch_id'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedPaymentsRevenueBranchColumn = r.rows.length > 0;
+  } catch (_) {
+    _cachedPaymentsRevenueBranchColumn = false;
+  }
+  return _cachedPaymentsRevenueBranchColumn;
+}
+
 /**
  * Scope harian:
  * - CS: hanya order yang dibuat user itu (user_id dari JWT) untuk branch yang diminta.
@@ -22,6 +48,11 @@ function dailyOrdersUserFilterFromJwt(req) {
 
 /**
  * GET /orders/daily (relatif ke mount /api → /api/orders/daily) dan GET /orders/daily di server.js.
+ *
+ * Cabang:
+ * - Order dengan o.branch_id = cabang (aktivitas hari itu: dibuat atau ada pembayaran completed).
+ * - Jika kolom payments.revenue_branch_id ada: juga order dari cabang lain yang punya pembayaran
+ *   completed pada tanggal itu dengan atribusi pendapatan ke cabang ini (pelunasan di cabang pickup).
  */
 async function getOrdersDaily(req, res) {
   try {
@@ -44,6 +75,73 @@ async function getOrdersDaily(req, res) {
     const params = [bid];
 
     const lineSql = orderItemLineAmountSql('oi');
+
+    const createdDateMatch = (paramRef) => `
+        (
+          o.created_at::date = ${paramRef}::date
+          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+        )
+      `;
+
+    const paymentDateMatch = (alias, paramRef) => `
+        (
+          (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at))::date = ${paramRef}::date
+          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+          OR ${alias}.created_at::date = ${paramRef}::date
+        )
+      `;
+
+    const hasRevBranch = await paymentsHasRevenueBranchColumn();
+    const nowDateRef = `(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`;
+
+    let branchActivityWhere;
+    if (targetDate) {
+      const dateRef = filterUid != null ? '$3' : '$2';
+      const activitySql = `(
+          ${createdDateMatch(dateRef)}
+          OR EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
+              AND ${paymentDateMatch('p', dateRef)}
+          )
+        )`;
+      const crossBranchSql = hasRevBranch
+        ? `EXISTS (
+            SELECT 1
+            FROM payments p_rev
+            WHERE p_rev.order_id = o.order_id
+              AND p_rev.status = 'completed'
+              AND ${paymentDateMatch('p_rev', dateRef)}
+              AND COALESCE(p_rev.revenue_branch_id, o.branch_id) = $1
+          )`
+        : 'FALSE';
+      branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
+    } else {
+      const activitySql = `(
+          ${createdDateMatch(nowDateRef)}
+          OR EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
+              AND ${paymentDateMatch('p', nowDateRef)}
+          )
+        )`;
+      const crossBranchSql = hasRevBranch
+        ? `EXISTS (
+            SELECT 1
+            FROM payments p_rev
+            WHERE p_rev.order_id = o.order_id
+              AND p_rev.status = 'completed'
+              AND ${paymentDateMatch('p_rev', nowDateRef)}
+              AND COALESCE(p_rev.revenue_branch_id, o.branch_id) = $1
+          )`
+        : 'FALSE';
+      branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
+    }
+
     let query = `
         SELECT
           o.*,
@@ -75,58 +173,16 @@ async function getOrdersDaily(req, res) {
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN order_items oi ON o.order_id = oi.order_id
         LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE o.branch_id = $1
+        WHERE ${branchActivityWhere}
       `;
+
     if (filterUid != null) {
-      // CS: hanya order user tsb; jangan include user_id NULL karena akan terlihat lintas user.
       query += ` AND o.user_id = $2`;
       params.push(filterUid);
     }
 
-    // created_at is stored as TIMESTAMP (no timezone) in some deployments.
-    // Depending on server/DB timezone, values may effectively be UTC.
-    // Match both interpretations to avoid "order exists but not counted today".
-    const createdDateMatch = (paramRef) => `
-        (
-          o.created_at::date = ${paramRef}::date
-          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-        )
-      `;
-    const paymentDateMatch = (paramRef) => `
-        (
-          (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = ${paramRef}::date
-          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-          OR p.created_at::date = ${paramRef}::date
-        )
-      `;
-
     if (targetDate) {
-      query += `
-        AND (
-          ${createdDateMatch(`$${params.length + 1}`)}
-          OR EXISTS (
-            SELECT 1
-            FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
-              AND ${paymentDateMatch(`$${params.length + 1}`)}
-          )
-        )
-      `;
       params.push(targetDate);
-    } else {
-      query += `
-        AND (
-          ${createdDateMatch(`(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`)}
-          OR EXISTS (
-            SELECT 1
-            FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
-              AND ${paymentDateMatch(`(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`)}
-          )
-        )
-      `;
     }
 
     query += ' ORDER BY o.created_at DESC';

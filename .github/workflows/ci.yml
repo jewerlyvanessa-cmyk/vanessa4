@@ -39,6 +39,9 @@ jobs:
       - name: Install node deps (root)
         run: npm ci
 
+      - name: ESLint (backend)
+        run: npm run lint
+
       - name: Ensure OpenAPI exists
         run: test -f backend/docs/openapi.yaml
 
@@ -48,6 +51,8 @@ jobs:
           node -c backend/app.js
           node -c backend/middleware/auth.js
           node -c backend/websocket/emit.js
+          node -c backend/websocket/presence_registry.js
+          node -c backend/websocket/attach.js
           node -c backend/storage/local.storage.js
           node -c backend/storage/storage.service.js
 

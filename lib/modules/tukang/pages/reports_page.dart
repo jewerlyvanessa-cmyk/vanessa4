@@ -30,8 +30,16 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        setState(() {
+          _error = block;
+          _isLoading = false;
+        });
+        return;
+      }
       final reports = await ApiService.getTechnicianReports(
-        userState.userId.toString(),
+        userState.userId!.toString(),
         userState.branch,
         period: _selectedPeriod,
       );

@@ -57,6 +57,7 @@ class OrderTodayStats {
   final int completedOrders;
   final int pendingOrders;
   final Map<String, int> ordersByType;
+  final Map<String, int> ordersByMode;
   final Map<String, int> ordersByStatus;
   final double totalRevenue;
   final Map<String, double> revenueByTypeCompleted;
@@ -69,6 +70,7 @@ class OrderTodayStats {
     required this.completedOrders,
     required this.pendingOrders,
     required this.ordersByType,
+    required this.ordersByMode,
     required this.ordersByStatus,
     required this.totalRevenue,
     required this.revenueByTypeCompleted,
@@ -90,11 +92,22 @@ class OrderTodayStats {
         revenueMap[k] = d;
       }
     }
+    final obmRaw = json['orders_by_mode'];
+    final ordersByMode = <String, int>{'toko': 0, 'online': 0};
+    if (obmRaw is Map) {
+      for (final e in obmRaw.entries) {
+        final k = e.key.toString().toLowerCase();
+        final v = e.value;
+        final add = v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0;
+        ordersByMode[k] = (ordersByMode[k] ?? 0) + add;
+      }
+    }
     return OrderTodayStats(
       totalOrders: json['total_orders'] ?? 0,
       completedOrders: json['completed_orders'] ?? 0,
       pendingOrders: json['pending_orders'] ?? 0,
       ordersByType: Map<String, int>.from(json['orders_by_type'] ?? {}),
+      ordersByMode: ordersByMode,
       ordersByStatus: Map<String, int>.from(json['orders_by_status'] ?? {}),
       totalRevenue: (json['total_revenue'] ?? 0).toDouble(),
       revenueByTypeCompleted: revenueMap,
@@ -237,6 +250,7 @@ class OrderTodayStatsNotifier
         'completed_orders': 0,
         'pending_orders': 0,
         'orders_by_type': <String, int>{},
+        'orders_by_mode': <String, int>{'toko': 0, 'online': 0},
         'orders_by_status': <String, int>{},
         'total_revenue': 0.0,
         'revenue_by_type_completed': <String, double>{},
@@ -294,6 +308,15 @@ class OrderTodayStatsNotifier
           final tgt = mergedJson['orders_by_type'] as Map<String, int>;
           for (final e in obt.entries) {
             final k = e.key.toString();
+            final v = e.value;
+            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+          }
+        }
+        final obm = data['orders_by_mode'];
+        if (obm is Map) {
+          final tgt = mergedJson['orders_by_mode'] as Map<String, int>;
+          for (final e in obm.entries) {
+            final k = e.key.toString().toLowerCase();
             final v = e.value;
             tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
           }

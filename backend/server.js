@@ -18,6 +18,8 @@ const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { authenticateToken, requireRoles } = require('./middleware/auth');
 const { emitNotification } = require('./websocket/emit');
+const { createWsPresenceRegistry } = require('./websocket/presence_registry');
+const { attachWebSocketServer } = require('./websocket/attach');
 const { local: localStorage } = require('./storage/storage.service');
 const customersRoute = require('./routes/customers'); // Import customers route
 const apiRoutes = require('./api'); // Import new API routes
@@ -457,80 +459,8 @@ async function itemsHasCreatedByColumn() {
 
 const authRequired = authenticateToken(SECRET_KEY);
 
-/** Koneksi WebSocket yang mengirim ?token=JWT — dipakai superadmin untuk melihat user aktif. */
-const wsPresenceBySocket = new Map();
-
-function tryRegisterWsPresenceFromToken(ws, token) {
-  if (!token || typeof token !== 'string') return false;
-  try {
-    const payload = jwt.verify(token, SECRET_KEY);
-    const userIdRaw = payload.user_id ?? payload.id;
-    const user_id =
-      userIdRaw != null ? parseInt(String(userIdRaw), 10) : NaN;
-    if (Number.isNaN(user_id)) return false;
-    wsPresenceBySocket.set(ws, {
-      user_id,
-      username: (payload.username || '').toString(),
-      role: (payload.role || '').toString(),
-      branch_id: (payload.branch_id ?? '').toString(),
-      connected_at: new Date().toISOString(),
-    });
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-function getActivePresenceSnapshot() {
-  const byUser = new Map();
-  for (const meta of wsPresenceBySocket.values()) {
-    const uid = meta.user_id;
-    if (!byUser.has(uid)) {
-      byUser.set(uid, {
-        user_id: uid,
-        username: meta.username,
-        role_active: meta.role,
-        branch_id: meta.branch_id,
-        sessions: 0,
-        connected_since: meta.connected_at,
-      });
-    }
-    const row = byUser.get(uid);
-    row.sessions += 1;
-    if (meta.connected_at < row.connected_since) {
-      row.connected_since = meta.connected_at;
-    }
-  }
-  const users = Array.from(byUser.values()).sort((a, b) =>
-    String(a.username).localeCompare(String(b.username)),
-  );
-  return { users, total_connections: wsPresenceBySocket.size };
-}
-
-/** Tutup semua WebSocket presence untuk [targetUserId]; kirim `force_logout` lalu close. */
-function disconnectPresenceSessionsForUser(targetUserId, reason) {
-  const uid = parseInt(String(targetUserId), 10);
-  if (!Number.isFinite(uid)) return { closed: 0 };
-  const toClose = [];
-  for (const [ws, meta] of wsPresenceBySocket.entries()) {
-    if (meta.user_id === uid) toClose.push(ws);
-  }
-  const msg = JSON.stringify({
-    type: 'force_logout',
-    reason: reason || 'Anda dilogoutkan oleh administrator.',
-  });
-  for (const ws of toClose) {
-    try {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(msg);
-      }
-    } catch (_) { }
-    try {
-      ws.close();
-    } catch (_) { }
-  }
-  return { closed: toClose.length };
-}
+/** Presence WebSocket (JWT); dipakai superadmin active-sessions + kick. */
+const wsPresence = createWsPresenceRegistry(SECRET_KEY);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -747,7 +677,7 @@ app.get('/api/debug/order-today-sanity', authRequired, async (req, res) => {
 });
 
 app.get('/api/admin/active-sessions', requireRoles('superadmin'), (req, res) => {
-  res.json(getActivePresenceSnapshot());
+  res.json(wsPresence.getActivePresenceSnapshot());
 });
 
 // Superadmin: logout paksa semua koneksi Live (WebSocket) milik user — klien menerima force_logout.
@@ -765,7 +695,7 @@ app.post('/api/admin/active-sessions/:userId/kick', requireRoles('superadmin'), 
     }
     const reasonRaw = req.body && req.body.reason != null ? String(req.body.reason) : '';
     const reason = reasonRaw.trim().slice(0, 500) || undefined;
-    const { closed } = disconnectPresenceSessionsForUser(targetId, reason);
+    const { closed } = wsPresence.disconnectPresenceSessionsForUser(targetId, reason);
     res.json({ ok: true, closed, user_id: String(targetId) });
   } catch (error) {
     console.error('Error kicking active sessions:', error);
@@ -4495,84 +4425,7 @@ const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Accessible at http://localhost:${port} and http://10.0.2.2:${port} (Android emulator)`);
 });
 
-// Tambahkan WebSocket untuk notifikasi realtime
-const wss = new WebSocket.Server({ server }); // Use the same server for WebSocket
-
-/** Trafik kosong panjang sering diputus proxy (Nginx, load balancer). Frame ping + ping aplikasi menjaga koneksi. */
-const WS_KEEPALIVE_MS = 25000;
-const serverWsPingInterval = setInterval(() => {
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      try {
-        client.ping();
-      } catch (_) { }
-    }
-  });
-}, WS_KEEPALIVE_MS);
-
-wss.on('connection', (ws, req) => {
-  console.log('New client connected'); // Log tambahan untuk koneksi baru
-
-  try {
-    const host = req.headers.host || 'localhost';
-    const url = new URL(req.url || '/', `http://${host}`);
-    const token = url.searchParams.get('token');
-    if (token) tryRegisterWsPresenceFromToken(ws, token);
-  } catch (err) {
-    console.warn('WebSocket presence (query):', err.message);
-  }
-
-  ws.on('message', (raw) => {
-    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
-    try {
-      const msg = JSON.parse(text);
-      if (msg && msg.type === 'presence' && typeof msg.token === 'string') {
-        const ok = tryRegisterWsPresenceFromToken(ws, msg.token);
-        ws.send(
-          JSON.stringify(
-            ok
-              ? { type: 'presence_ack' }
-              : { type: 'presence_error', error: 'invalid_token' },
-          ),
-        );
-        return;
-      }
-      if (msg && msg.type === 'ping') {
-        try {
-          ws.send(
-            JSON.stringify({
-              type: 'pong',
-              t: msg.t != null ? msg.t : null,
-            }),
-          );
-        } catch (_) { }
-        return;
-      }
-    } catch (_) {
-      // bukan JSON presence — lanjut broadcast
-    }
-
-    console.log(`Received message: ${text}`); // Log tambahan untuk pesan yang diterima
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(text);
-      }
-    });
-  });
-
-  ws.on('close', () => {
-    wsPresenceBySocket.delete(ws);
-    console.log('Client disconnected'); // Log tambahan untuk koneksi yang ditutup
-  });
-});
-
-
-
-// Tambahkan log untuk debugging endpoint HTTP
-app.use((req, res, next) => {
-  console.log(`HTTP ${req.method} request to ${req.url}`);
-  next();
-});
+const wss = attachWebSocketServer(server, wsPresence);
 
 // Tambahkan cron job untuk pengingat otomatis
 cron.schedule('0 9 * * *', () => {

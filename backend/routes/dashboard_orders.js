@@ -190,6 +190,12 @@ router.get('/dashboard/order-today', async (req, res) => {
         COUNT(DISTINCT CASE WHEN o.order_type = 'buyback' THEN o.order_id END) as buyback_count,
         COUNT(DISTINCT CASE WHEN o.order_type = 'service' THEN o.order_id END) as service_count,
         COUNT(DISTINCT CASE WHEN o.order_type = 'custom' THEN o.order_id END) as custom_count,
+        COUNT(DISTINCT CASE
+          WHEN lower(trim(coalesce(o.mode::text, ''))) = 'online' THEN o.order_id
+        END) as mode_online_count,
+        COUNT(DISTINCT CASE
+          WHEN lower(trim(coalesce(o.mode::text, ''))) <> 'online' THEN o.order_id
+        END) as mode_toko_count,
         -- Revenue rules:
         -- - jual completed/sold: uang masuk (positive)
         -- - buyback completed: uang keluar (negative)
@@ -223,6 +229,10 @@ router.get('/dashboard/order-today', async (req, res) => {
         buyback: parseInt(stats.buyback_count) || 0,
         service: parseInt(stats.service_count) || 0,
         custom: parseInt(stats.custom_count) || 0,
+      },
+      orders_by_mode: {
+        toko: parseInt(stats.mode_toko_count) || 0,
+        online: parseInt(stats.mode_online_count) || 0,
       },
       orders_by_status: {
         draft: 0, // Will be calculated from actual data

@@ -19,6 +19,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/widgets/pickup_branch_field.dart';
 
 int? toInt(dynamic value) {
   if (value is int) return value;
@@ -66,6 +67,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       'Patri'; // Service type: Patri, Cuci, Sambung, Ubah Ukuran, Ganti Batu, Lainnya
   String _jenisBarang =
       'KALUNG'; // Item type: KALUNG, GELANG, ANTING, CINCIN, LIONTIN
+  /// `null` = sama dengan cabang order (tidak kirim `pickup_branch_id`).
+  int? _pickupBranchId;
   final Map<String, bool> _kelengkapan = {
     'Barang': true, // Default checked
     'Surat': false,
@@ -322,7 +325,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         ? _notaOrderController.text.trim()
         : 'SERV-${DateTime.now().millisecondsSinceEpoch}';
 
-    final orderData = {
+    final orderData = <String, dynamic>{
       'order_type': 'service',
       'status': initialServiceStatus,
       'order_number': _notaOrderController.text.isNotEmpty
@@ -363,6 +366,11 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       'customer_phone': _customerPhoneController.text,
       'customer_address': _customerAddressController.text,
     };
+    if (branchId != null &&
+        _pickupBranchId != null &&
+        _pickupBranchId != branchId) {
+      orderData['pickup_branch_id'] = _pickupBranchId;
+    }
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
@@ -682,6 +690,11 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
     // Listen to user state changes to regenerate order number when branch changes
     ref.listen(userStateProvider, (previous, next) {
+      final branchChanged =
+          previous == null || previous.branch != next.branch;
+      if (branchChanged && mounted) {
+        setState(() => _pickupBranchId = null);
+      }
       if (next.branch.isNotEmpty && next.branches.isNotEmpty) {
         _generateOrderNumber();
       }
@@ -740,6 +753,13 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12.0),
+              PickupBranchField(
+                orderBranchId: userState.branch,
+                branches: userState.branches,
+                value: _pickupBranchId,
+                onChanged: (v) => setState(() => _pickupBranchId = v),
               ),
               const SizedBox(height: 12.0),
               // Order Number

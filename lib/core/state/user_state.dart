@@ -43,6 +43,17 @@ class UserState {
       branches: branches ?? this.branches,
     );
   }
+
+  /// When non-null, workshop / teknisi API calls must not run (avoids `null` user id on the wire).
+  String? get workshopSessionBlockReason {
+    if (userId == null) {
+      return 'Sesi tidak valid. Silakan login ulang.';
+    }
+    if (branch.isEmpty) {
+      return 'Cabang belum dipilih. Gunakan menu ganti cabang.';
+    }
+    return null;
+  }
 }
 
 class UserStateNotifier extends StateNotifier<UserState> {

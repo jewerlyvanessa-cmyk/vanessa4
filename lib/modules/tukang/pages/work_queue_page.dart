@@ -32,8 +32,16 @@ class _WorkQueuePageState extends ConsumerState<WorkQueuePage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        setState(() {
+          _errorMessage = block;
+          _isLoading = false;
+        });
+        return;
+      }
       final workQueue = await ApiService.getWorkQueue(
-        userState.userId.toString(),
+        userState.userId!.toString(),
         userState.branch,
       );
 
@@ -378,12 +386,31 @@ dataRowMinHeight: narrow ? 52 : 48,
 
   void _startWork(Map<String, dynamic> order) async {
     try {
+      final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(block)),
+          );
+        }
+        return;
+      }
+      final oid = int.tryParse(order['order_id']?.toString() ?? '');
+      if (oid == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ID order tidak valid')),
+          );
+        }
+        return;
+      }
       await ApiService.updateWorkProgress(
-        int.parse(order['order_id'].toString()),
+        oid,
         'repairing',
-        ref.read(userStateProvider).userId.toString(),
+        userState.userId!.toString(),
         notes: 'Work started by technician',
-        branchId: ref.read(userStateProvider).branch,
+        branchId: userState.branch,
       );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {

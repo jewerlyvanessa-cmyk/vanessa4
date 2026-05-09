@@ -72,8 +72,20 @@ class TechnicianDashboardNotifier extends StateNotifier<AsyncValue<TechnicianDas
     try {
       final baseUrl = NetworkConfig.baseUrl;
       final userState = _ref.read(userStateProvider);
-      final userId = userState.userId;
-      final branchId = int.tryParse(userState.branch) ?? 1;
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        state = AsyncValue.error(block, StackTrace.current);
+        return;
+      }
+      final userId = userState.userId!;
+      final branchId = int.tryParse(userState.branch);
+      if (branchId == null) {
+        state = AsyncValue.error(
+          'ID cabang tidak valid.',
+          StackTrace.current,
+        );
+        return;
+      }
 
       final queryParams = <String, String>{
         'branch_id': branchId.toString(),

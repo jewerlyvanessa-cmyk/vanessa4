@@ -103,6 +103,7 @@ class OrderTodayPage extends ConsumerWidget {
                 reportDate: DateTime.now(),
                 branchLabel: branchLabel,
                 ordersByType: stats.ordersByType,
+                ordersByMode: stats.ordersByMode,
                 totalOrders: stats.totalOrders,
                 pendingOrders: stats.pendingOrders,
                 completedOrders: stats.completedOrders,
@@ -140,6 +141,16 @@ class OrderTodayPage extends ConsumerWidget {
                 children: [
                   _topCards(context, stats),
                   const SizedBox(height: 14),
+                  Text(
+                    'Order per mode',
+                    style: tt.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _orderModeGrid(context, stats.ordersByMode),
+                  const SizedBox(height: 16),
                   Text(
                     'Order per Jenis',
                     style: tt.titleMedium?.copyWith(
@@ -377,6 +388,21 @@ class OrderTodayPage extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _orderModeGrid(BuildContext context, Map<String, int> ordersByMode) {
+    int v(String k) => ordersByMode[k] ?? 0;
+    return Row(
+      children: [
+        Expanded(
+          child: _metricChip(context, label: 'Toko', value: v('toko')),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _metricChip(context, label: 'Online', value: v('online')),
+        ),
+      ],
     );
   }
 

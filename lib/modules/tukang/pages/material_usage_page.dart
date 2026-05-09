@@ -47,9 +47,20 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        setState(() {
+          _error = block;
+          _isLoading = false;
+        });
+        return;
+      }
 
       final results = await Future.wait([
-        ApiService.getWorkQueue(userState.userId.toString(), userState.branch),
+        ApiService.getWorkQueue(
+          userState.userId!.toString(),
+          userState.branch,
+        ),
         ApiService.getMaterialStock(userState.branch),
       ]);
 
@@ -86,10 +97,19 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(block)),
+          );
+        }
+        return;
+      }
       await ApiService.updateMaterialStock(
         _selectedMaterial!['item_id'],
         -quantity, // Negative for usage
-        userState.userId.toString(),
+        userState.userId!.toString(),
         notes:
             'Digunakan untuk Order #${_selectedWork!['order_id']} - ${_notesController.text}',
       );

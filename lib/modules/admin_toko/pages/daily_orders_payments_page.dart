@@ -10,6 +10,9 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
+/// Filter daftar order (ringkasan di strip atas).
+enum _AdminOrderFilter { all, toko, online, completed, pending }
+
 class DailyOrdersPaymentsPage extends ConsumerStatefulWidget {
   const DailyOrdersPaymentsPage({super.key});
 
@@ -24,6 +27,7 @@ class _DailyOrdersPaymentsPageState
   Map<String, dynamic> _dailyData = {};
   bool _isLoading = true;
   String _error = '';
+  _AdminOrderFilter _orderFilter = _AdminOrderFilter.all;
 
   num _toNum(dynamic v) {
     if (v == null) return 0;
@@ -78,6 +82,7 @@ class _DailyOrdersPaymentsPageState
 
         setState(() {
           _dailyData = {'orders': ordersData, 'payments': paymentsData};
+          _orderFilter = _AdminOrderFilter.all;
           _isLoading = false;
         });
       } else {
@@ -228,6 +233,67 @@ class _DailyOrdersPaymentsPageState
     return t == 'service' || t == 'custom';
   }
 
+  bool _orderMatchesFilter(Map<String, dynamic> o) {
+    switch (_orderFilter) {
+      case _AdminOrderFilter.all:
+        return true;
+      case _AdminOrderFilter.toko:
+        final m = (o['mode'] ?? '').toString().trim().toLowerCase();
+        return m != 'online';
+      case _AdminOrderFilter.online:
+        return (o['mode'] ?? '').toString().trim().toLowerCase() == 'online';
+      case _AdminOrderFilter.completed:
+        return (o['status'] ?? '').toString().trim().toLowerCase() ==
+            'completed';
+      case _AdminOrderFilter.pending:
+        return (o['status'] ?? '').toString().trim().toLowerCase() == 'pending';
+    }
+  }
+
+  List<Map<String, dynamic>> _filterDeduped(
+    List<Map<String, dynamic>> deduped,
+  ) {
+    if (_orderFilter == _AdminOrderFilter.all) return deduped;
+    return deduped.where(_orderMatchesFilter).toList();
+  }
+
+  List<dynamic> _rawOrdersForTable(List<dynamic> ordersRaw) {
+    if (_orderFilter == _AdminOrderFilter.all) return ordersRaw;
+    final deduped = _dedupeOrdersById(ordersRaw);
+    final allowed = _filterDeduped(deduped)
+        .map((o) => o['order_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final out = <dynamic>[];
+    for (final e in ordersRaw) {
+      if (e is! Map) continue;
+      final id = e['order_id']?.toString() ?? '';
+      if (allowed.contains(id)) out.add(e);
+    }
+    return out;
+  }
+
+  void _setOrderFilter(_AdminOrderFilter f) {
+    setState(() {
+      _orderFilter = f;
+    });
+  }
+
+  /// Selaras backend `/api/dashboard/order-today`: online jika `mode` = online, selain itu toko.
+  ({int toko, int online}) _orderModeCounts(List<Map<String, dynamic>> dedupedOrders) {
+    var toko = 0;
+    var online = 0;
+    for (final o in dedupedOrders) {
+      final m = (o['mode'] ?? '').toString().trim().toLowerCase();
+      if (m == 'online') {
+        online++;
+      } else {
+        toko++;
+      }
+    }
+    return (toko: toko, online: online);
+  }
+
   String? _nextAdminTokoWorkshopStatus(Map<String, dynamic> row) {
     if (!_isServiceCustomOrder(row)) return null;
     final status = (row['status'] ?? '').toString().trim().toLowerCase();
@@ -245,6 +311,15 @@ class _DailyOrdersPaymentsPageState
       default:
         return 'Proses';
     }
+  }
+
+  void _openOrderDetail(BuildContext context, Map<String, dynamic> order) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderDetailPage(order: order),
+      ),
+    );
   }
 
   Future<void> _updateWorkshopStatusAdminToko(
@@ -289,8 +364,18 @@ class _DailyOrdersPaymentsPageState
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
     final orders = _dedupeOrdersById(ordersRaw);
     final totalOrders = orders.length;
-    final completed = orders.where((o) => o['status'] == 'completed').length;
-    final pending = orders.where((o) => o['status'] == 'pending').length;
+    final modeCounts = _orderModeCounts(orders);
+    final completed = orders
+        .where(
+          (o) =>
+              (o['status'] ?? '').toString().trim().toLowerCase() == 'completed',
+        )
+        .length;
+    final pending = orders
+        .where(
+          (o) => (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
+        )
+        .length;
     final lineCount = kIsWeb ? _rawOrderLineRows(ordersRaw).length : 0;
 
     final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
@@ -315,28 +400,60 @@ class _DailyOrdersPaymentsPageState
                 context,
               ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
             ),
-            _miniChip(
+            _summaryFilterChip(
               context,
-              'Order $totalOrders',
-              Icons.receipt_long_outlined,
+              label: 'Order $totalOrders',
+              icon: Icons.receipt_long_outlined,
+              selected: _orderFilter == _AdminOrderFilter.all,
+              onSelected: (_) {
+                _setOrderFilter(_AdminOrderFilter.all);
+              },
             ),
+            if (totalOrders > 0) ...[
+              _summaryFilterChip(
+                context,
+                label: 'Toko ${modeCounts.toko}',
+                icon: Icons.storefront_outlined,
+                selected: _orderFilter == _AdminOrderFilter.toko,
+                onSelected: (sel) => _setOrderFilter(
+                  sel ? _AdminOrderFilter.toko : _AdminOrderFilter.all,
+                ),
+              ),
+              _summaryFilterChip(
+                context,
+                label: 'Online ${modeCounts.online}',
+                icon: Icons.language_outlined,
+                selected: _orderFilter == _AdminOrderFilter.online,
+                onSelected: (sel) => _setOrderFilter(
+                  sel ? _AdminOrderFilter.online : _AdminOrderFilter.all,
+                ),
+              ),
+            ],
             if (kIsWeb && lineCount > 0)
               _miniChip(
                 context,
                 '$lineCount baris item',
                 Icons.view_list_outlined,
               ),
-            _miniChip(
+            _summaryFilterChip(
               context,
-              'Selesai $completed',
-              Icons.check_circle_outline,
-              color: Colors.green.shade700,
+              label: 'Selesai $completed',
+              icon: Icons.check_circle_outline,
+              selected: _orderFilter == _AdminOrderFilter.completed,
+              onSelected: (sel) => _setOrderFilter(
+                sel ? _AdminOrderFilter.completed : _AdminOrderFilter.all,
+              ),
+              iconColor: Colors.green.shade700,
             ),
-            _miniChip(
+            _summaryFilterChip(
               context,
-              'Pending $pending',
-              Icons.hourglass_top_outlined,
-              color: Colors.orange.shade800,
+              label: 'Pending $pending',
+              icon: Icons.hourglass_top_outlined,
+              selected: _orderFilter == _AdminOrderFilter.pending,
+              onSelected: (sel) => _setOrderFilter(
+                sel ? _AdminOrderFilter.pending : _AdminOrderFilter.all,
+              ),
+              iconColor: Colors.orange.shade800,
             ),
             _miniChip(
               context,
@@ -367,27 +484,81 @@ class _DailyOrdersPaymentsPageState
     );
   }
 
+  Widget _summaryFilterChip(
+    BuildContext context, {
+    required String label,
+    required IconData icon,
+    required bool selected,
+    required ValueChanged<bool> onSelected,
+    Color? iconColor,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final accent = iconColor ?? cs.primary;
+    return FilterChip(
+      selected: selected,
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+      avatar: Icon(
+        icon,
+        size: 16,
+        color: selected ? cs.onSecondaryContainer : accent,
+      ),
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          color: selected ? cs.onSecondaryContainer : null,
+        ),
+      ),
+      selectedColor: cs.secondaryContainer,
+      side: BorderSide(
+        color: selected
+            ? cs.primary.withValues(alpha: 0.65)
+            : Colors.grey.shade400.withValues(alpha: 0.5),
+      ),
+      onSelected: onSelected,
+    );
+  }
+
   Widget _ordersTable(BuildContext context) {
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
     if (ordersRaw.isEmpty) {
       return const Center(child: Text('Tidak ada order'));
     }
 
+    final tableRaw = _rawOrdersForTable(ordersRaw);
+    if (tableRaw.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Tidak ada order untuk filter ini',
+            style: Theme.of(context).textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
     final narrow = MediaQuery.sizeOf(context).width < 600;
     final webWide = kIsWeb && !narrow;
 
     if (kIsWeb) {
-      if (webWide) return _ordersTableWebWide(context, ordersRaw);
-      return _ordersTableWebNarrow(context, ordersRaw);
+      if (webWide) return _ordersTableWebWide(context, tableRaw);
+      return _ordersTableWebNarrow(context, tableRaw);
     }
-    return _ordersTableDedupedMobile(context, ordersRaw);
+    return _ordersTableDedupedMobile(context, tableRaw);
   }
 
   Widget _ordersTableDedupedMobile(
     BuildContext context,
     List<dynamic> ordersRaw,
   ) {
-    final orders = _dedupeOrdersById(ordersRaw);
+    final orders = _filterDeduped(_dedupeOrdersById(ordersRaw));
     if (orders.isEmpty) {
       return const Center(child: Text('Tidak ada order'));
     }
@@ -460,18 +631,32 @@ class _DailyOrdersPaymentsPageState
                   final id = o['order_id']?.toString() ?? '-';
                   final total = _toNum(o['total'] ?? o['jumlah']);
                   final nextStatus = _nextAdminTokoWorkshopStatus(o);
+                  void openRow() => _openOrderDetail(context, o);
                   return DataRow(
                     cells: [
-                      DataCell(Text(id, style: const TextStyle(fontSize: 13))),
-                      DataCell(Text(_fmtShortTime(o['created_at']))),
-                      DataCell(Text((o['order_type'] ?? '-').toString())),
-                      DataCell(Text((o['status'] ?? '-').toString())),
+                      DataCell(
+                        Text(id, style: const TextStyle(fontSize: 13)),
+                        onTap: openRow,
+                      ),
+                      DataCell(
+                        Text(_fmtShortTime(o['created_at'])),
+                        onTap: openRow,
+                      ),
+                      DataCell(
+                        Text((o['order_type'] ?? '-').toString()),
+                        onTap: openRow,
+                      ),
+                      DataCell(
+                        Text((o['status'] ?? '-').toString()),
+                        onTap: openRow,
+                      ),
                       DataCell(
                         Text(
                           (o['customer_name'] ?? '-').toString(),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        onTap: openRow,
                       ),
                       DataCell(
                         Text(
@@ -479,12 +664,14 @@ class _DailyOrdersPaymentsPageState
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        onTap: openRow,
                       ),
                       DataCell(
                         Text(
                           _fmtMoney(total),
                           style: const TextStyle(fontSize: 13),
                         ),
+                        onTap: openRow,
                       ),
                       DataCell(
                         nextStatus == null
@@ -496,6 +683,7 @@ class _DailyOrdersPaymentsPageState
                                 ),
                                 child: Text(_adminTokoActionLabel(nextStatus)),
                               ),
+                        onTap: nextStatus == null ? openRow : null,
                       ),
                     ],
                   );

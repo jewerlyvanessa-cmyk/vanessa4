@@ -119,11 +119,30 @@ class TukangMainPage extends ConsumerWidget {
               child: Center(child: CircularProgressIndicator()),
             ),
             error: (error, stack) => Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: _DashboardSummaryCards(
-                pendingWorkOrders: 0,
-                inProgressWorkOrders: 0,
-                completedWorkOrders: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 40,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    error.toString(),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => ref
+                        .read(technicianDashboardProvider.notifier)
+                        .refresh(),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Coba lagi'),
+                  ),
+                ],
               ),
             ),
             data: (dashboardData) => Padding(
