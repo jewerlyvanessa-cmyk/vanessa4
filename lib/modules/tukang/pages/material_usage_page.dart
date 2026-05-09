@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
 
 class MaterialUsagePage extends ConsumerStatefulWidget {
   const MaterialUsagePage({super.key});
@@ -807,45 +808,11 @@ dataRowMinHeight: 44,
   }
 
   String _getStatusText(String status) {
-    switch (status) {
-      case 'in_workshop':
-        return 'Diterima Workshop';
-      case 'repairing':
-        return 'Dikerjakan';
-      case 'polishing':
-        return 'Poles/Finishing';
-      case 'custom_work':
-        return 'Custom Work';
-      case 'done_workshop':
-        return 'Selesai Tukang';
-      case 'ready_for_pickup':
-      case 'completed':
-        return 'Selesai';
-      case 'cancelled':
-        return 'Dibatalkan';
-      default:
-        return 'Unknown';
-    }
+    return OrderStatusUi.label(status);
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
-      case 'in_workshop':
-        return Colors.blueGrey;
-      case 'repairing':
-      case 'polishing':
-      case 'custom_work':
-        return Colors.blue;
-      case 'done_workshop':
-        return Colors.teal;
-      case 'ready_for_pickup':
-      case 'completed':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+    return OrderStatusUi.color(status);
   }
 
   IconData _getStatusIcon(String status) {

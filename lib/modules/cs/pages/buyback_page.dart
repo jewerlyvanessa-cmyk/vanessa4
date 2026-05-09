@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http_parser/http_parser.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
 import '../../../utils/pembulatan.dart';
@@ -73,7 +75,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
-  File? _fotoFile;
+  XFile? _fotoXFile;
+  Uint8List? _fotoBytes;
+  String? _fotoName;
   bool _isSubmitting = false;
   String _modeToko = 'TOKO';
 
@@ -230,6 +234,23 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   Future<void> _pickImage() async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
+      if (kIsWeb) {
+        final picked = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          withData: true,
+        );
+        final f = picked?.files.single;
+        if (f == null) return;
+        final bytes = f.bytes;
+        if (bytes == null || bytes.isEmpty) return;
+        setState(() {
+          _fotoBytes = bytes;
+          _fotoName = f.name;
+          _fotoXFile = null;
+        });
+        return;
+      }
+
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(
         source: ImageSource.camera,
@@ -248,9 +269,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         );
 
         setState(() {
-          _fotoFile = compressedXFile != null
-              ? File(compressedXFile.path)
-              : file;
+          _fotoXFile = XFile((compressedXFile ?? image).path);
+          _fotoBytes = null;
+          _fotoName = null;
         });
       }
     } catch (e) {
@@ -721,7 +742,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     // Allow manual entry when nota lama not found.
     // When lookup succeeds, _selectedItem is filled and will be used for item_id (if any).
 
-    if (_fotoFile == null) {
+    if (_fotoXFile == null && _fotoBytes == null) {
       scaffoldMessenger.showSnackBar(
         const SnackBar(content: Text('Foto barang wajib diupload')),
       );
@@ -822,13 +843,24 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       // Add JSON data
       request.fields['order_data'] = jsonEncode(orderData);
 
-      // Add image file if exists
-      if (_fotoFile != null) {
+      // Add image file (required)
+      if (kIsWeb) {
+        final bytes = _fotoBytes ?? await _fotoXFile!.readAsBytes();
+        final name = _fotoName ?? _fotoXFile!.name;
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'photo',
+            bytes,
+            filename: name,
+            contentType: _detectImageMediaType(name),
+          ),
+        );
+      } else {
         request.files.add(
           await http.MultipartFile.fromPath(
             'photo',
-            _fotoFile!.path,
-            contentType: _detectImageMediaType(_fotoFile!.path),
+            _fotoXFile!.path,
+            contentType: _detectImageMediaType(_fotoXFile!.path),
           ),
         );
       }
@@ -1967,7 +1999,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                           ),
                         ],
                       ),
-                      if (_fotoFile != null) ...[
+                      if (_fotoXFile != null || _fotoBytes != null) ...[
                         const SizedBox(height: 16),
                         Container(
                           width: double.infinity,
@@ -1978,7 +2010,12 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(_fotoFile!, fit: BoxFit.cover),
+                            child: _fotoBytes != null
+                                ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
+                                : Image.file(
+                                    File(_fotoXFile!.path),
+                                    fit: BoxFit.cover,
+                                  ),
                           ),
                         ),
                         const SizedBox(height: 8),

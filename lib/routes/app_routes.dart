@@ -51,7 +51,8 @@ class AppRoutes {
   static const String adminWorkshop = '/admin_workshop';
   static const String manajer = '/manager';
   static const String customers = '/customers';
-  static const String manajerCompletedOrdersToday = '/manager/completed_orders_today';
+  static const String manajerCompletedOrdersToday =
+      '/manager/completed_orders_today';
   static const String manajerBranchPerformance = '/manager/branch_performance';
   static const String manajerSalesToday = '/manager/sales_today';
   static const String manajerBuybackReport = '/manager/buyback_report';
@@ -81,10 +82,10 @@ class AppRoutes {
     manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
     manajerSystemSettings: (context) => const SimpleProtectedPage(
-          title: 'Pengaturan Sistem',
-          description:
-              'Halaman ini siap digunakan.\n\nJika Anda ingin fitur pengaturan sistem untuk manajer, beritahu pengaturan apa saja yang perlu ditambahkan (mis. target bulanan, batas diskon, dsb).',
-        ),
+      title: 'Pengaturan Sistem',
+      description:
+          'Halaman ini siap digunakan.\n\nJika Anda ingin fitur pengaturan sistem untuk manajer, beritahu pengaturan apa saja yang perlu ditambahkan (mis. target bulanan, batas diskon, dsb).',
+    ),
     stockist: (context) => const StockistMainPage(),
     switchBranchRole: (context) => const SwitchBranchRolePage(),
     customers: (context) => const CustomersPage(),
@@ -187,29 +188,27 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           }
           debugPrint('Navigating to route: $route for role: $primaryRoleRaw');
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) {
-              Navigator.pushReplacementNamed(context, route);
-            }
+            // Use `mounted` (State) guard first; accessing `context` when unmounted throws.
+            if (!mounted) return;
+            Navigator.pushReplacementNamed(context, route);
           });
         } else {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(result['error'] ?? 'Login gagal')),
-              );
-            }
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(result['error'] ?? 'Login gagal')),
+            );
           });
         }
       } catch (e) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Terjadi error saat login')));
-          }
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Terjadi error saat login')));
         });
       } finally {
-        if (context.mounted) {
+        if (mounted) {
           setState(() {
             _isLoading = false;
           });
@@ -706,7 +705,7 @@ class _WorkshopPageState extends State<WorkshopPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-final rows = <DataRow>[];
+    final rows = <DataRow>[];
     for (var i = 0; i < _workOrders.length; i++) {
       final order = _workOrders[i];
       rows.add(
@@ -753,7 +752,7 @@ final rows = <DataRow>[];
                       headingRowColor: WidgetStateProperty.all(
                         cs.surfaceContainerHigh,
                       ),
-showCheckboxColumn: false,
+                      showCheckboxColumn: false,
                       columns: [
                         DataColumn(label: dataTableColumnLabel('Order ID')),
                         DataColumn(label: dataTableColumnLabel('Type')),

@@ -7,14 +7,17 @@ const ORDER_CALENDAR_TIMEZONE =
     ? String(process.env.BUSINESS_TIMEZONE).trim()
     : 'Asia/Jakarta';
 
-/** Hanya CS yang filter order harian ke user sendiri; role lain seluruh cabang (abaikan query user_id). */
+/**
+ * Scope harian:
+ * - CS: hanya order yang dibuat user itu (user_id dari JWT) untuk branch yang diminta.
+ * - Role lain: seluruh order untuk branch yang diminta.
+ */
 function dailyOrdersUserFilterFromJwt(req) {
-  const role = (req.user?.role || '').toString().trim().toLowerCase();
+  const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+  if (role !== 'cs') return null;
   const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
-  if (role === 'cs' && Number.isFinite(uid) && uid > 0) {
-    return uid;
-  }
-  return null;
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  return uid;
 }
 
 /**
@@ -75,20 +78,38 @@ async function getOrdersDaily(req, res) {
         WHERE o.branch_id = $1
       `;
     if (filterUid != null) {
+      // CS: hanya order user tsb; jangan include user_id NULL karena akan terlihat lintas user.
       query += ` AND o.user_id = $2`;
       params.push(filterUid);
     }
 
+    // created_at is stored as TIMESTAMP (no timezone) in some deployments.
+    // Depending on server/DB timezone, values may effectively be UTC.
+    // Match both interpretations to avoid "order exists but not counted today".
+    const createdDateMatch = (paramRef) => `
+        (
+          o.created_at::date = ${paramRef}::date
+          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+        )
+      `;
+    const paymentDateMatch = (paramRef) => `
+        (
+          (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = ${paramRef}::date
+          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+          OR p.created_at::date = ${paramRef}::date
+        )
+      `;
+
     if (targetDate) {
       query += `
         AND (
-          (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $${params.length + 1}::date
+          ${createdDateMatch(`$${params.length + 1}`)}
           OR EXISTS (
             SELECT 1
             FROM payments p
             WHERE p.order_id = o.order_id
               AND p.status = 'completed'
-              AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = $${params.length + 1}::date
+              AND ${paymentDateMatch(`$${params.length + 1}`)}
           )
         )
       `;
@@ -96,13 +117,13 @@ async function getOrdersDaily(req, res) {
     } else {
       query += `
         AND (
-          (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = (timezone('${ORDER_CALENDAR_TIMEZONE}', now()))::date
+          ${createdDateMatch(`(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`)}
           OR EXISTS (
             SELECT 1
             FROM payments p
             WHERE p.order_id = o.order_id
               AND p.status = 'completed'
-              AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = (timezone('${ORDER_CALENDAR_TIMEZONE}', now()))::date
+              AND ${paymentDateMatch(`(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`)}
           )
         )
       `;

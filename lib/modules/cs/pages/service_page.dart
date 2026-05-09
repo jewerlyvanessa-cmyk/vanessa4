@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:file_picker/file_picker.dart';
 import 'customers_page.dart';
 import 'faktur_page.dart';
 
@@ -56,7 +58,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   final TextEditingController _uangMukaController = TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
-  File? _fotoFile;
+  XFile? _fotoXFile;
+  Uint8List? _fotoBytes;
+  String? _fotoName;
   String _modeToko = 'TOKO'; // Mode selection: TOKO or ONLINE
   String _jenisService =
       'Patri'; // Service type: Patri, Cuci, Sambung, Ubah Ukuran, Ganti Batu, Lainnya
@@ -68,12 +72,22 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     'Identitas': false,
   }; // Completeness checklist
 
-  Future<String?> _uploadFoto(File? foto) async {
-    if (foto == null) return null;
+  Future<String?> _uploadFoto() async {
+    if (_fotoXFile == null && _fotoBytes == null) return null;
     final storageUrl = NetworkConfig.storageUrl;
     final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri)
-      ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+    final request = http.MultipartRequest('POST', uri);
+    if (kIsWeb) {
+      final bytes = _fotoBytes ?? await _fotoXFile!.readAsBytes();
+      final name = _fotoName ?? _fotoXFile!.name;
+      request.files.add(
+        http.MultipartFile.fromBytes('file', bytes, filename: name),
+      );
+    } else {
+      request.files.add(
+        await http.MultipartFile.fromPath('file', _fotoXFile!.path),
+      );
+    }
     final token = NetworkConfig.authToken;
     if (token != null && token.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $token';
@@ -98,12 +112,31 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   }
 
   Future<void> _pickFoto() async {
+    if (kIsWeb) {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      final f = picked?.files.single;
+      if (f == null) return;
+      final bytes = f.bytes;
+      if (bytes == null || bytes.isEmpty) return;
+      setState(() {
+        _fotoBytes = bytes;
+        _fotoName = f.name;
+        _fotoXFile = null;
+      });
+      return;
+    }
+
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.camera);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
-        _fotoFile = compressedFile;
+        _fotoXFile = XFile(compressedFile.path);
+        _fotoBytes = null;
+        _fotoName = null;
       });
     }
   }
@@ -242,7 +275,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     }
 
     // Foto WAJIB untuk Service
-    if (_fotoFile == null) {
+    if (_fotoXFile == null && _fotoBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Foto barang WAJIB untuk service!')),
       );
@@ -268,12 +301,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     }
 
     String? fotoUrl;
-    if (_fotoFile != null) {
-      fotoUrl = await _uploadFoto(_fotoFile);
-    }
+    fotoUrl = await _uploadFoto();
     if (!mounted) return;
-    if (_fotoFile != null &&
-        (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+    if (fotoUrl == null || fotoUrl.toString().trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).'),
@@ -359,6 +389,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                 'method': 'cash',
                 'status': 'pending',
                 'notes': 'Uang muka (service)',
+                'payment_kind': 'dp',
               }),
             );
           } catch (_) {
@@ -1463,7 +1494,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                 ),
               ),
               const SizedBox(height: 12),
-              if (_fotoFile != null)
+              if (_fotoXFile != null || _fotoBytes != null)
                 Container(
                   height: 200,
                   width: double.infinity,
@@ -1471,13 +1502,19 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                     border: Border.all(color: Colors.grey),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Image.file(_fotoFile!, fit: BoxFit.cover),
+                  child: _fotoBytes != null
+                      ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
+                      : Image.file(File(_fotoXFile!.path), fit: BoxFit.cover),
                 ),
               const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: _pickFoto,
                 icon: const Icon(Icons.camera_alt),
-                label: Text(_fotoFile == null ? 'Ambil Foto' : 'Ganti Foto'),
+                label: Text(
+                  (_fotoXFile == null && _fotoBytes == null)
+                      ? 'Ambil Foto'
+                      : 'Ganti Foto',
+                ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   backgroundColor: Colors.blue,

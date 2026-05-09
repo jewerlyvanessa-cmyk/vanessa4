@@ -11,14 +11,17 @@ const ORDER_CALENDAR_TIMEZONE =
     ? String(process.env.BUSINESS_TIMEZONE).trim()
     : 'Asia/Jakarta';
 
-/** Hanya CS yang melihat statistik order hari ini milik sendiri; role lain = seluruh cabang. */
+/**
+ * Statistik "Order Today":
+ * - CS: hanya order yang dibuat user itu (user_id dari JWT) untuk branch yang diminta.
+ * - Role lain: seluruh order untuk branch yang diminta.
+ */
 function orderTodayUserFilterFromJwt(req) {
-  const role = (req.user?.role || '').toString().trim().toLowerCase();
+  const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+  if (role !== 'cs') return null;
   const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
-  if (role === 'cs' && Number.isFinite(uid) && uid > 0) {
-    return uid;
-  }
-  return null;
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  return uid;
 }
 const multer = require('multer');
 const _path = require('path');
@@ -107,28 +110,60 @@ router.get('/dashboard/order-today', async (req, res) => {
             }).format(new Date())
           : null;
 
-    // Sama dengan /api/orders/daily: order dihitung per hari kalender bisnis (created_at) ATAU ada pembayaran completed di hari itu. Rentang = gabungan hari $1..$2.
+    // Sama dengan /api/orders/daily: order dihitung per hari kalender bisnis (created_at)
+    // ATAU ada pembayaran completed di hari itu.
+    //
+    // created_at / payments.created_at disimpan sebagai TIMESTAMP (tanpa timezone) di beberapa deployment,
+    // dan bisa efektif "UTC" tergantung timezone server/DB. Agar tidak miss "hari ini",
+    // kita match kedua interpretasi (raw ::date dan konversi dari UTC ke timezone bisnis).
+    const orderCreatedDateEq = (paramRef) => `
+      (
+        o.created_at::date = ${paramRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+      )
+    `;
+    const paymentCreatedDateEq = (paramRef) => `
+      (
+        p.created_at::date = ${paramRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = ${paramRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+      )
+    `;
+    const orderCreatedDateBetween = (fromRef, toRef) => `
+      (
+        o.created_at::date BETWEEN ${fromRef}::date AND ${toRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date BETWEEN ${fromRef}::date AND ${toRef}::date
+      )
+    `;
+    const paymentCreatedDateBetween = (fromRef, toRef) => `
+      (
+        p.created_at::date BETWEEN ${fromRef}::date AND ${toRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date BETWEEN ${fromRef}::date AND ${toRef}::date
+        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date BETWEEN ${fromRef}::date AND ${toRef}::date
+      )
+    `;
+
     const dayMatchSql = useRange
       ? `(
-      (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date BETWEEN $1::date AND $2::date
-      OR EXISTS (
-        SELECT 1
-        FROM payments p
-        WHERE p.order_id = o.order_id
-          AND p.status = 'completed'
-          AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date BETWEEN $1::date AND $2::date
-      )
-    )`
+        ${orderCreatedDateBetween('$1', '$2')}
+        OR EXISTS (
+          SELECT 1
+          FROM payments p
+          WHERE p.order_id = o.order_id
+            AND p.status = 'completed'
+            AND ${paymentCreatedDateBetween('$1', '$2')}
+        )
+      )`
       : `(
-      (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at))::date = $1::date
-      OR EXISTS (
-        SELECT 1
-        FROM payments p
-        WHERE p.order_id = o.order_id
-          AND p.status = 'completed'
-          AND (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = $1::date
-      )
-    )`;
+        ${orderCreatedDateEq('$1')}
+        OR EXISTS (
+          SELECT 1
+          FROM payments p
+          WHERE p.order_id = o.order_id
+            AND p.status = 'completed'
+            AND ${paymentCreatedDateEq('$1')}
+        )
+      )`;
     let whereClause = useRange
       ? `WHERE ${dayMatchSql} AND o.branch_id = $3`
       : `WHERE ${dayMatchSql} AND o.branch_id = $2`;
@@ -138,6 +173,7 @@ router.get('/dashboard/order-today', async (req, res) => {
     let paramIndex = useRange ? 4 : 3;
 
     if (filterUserId != null) {
+      // CS: hanya order user tsb; jangan include user_id NULL karena akan terlihat lintas user.
       whereClause += ` AND o.user_id = $${paramIndex}`;
       queryParams.push(filterUserId);
       paramIndex++;

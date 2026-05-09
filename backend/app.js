@@ -26,6 +26,11 @@ app.use(cors({
     if (!origin) {
       return callback(null, true);
     }
+    // Always allow localhost for Flutter web dev / internal tools.
+    // Flutter `flutter run -d chrome` uses a random localhost port.
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+      return callback(null, true);
+    }
     if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../utils/network_config.dart';
 import '../utils/network_connectivity.dart';
 import '../services/offline_sync_service.dart';
+import 'websocket_provider.dart';
 
 // Network status state
 class NetworkState {
@@ -36,7 +37,7 @@ class NetworkState {
 // Network status notifier
 class NetworkStatusNotifier extends StateNotifier<NetworkState> {
   Timer? _statusCheckTimer;
-  static const Duration checkInterval = Duration(seconds: 30);
+  static const Duration checkInterval = Duration(seconds: 60);
 
   NetworkStatusNotifier()
       : super(const NetworkState(
@@ -59,10 +60,20 @@ class NetworkStatusNotifier extends StateNotifier<NetworkState> {
 
   Future<void> checkNetworkStatus() async {
     try {
-      final isOnline = await NetworkConnectivity.isOnline();
-      final isBackendReachable = isOnline
-          ? await NetworkConnectivity.isBackendReachable(NetworkConfig.baseUrl)
-          : false;
+      // Cek internet umum (Google) dan backend secara independen.
+      // Di jaringan nyata, Google 204 sering timeout / diblokir sementara API bisnis
+      // masih hidup — jangan anggap offline hanya karena cek Google gagal.
+      final googleOnline = await NetworkConnectivity.isOnline();
+      var isBackendReachable = await NetworkConnectivity.isBackendReachable(
+        NetworkConfig.baseUrl,
+      );
+      if (!isBackendReachable &&
+          WebSocketNotifier.wsBackendAliveWithin(
+            WebSocketNotifier.wsBackendProofTtl,
+          )) {
+        isBackendReachable = true;
+      }
+      final isOnline = googleOnline || isBackendReachable;
 
       final latency = isBackendReachable
           ? await NetworkConnectivity.getNetworkLatency(NetworkConfig.baseUrl)
@@ -94,7 +105,7 @@ class NetworkStatusNotifier extends StateNotifier<NetworkState> {
         latency: latency,
       );
 
-      if (isOnline && isBackendReachable) {
+      if (isBackendReachable) {
         // Fire-and-forget: flush any offline write queue.
         unawaited(OfflineSyncService.syncPending());
       }

@@ -134,7 +134,18 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           ? _composeNotesForCash(_notesController.text)
           : _notesController.text;
 
-      final paymentData = {
+      // Service/custom: DP → cabang order; pelunasan → cabang pickup (lihat backend).
+      final orderType =
+          (widget.order['order_type'] ?? '').toString().toLowerCase();
+      final hc = widget.order['has_completed_payment'];
+      final hasCompleted =
+          hc == true || hc == 1 || hc?.toString().toLowerCase() == 'true';
+      final isServiceLike =
+          orderType == 'service' || orderType == 'custom';
+      final paymentKind =
+          isServiceLike ? (hasCompleted ? 'settlement' : 'dp') : null;
+
+      final paymentData = <String, dynamic>{
         'order_id': widget.order['order_id'],
         'amount': amountToRecord,
         'method': _paymentMethod,
@@ -143,6 +154,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         'user_id': userState.userId,
         'branch_id': userState.branch,
       };
+      if (paymentKind != null) {
+        paymentData['payment_kind'] = paymentKind;
+      }
 
       final response = await ApiClient.post(
         '/payments',
@@ -175,20 +189,33 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
             ? _composeNotesForCash(_notesController.text)
             : _notesController.text;
 
+        final orderType =
+            (widget.order['order_type'] ?? '').toString().toLowerCase();
+        final hc = widget.order['has_completed_payment'];
+        final hasCompleted =
+            hc == true || hc == 1 || hc?.toString().toLowerCase() == 'true';
+        final isServiceLike =
+            orderType == 'service' || orderType == 'custom';
+        final paymentKind =
+            isServiceLike ? (hasCompleted ? 'settlement' : 'dp') : null;
+        final body = <String, dynamic>{
+          'order_id': widget.order['order_id'],
+          'amount': amountToRecord,
+          'method': _paymentMethod,
+          'notes': notesToSend,
+          'proof_url': _proofUrl,
+          'user_id': ref.read(userStateProvider).userId,
+          'branch_id': ref.read(userStateProvider).branch,
+        };
+        if (paymentKind != null) {
+          body['payment_kind'] = paymentKind;
+        }
         final item = OfflineQueueItem(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           type: 'payment',
           method: 'POST',
           path: '/payments',
-          body: {
-            'order_id': widget.order['order_id'],
-            'amount': amountToRecord,
-            'method': _paymentMethod,
-            'notes': notesToSend,
-            'proof_url': _proofUrl,
-            'user_id': ref.read(userStateProvider).userId,
-            'branch_id': ref.read(userStateProvider).branch,
-          },
+          body: body,
           idempotencyKey: OfflineQueue.instance.newIdempotencyKey(),
           attempts: 0,
           createdAt: DateTime.now(),

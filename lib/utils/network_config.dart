@@ -70,7 +70,16 @@ class NetworkConfig {
   }
 
   static String _httpScheme() {
-    if (kIsWeb) return Uri.base.scheme == 'https' ? 'https' : 'http';
+    // Web:
+    // - For production host (default), always prefer HTTPS even when the app is
+    //   served from http://localhost during dev (`flutter run -d chrome`).
+    //   Using http:// in that case often fails (redirect/CORS/mixed rules) and
+    //   manifests as "ClientException: Failed to fetch".
+    // - For local backend (`USE_LOCAL_API=true`) keep following the page scheme.
+    if (kIsWeb) {
+      if (!_useLocal && _apiHostRaw.trim().isEmpty) return 'https';
+      return Uri.base.scheme == 'https' ? 'https' : 'http';
+    }
     const overrideScheme = String.fromEnvironment(
       'API_SCHEME',
       defaultValue: '',

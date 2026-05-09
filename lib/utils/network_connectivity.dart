@@ -3,16 +3,25 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class NetworkConnectivity {
+  /// Satu probe HTTP pada satu waktu — hindari tabrakan timer (network + health).
+  static Future<bool>? _backendReachableInFlight;
+
   // Cek apakah device online (dengan ping ke backend)
   static Future<bool> isOnline() async {
+    // Web: browser blocks cross-origin "ping" to arbitrary hosts (CORS),
+    // so treat "online" as true and rely on backend reachability checks.
+    if (kIsWeb) return true;
     try {
-      // Ping ke Google untuk memastikan koneksi internet
-      final response = await http.get(
-        Uri.parse('http://www.google.com'),
-        headers: {'Cache-Control': 'no-cache'},
-      ).timeout(const Duration(seconds: 5));
+      // Ping ke Google untuk memastikan koneksi internet (non-web only).
+      // Use a lightweight endpoint commonly returning 204.
+      final response = await http
+          .get(
+            Uri.parse('https://clients3.google.com/generate_204'),
+            headers: {'Cache-Control': 'no-cache'},
+          )
+          .timeout(const Duration(seconds: 5));
 
-      return response.statusCode == 200;
+      return response.statusCode == 204 || response.statusCode == 200;
     } catch (e) {
       debugPrint('Connectivity check failed: $e');
       return false;
@@ -20,15 +29,27 @@ class NetworkConnectivity {
   }
 
   // Cek apakah backend dapat diakses
-  static Future<bool> isBackendReachable(String baseUrl) async {
-    final root = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+  static Future<bool> isBackendReachable(String baseUrl) {
+    return _backendReachableInFlight ??= _probeBackendReachable(baseUrl)
+        .whenComplete(() => _backendReachableInFlight = null);
+  }
+
+  static Future<bool> _probeBackendReachable(String baseUrl) async {
+    final root = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+
+    // Timeout lebih longgar: jaringan lemot / server sibuk sering gagal di 5–10s
+    // padahal WebSocket masih hidup.
+    const liveTimeout = Duration(seconds: 15);
+    const healthTimeout = Duration(seconds: 20);
 
     // 1) /health/live — tidak menyentuh DB; cegah timeout palsu saat Postgres belum siap.
     try {
       final liveUrl = '$root/health/live';
       final live = await http
           .get(Uri.parse(liveUrl), headers: {'Cache-Control': 'no-cache'})
-          .timeout(const Duration(seconds: 5));
+          .timeout(liveTimeout);
       if (live.statusCode == 200) return true;
     } catch (e) {
       debugPrint('Backend /health/live: $e');
@@ -39,16 +60,15 @@ class NetworkConnectivity {
       final healthUrl = '$root/health';
       final response = await http
           .get(Uri.parse(healthUrl), headers: {'Cache-Control': 'no-cache'})
-          .timeout(const Duration(seconds: 10));
+          .timeout(healthTimeout);
 
       return response.statusCode == 200;
     } catch (e) {
       // Try base URL as fallback
       try {
-        final response = await http.get(
-          Uri.parse(baseUrl),
-          headers: {'Cache-Control': 'no-cache'},
-        ).timeout(const Duration(seconds: 10));
+        final response = await http
+            .get(Uri.parse(baseUrl), headers: {'Cache-Control': 'no-cache'})
+            .timeout(healthTimeout);
 
         return response.statusCode >= 200 && response.statusCode < 400;
       } catch (e2) {
@@ -62,10 +82,9 @@ class NetworkConnectivity {
   static Future<Duration?> getNetworkLatency(String baseUrl) async {
     try {
       final startTime = DateTime.now();
-      final response = await http.get(
-        Uri.parse(baseUrl),
-        headers: {'Cache-Control': 'no-cache'},
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse(baseUrl), headers: {'Cache-Control': 'no-cache'})
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode >= 200 && response.statusCode < 400) {
         final endTime = DateTime.now();
@@ -84,7 +103,9 @@ class NetworkConnectivity {
       return 'No internet connection';
     }
 
-    final isBackendReachable = await NetworkConnectivity.isBackendReachable(baseUrl);
+    final isBackendReachable = await NetworkConnectivity.isBackendReachable(
+      baseUrl,
+    );
     if (!isBackendReachable) {
       return 'Backend server unreachable';
     }
@@ -106,7 +127,9 @@ class NetworkConnectivity {
   }
 
   // Test manual connectivity to backend
-  static Future<Map<String, dynamic>> testBackendConnection(String baseUrl) async {
+  static Future<Map<String, dynamic>> testBackendConnection(
+    String baseUrl,
+  ) async {
     final result = <String, dynamic>{
       'isOnline': false,
       'isBackendReachable': false,

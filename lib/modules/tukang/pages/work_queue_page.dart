@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/widgets/workshop_cost_breakdown_sheet.dart';
 
 class WorkQueuePage extends ConsumerStatefulWidget {
   const WorkQueuePage({super.key});
@@ -345,17 +347,7 @@ dataRowMinHeight: narrow ? 52 : 48,
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
-      case 'in_workshop':
-      case 'repairing':
-      case 'polishing':
-      case 'custom_work':
-        return Colors.blue;
-      case 'completed':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
+    return OrderStatusUi.color(status);
   }
 
   String _getOrderTypeText(String orderType) {
@@ -387,10 +379,11 @@ dataRowMinHeight: narrow ? 52 : 48,
   void _startWork(Map<String, dynamic> order) async {
     try {
       await ApiService.updateWorkProgress(
-        order['order_id'],
+        int.parse(order['order_id'].toString()),
         'repairing',
         ref.read(userStateProvider).userId.toString(),
         notes: 'Work started by technician',
+        branchId: ref.read(userStateProvider).branch,
       );
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -456,6 +449,21 @@ dataRowMinHeight: narrow ? 52 : 48,
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Tutup'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final oid = int.tryParse(order['order_id']?.toString() ?? '');
+              if (oid == null) return;
+              final branch = ref.read(userStateProvider).branch;
+              Navigator.of(context).pop();
+              await showWorkshopCostBreakdownSheet(
+                context,
+                orderId: oid,
+                branchId: branch,
+                onSaved: _loadWorkQueue,
+              );
+            },
+            child: const Text('Biaya aktual'),
           ),
           ElevatedButton(
             onPressed: () {

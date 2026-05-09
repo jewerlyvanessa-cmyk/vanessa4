@@ -396,6 +396,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                 'method': 'cash',
                 'status': 'pending',
                 'notes': 'Uang muka (custom)',
+                'payment_kind': 'dp',
               }),
             );
           } catch (_) {

@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/widgets/workshop_cost_breakdown_sheet.dart';
 
 class UpdateProgressPage extends ConsumerStatefulWidget {
   const UpdateProgressPage({super.key});
@@ -49,6 +51,18 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
     }
   }
 
+  Future<void> _openCostEditor(Map<String, dynamic> work) async {
+    final oid = int.tryParse(work['order_id']?.toString() ?? '');
+    if (oid == null) return;
+    final branch = ref.read(userStateProvider).branch;
+    await showWorkshopCostBreakdownSheet(
+      context,
+      orderId: oid,
+      branchId: branch,
+      onSaved: _loadWorkQueue,
+    );
+  }
+
   Future<void> _updateProgress(int orderId, String status, String notes) async {
     try {
       final userState = ref.read(userStateProvider);
@@ -57,6 +71,7 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
         status,
         userState.userId.toString(),
         notes: notes,
+        branchId: userState.branch,
       );
 
       // Reload work queue after update
@@ -239,11 +254,23 @@ const desktopW = 920.0;
                                     .trim();
 
                                 final editCell = DataCell(
-                                  IconButton(
-                                    tooltip: 'Update progress',
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () =>
-                                        _showUpdateDialog(work),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Biaya aktual',
+                                        icon: const Icon(
+                                          Icons.receipt_long_outlined,
+                                        ),
+                                        onPressed: () => _openCostEditor(work),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Update progress',
+                                        icon: const Icon(Icons.edit),
+                                        onPressed: () =>
+                                            _showUpdateDialog(work),
+                                      ),
+                                    ],
                                   ),
                                 );
 
@@ -406,7 +433,7 @@ dataRowMinHeight: narrow ? 56 : 48,
                                                       label: dataTableColumnLabel('Pekerjaan'),
                                                     ),
                                                     const DataColumn(
-                                                      label: SizedBox(width: 44),
+                                                      label: SizedBox(width: 100),
                                                     ),
                                                   ]
                                                 : [
@@ -427,7 +454,7 @@ dataRowMinHeight: narrow ? 56 : 48,
                                                       label: dataTableColumnLabel('Catatan'),
                                                     ),
                                                     const DataColumn(
-                                                      label: SizedBox(width: 48),
+                                                      label: SizedBox(width: 104),
                                                     ),
                                                   ],
                                             rows: rows,
@@ -451,45 +478,11 @@ dataRowMinHeight: narrow ? 56 : 48,
   }
 
   String _getStatusText(String status) {
-    switch (status) {
-      case 'in_workshop':
-        return 'Diterima Workshop';
-      case 'repairing':
-        return 'Dikerjakan';
-      case 'polishing':
-        return 'Poles/Finishing';
-      case 'custom_work':
-        return 'Custom Work';
-      case 'done_workshop':
-        return 'Selesai Tukang';
-      case 'ready_for_pickup':
-      case 'completed':
-        return 'Selesai';
-      case 'cancelled':
-        return 'Dibatalkan';
-      default:
-        return 'Unknown';
-    }
+    return OrderStatusUi.label(status);
   }
 
   Color _getStatusColor(String status) {
-    switch (status) {
-      case 'in_workshop':
-        return Colors.blueGrey;
-      case 'repairing':
-      case 'polishing':
-      case 'custom_work':
-        return Colors.blue;
-      case 'done_workshop':
-        return Colors.teal;
-      case 'ready_for_pickup':
-      case 'completed':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+    return OrderStatusUi.color(status);
   }
 
   IconData _getStatusIcon(String status) {

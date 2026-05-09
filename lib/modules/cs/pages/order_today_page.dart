@@ -12,6 +12,7 @@ import 'package:vanessa3/providers/websocket_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/utils/order_today_report_print.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
 
 class OrderTodayPage extends ConsumerWidget {
   const OrderTodayPage({super.key});
@@ -501,55 +502,9 @@ class OrderTodayPage extends ConsumerWidget {
     return '—';
   }
 
-  String _getStatusLabel(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'draft':
-        return 'Draft';
-      case 'pending':
-        return 'Pending';
-      case 'reserved':
-        return 'Reserved';
-      case 'sold':
-        return 'Terjual';
-      case 'buyback':
-        return 'Buyback';
-      case 'on-service':
-        return 'Sedang Service';
-      case 'production':
-        return 'Produksi';
-      case 'completed':
-        return 'Selesai';
-      case 'cancelled':
-        return 'Dibatalkan';
-      default:
-        return status ?? 'Unknown';
-    }
-  }
+  String _getStatusLabel(String? status) => OrderStatusUi.label(status);
 
-  Color _getStatusColor(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'draft':
-        return Colors.grey;
-      case 'pending':
-        return Colors.orange;
-      case 'reserved':
-        return Colors.blue;
-      case 'sold':
-        return Colors.green;
-      case 'buyback':
-        return Colors.teal;
-      case 'on-service':
-        return Colors.orange;
-      case 'production':
-        return Colors.purple;
-      case 'completed':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
+  Color _getStatusColor(String? status) => OrderStatusUi.color(status);
 
   Widget _todayOrdersTable(
     BuildContext context,
@@ -784,28 +739,28 @@ class OrderTodayPage extends ConsumerWidget {
             side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
           ),
           clipBehavior: Clip.antiAlias,
-          child: Scrollbar(
+          // Avoid Scrollbar assertion on Web when the PrimaryScrollController
+          // isn't attached (nested scroll views + hover).
+          child: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
             child: SingleChildScrollView(
-              scrollDirection: Axis.vertical,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minWidth: minW),
-                  child: DataTable(
-                    headingTextStyle: narrow ? mobileHeaderStyle : null,
-                    dataTextStyle: narrow ? mobileCellStyle : null,
-                    headingRowColor: WidgetStateProperty.all(
-                      cs.surfaceContainerHigh,
-                    ),
-                    dataRowMinHeight: narrow ? 34 : 40,
-                    dataRowMaxHeight: narrow ? 42 : 52,
-                    columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
-                    horizontalMargin: 10,
-                    showCheckboxColumn: false,
-                    dividerThickness: 0.6,
-                    columns: columns,
-                    rows: rows,
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: minW),
+                child: DataTable(
+                  headingTextStyle: narrow ? mobileHeaderStyle : null,
+                  dataTextStyle: narrow ? mobileCellStyle : null,
+                  headingRowColor: WidgetStateProperty.all(
+                    cs.surfaceContainerHigh,
                   ),
+                  dataRowMinHeight: narrow ? 34 : 40,
+                  dataRowMaxHeight: narrow ? 42 : 52,
+                  columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
+                  horizontalMargin: 10,
+                  showCheckboxColumn: false,
+                  dividerThickness: 0.6,
+                  columns: columns,
+                  rows: rows,
                 ),
               ),
             ),

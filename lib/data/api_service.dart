@@ -288,6 +288,7 @@ class ApiService {
     String status,
     String technicianId, {
     String notes = '',
+    required String branchId,
   }) async {
     final url = Uri.parse('$baseUrl/api/workshop/update-progress');
 
@@ -301,6 +302,7 @@ class ApiService {
             'status': status,
             'technician_id': technicianId,
             'notes': notes,
+            'branch_id': branchId,
           }),
         ),
       );
@@ -310,6 +312,67 @@ class ApiService {
       debugPrint('Error updating work progress: $e');
       throw Exception('Failed to update work progress: $e');
     }
+  }
+
+  /// GET /api/workshop/order-cost-breakdown — riwayat & revisi terakhir
+  static Future<Map<String, dynamic>> getOrderCostBreakdown(
+    int orderId,
+    String branchId,
+  ) async {
+    final url = Uri.parse('$baseUrl/api/workshop/order-cost-breakdown').replace(
+      queryParameters: <String, String>{
+        'order_id': orderId.toString(),
+        'branch_id': branchId,
+      },
+    );
+    final response = await _makeRequest(
+      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+    );
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw Exception('Invalid cost breakdown response');
+    }
+    throw Exception(
+      'Gagal memuat biaya: ${response.statusCode} ${response.body}',
+    );
+  }
+
+  /// POST /api/workshop/order-cost-breakdown — simpan revisi + sinkron orders.total (backend)
+  static Future<Map<String, dynamic>> submitOrderCostBreakdown({
+    required int orderId,
+    required String branchId,
+    required double materialCost,
+    required double laborCost,
+    required double otherCost,
+    String notes = '',
+  }) async {
+    final url = Uri.parse('$baseUrl/api/workshop/order-cost-breakdown');
+    final response = await _makeRequest(
+      () => http.post(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode({
+          'order_id': orderId,
+          'branch_id': int.tryParse(branchId) ?? branchId,
+          'material_cost': materialCost,
+          'labor_cost': laborCost,
+          'other_cost': otherCost,
+          'notes': notes,
+        }),
+      ),
+    );
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw Exception('Invalid submit response');
+    }
+    String msg = response.body;
+    try {
+      final d = jsonDecode(response.body);
+      if (d is Map && d['error'] != null) msg = d['error'].toString();
+    } catch (_) {}
+    throw Exception('Gagal simpan biaya (${response.statusCode}): $msg');
   }
 
   /// Update material stock

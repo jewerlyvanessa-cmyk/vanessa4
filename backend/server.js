@@ -307,6 +307,54 @@ async function orderCostBreakdownsTableExists(client) {
   return _cachedOrderCostBreakdownsTableExists;
 }
 
+let _cachedOrdersPickupBranchColumnExists = null;
+async function ordersHasPickupBranchColumn(client) {
+  if (_cachedOrdersPickupBranchColumnExists !== null) {
+    return _cachedOrdersPickupBranchColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'orders'
+          AND column_name = 'pickup_branch_id'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedOrdersPickupBranchColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedOrdersPickupBranchColumnExists = false;
+  }
+  return _cachedOrdersPickupBranchColumnExists;
+}
+
+let _cachedPaymentsRevenueBranchColumnExists = null;
+async function paymentsHasRevenueBranchColumn(client) {
+  if (_cachedPaymentsRevenueBranchColumnExists !== null) {
+    return _cachedPaymentsRevenueBranchColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'revenue_branch_id'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedPaymentsRevenueBranchColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedPaymentsRevenueBranchColumnExists = false;
+  }
+  return _cachedPaymentsRevenueBranchColumnExists;
+}
+
 let _cachedItemConditionsColumns = null; // Set<string> | null
 async function getItemConditionsColumns(client) {
   if (_cachedItemConditionsColumns !== null) return _cachedItemConditionsColumns;
@@ -476,10 +524,10 @@ function disconnectPresenceSessionsForUser(targetUserId, reason) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
       }
-    } catch (_) {}
+    } catch (_) { }
     try {
       ws.close();
-    } catch (_) {}
+    } catch (_) { }
   }
   return { closed: toClose.length };
 }
@@ -585,6 +633,117 @@ app.use('/api/workshop', authRequired, requireRoles('superadmin', 'admin_worksho
 // Debug helper: inspect JWT payload (for troubleshooting role/branch issues)
 app.get('/api/whoami', authRequired, (req, res) => {
   res.json({ user: req.user ?? null });
+});
+
+// Debug helper: sanity-check "Order Today" counts on server.
+// Safe: requires auth; returns aggregate counts only.
+app.get('/api/debug/order-today-sanity', authRequired, async (req, res) => {
+  try {
+    const tz =
+      /^[\\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
+        ? String(process.env.BUSINESS_TIMEZONE).trim()
+        : 'Asia/Jakarta';
+    const bidRaw = String(req.query.branch_id ?? '').trim();
+    const branchId = parseInt(bidRaw, 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id is required' });
+    }
+    const datePat = /^\\d{4}-\\d{2}-\\d{2}$/;
+    const dateKey = datePat.test(String(req.query.date ?? '').trim())
+      ? String(req.query.date).trim()
+      : new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+
+    const userId = parseInt(
+      String(req.user?.user_id ?? req.user?.id ?? ''),
+      10,
+    );
+    const role = String(req.user?.role ?? '').trim().toLowerCase();
+
+    const q = `
+      SELECT
+        COUNT(*) FILTER (
+          WHERE o.branch_id = $1
+            AND (timezone('${tz}', o.created_at))::date = $2::date
+        ) AS orders_created_today,
+        COUNT(*) FILTER (
+          WHERE o.branch_id = $1
+            AND EXISTS (
+              SELECT 1
+              FROM payments p
+              WHERE p.order_id = o.order_id
+                AND p.status = 'completed'
+                AND (timezone('${tz}', p.created_at))::date = $2::date
+            )
+        ) AS orders_paid_today,
+        COUNT(*) FILTER (
+          WHERE o.branch_id = $1
+            AND (
+              (timezone('${tz}', o.created_at))::date = $2::date
+              OR EXISTS (
+                SELECT 1
+                FROM payments p
+                WHERE p.order_id = o.order_id
+                  AND p.status = 'completed'
+                  AND (timezone('${tz}', p.created_at))::date = $2::date
+              )
+            )
+        ) AS orders_today_union,
+        COUNT(*) FILTER (
+          WHERE o.branch_id = $1
+            AND (
+              (timezone('${tz}', o.created_at))::date = $2::date
+              OR EXISTS (
+                SELECT 1
+                FROM payments p
+                WHERE p.order_id = o.order_id
+                  AND p.status = 'completed'
+                  AND (timezone('${tz}', p.created_at))::date = $2::date
+              )
+            )
+            AND o.user_id = $3
+        ) AS orders_today_by_user,
+        COUNT(*) FILTER (
+          WHERE o.branch_id = $1
+            AND (
+              (timezone('${tz}', o.created_at))::date = $2::date
+              OR EXISTS (
+                SELECT 1
+                FROM payments p
+                WHERE p.order_id = o.order_id
+                  AND p.status = 'completed'
+                  AND (timezone('${tz}', p.created_at))::date = $2::date
+              )
+            )
+            AND o.user_id IS NULL
+        ) AS orders_today_user_null,
+        MIN(o.created_at) FILTER (WHERE o.branch_id = $1) AS min_created_at_branch,
+        MAX(o.created_at) FILTER (WHERE o.branch_id = $1) AS max_created_at_branch
+      FROM orders o
+    `;
+
+    const r = await db.query(q, [
+      branchId,
+      dateKey,
+      Number.isFinite(userId) ? userId : -1,
+    ]);
+
+    res.json({
+      ok: true,
+      tz,
+      dateKey,
+      branchId,
+      auth: { role, userId: Number.isFinite(userId) ? userId : null },
+      counts: r.rows?.[0] ?? null,
+    });
+  } catch (e) {
+    console.error('debug/order-today-sanity error:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.get('/api/admin/active-sessions', requireRoles('superadmin'), (req, res) => {
@@ -997,13 +1156,13 @@ app.post('/orders/pickup', async (req, res) => {
   } catch (e) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch (_) { }
     console.error('Error pickup order:', e);
     return res.status(500).json({ error: 'Internal server error' });
   } finally {
     try {
       client.release?.();
-    } catch (_) {}
+    } catch (_) { }
   }
 });
 
@@ -1432,38 +1591,38 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     const itemsPhotoCol = await getItemsPhotoColumn(client);
     const itemsPhotoColName = itemsPhotoCol || 'photo_url';
 
-  // Persist upload metadata (safe: filename is server-generated)
-  let _uploadId = null;
-  if (req.file) {
-    const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
-    const urlPath = `/uploads/${req.file.filename}`;
+    // Persist upload metadata (safe: filename is server-generated)
+    let _uploadId = null;
+    if (req.file) {
+      const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
+      const urlPath = `/uploads/${req.file.filename}`;
 
-    // Best-effort: some environments may not have `uploads` table.
-    // IMPORTANT: a failed query inside a transaction aborts the whole transaction
-    // in PostgreSQL, so we must use a SAVEPOINT.
-    await client.query('SAVEPOINT uploads_insert');
-    try {
-      const upRes = await client.query(
-        `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+      // Best-effort: some environments may not have `uploads` table.
+      // IMPORTANT: a failed query inside a transaction aborts the whole transaction
+      // in PostgreSQL, so we must use a SAVEPOINT.
+      await client.query('SAVEPOINT uploads_insert');
+      try {
+        const upRes = await client.query(
+          `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING upload_id`,
-        [
-          req.file.filename,
-          req.file.originalname || null,
-          req.file.mimetype || null,
-          typeof req.file.size === 'number' ? req.file.size : null,
-          urlPath,
-          Number.isFinite(uploaderUserId) ? uploaderUserId : null,
-        ]
-      );
-      _uploadId = upRes.rows[0]?.upload_id ?? null;
-      await client.query('RELEASE SAVEPOINT uploads_insert');
-    } catch (_) {
-      _uploadId = null;
-      await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
-      await client.query('RELEASE SAVEPOINT uploads_insert');
+          [
+            req.file.filename,
+            req.file.originalname || null,
+            req.file.mimetype || null,
+            typeof req.file.size === 'number' ? req.file.size : null,
+            urlPath,
+            Number.isFinite(uploaderUserId) ? uploaderUserId : null,
+          ]
+        );
+        _uploadId = upRes.rows[0]?.upload_id ?? null;
+        await client.query('RELEASE SAVEPOINT uploads_insert');
+      } catch (_) {
+        _uploadId = null;
+        await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
+        await client.query('RELEASE SAVEPOINT uploads_insert');
+      }
     }
-  }
 
     const {
       order_type,
@@ -1616,6 +1775,29 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           `,
           values
         );
+      }
+    }
+
+    // Cabang pengambilan (service/custom): NULL = sama dengan cabang order.
+    if ((order_type === 'service' || order_type === 'custom') && order?.order_id) {
+      const hasPickupColOrd = await ordersHasPickupBranchColumn(client);
+      if (hasPickupColOrd) {
+        const pickupRaw =
+          orderData.pickup_branch_id ?? orderData.pickupBranchId ?? null;
+        const pickupBid =
+          pickupRaw != null ? parseInt(String(pickupRaw), 10) : NaN;
+        const orderBid = parseInt(String(branch_id), 10);
+        if (
+          Number.isFinite(pickupBid) &&
+          pickupBid > 0 &&
+          Number.isFinite(orderBid) &&
+          pickupBid !== orderBid
+        ) {
+          await client.query(
+            `UPDATE orders SET pickup_branch_id = $1, updated_at = NOW() WHERE order_id = $2`,
+            [pickupBid, order.order_id]
+          );
+        }
       }
     }
 
@@ -1836,9 +2018,9 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         const insertParams = [final_item_id, order.order_id];
         const tipeBarang = String(
           kondisiBarang.tipe ??
-            itemData.tipe ??
-            itemDetails.tipe ??
-            ''
+          itemData.tipe ??
+          itemDetails.tipe ??
+          ''
         )
           .trim()
           .toLowerCase();
@@ -1860,17 +2042,17 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         );
         const untungRugiNormalized = String(
           kondisiBarang.untung_rugi ??
-            itemData.untung_rugi ??
-            itemData.untungRugi ??
-            'UNTUNG'
+          itemData.untung_rugi ??
+          itemData.untungRugi ??
+          'UNTUNG'
         )
           .trim()
           .toUpperCase();
         let nilaiUntungRugiFormula = NaN;
         const coef =
           tipeBarang === 'biasa' ? 10000 :
-          tipeBarang === 'gress' ? 12000 :
-          0;
+            tipeBarang === 'gress' ? 12000 :
+              0;
         if (coef > 0) {
           if (untungRugiNormalized === 'UNTUNG') {
             nilaiUntungRugiFormula = coef * penyesuaianBerat;
@@ -1883,11 +2065,11 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         const nilaiUntungRugiFinal = Number.isFinite(nilaiUntungRugiFormula)
           ? nilaiUntungRugiFormula
           : firstFiniteNumber(
-              kondisiBarang.nilai_untung_rugi,
-              itemData.nilai_untung_rugi,
-              itemData.nilaiUntungRugi,
-              0
-            );
+            kondisiBarang.nilai_untung_rugi,
+            itemData.nilai_untung_rugi,
+            itemData.nilaiUntungRugi,
+            0
+          );
         const nilaiResaleRaw =
           (hargaPerGramBuyback * penyesuaianBerat) +
           nilaiUntungRugiFinal -
@@ -2176,6 +2358,11 @@ app.get('/orders/pending-payment', async (req, res) => {
       return res.status(400).json({ error: 'branch_id is required' });
     }
 
+    const hasPickupPending = await ordersHasPickupBranchColumn(db);
+    const pickupBranchExprPending = hasPickupPending
+      ? 'COALESCE(o.pickup_branch_id, o.branch_id)'
+      : 'o.branch_id';
+
     const result = await db.query(`
       SELECT
         o.order_id,
@@ -2188,6 +2375,10 @@ app.get('/orders/pending-payment', async (req, res) => {
         c.name AS customer_name,
         c.phone,
         c.address,
+        EXISTS (
+          SELECT 1 FROM payments p0
+          WHERE p0.order_id = o.order_id AND p0.status = 'completed'
+        ) AS has_completed_payment,
         COALESCE(
           (
             SELECT SUM(COALESCE(p.amount, 0))::float8
@@ -2246,12 +2437,34 @@ app.get('/orders/pending-payment', async (req, res) => {
         ) AS material
       FROM orders o
       JOIN customers c ON o.customer_id = c.customer_id
-      WHERE o.branch_id = $1
-        AND o.status IN ('pending', 'ready_for_payment', 'confirmed')
-        AND NOT EXISTS (
-          SELECT 1 FROM payments p
-          WHERE p.order_id = o.order_id
-          AND p.status = 'completed'
+      WHERE o.status IN ('pending', 'ready_for_payment', 'confirmed', 'ready_for_pickup')
+        AND (
+          (
+            o.branch_id = $1::bigint
+            AND NOT EXISTS (
+              SELECT 1 FROM payments p
+              WHERE p.order_id = o.order_id
+                AND p.status = 'completed'
+            )
+          )
+          OR (
+            LOWER(TRIM(COALESCE(o.order_type::text, ''))) IN ('service', 'custom')
+            AND EXISTS (
+              SELECT 1 FROM payments p
+              WHERE p.order_id = o.order_id
+                AND p.status = 'completed'
+            )
+            AND COALESCE(o.total, 0) > COALESCE(
+              (
+                SELECT SUM(COALESCE(p2.amount, 0))::float8
+                FROM payments p2
+                WHERE p2.order_id = o.order_id
+                  AND p2.status IN ('pending', 'completed')
+              ),
+              0
+            ) + 0.000001
+            AND ${pickupBranchExprPending} = $1::bigint
+          )
         )
       ORDER BY o.created_at DESC
     `, [branch_id]);
@@ -2282,6 +2495,7 @@ app.get('/orders/pending-payment', async (req, res) => {
         material: row.material,
         paid_amount: paid,
         remaining_amount: remaining,
+        has_completed_payment: Boolean(row.has_completed_payment),
       };
     });
 
@@ -2300,6 +2514,8 @@ app.get('/payments/daily-summary', async (req, res) => {
     if (!branch_id) {
       return res.status(400).json({ error: 'branch_id is required' });
     }
+
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
 
     const datePat = /^\d{4}-\d{2}-\d{2}$/;
     const dfRaw = String(req.query.date_from ?? '').trim();
@@ -2333,10 +2549,19 @@ app.get('/payments/daily-summary', async (req, res) => {
 
     const hasProofCol = await paymentsHasProofUrlColumn(db);
     const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
+    const hasRevBranchColSummary = await paymentsHasRevenueBranchColumn(db);
+    const payBranchExprSummary = hasRevBranchColSummary
+      ? 'COALESCE(p.revenue_branch_id, o.branch_id)'
+      : 'o.branch_id';
 
     const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
-    const validatedOnly =
+    // Role-based scope:
+    // - kasir: hanya pembayaran yang divalidasi oleh user login (validated_by = user_id JWT)
+    // - admin_toko: semua pembayaran pada branch aktif
+    // - manajer: semua pembayaran (dipanggil per-branch dari Flutter)
+    const validatedOnlyFromQuery =
       validatedOnlyRaw === '1' || validatedOnlyRaw === 'true' || validatedOnlyRaw === 'yes';
+    const validatedOnly = role === 'kasir' ? true : validatedOnlyFromQuery;
 
     const orderTypeRaw = (req.query.order_type ?? '').toString().trim().toLowerCase();
     const allowedOrderTypes = new Set(['jual', 'buyback', 'service', 'custom']);
@@ -2382,6 +2607,8 @@ app.get('/payments/daily-summary', async (req, res) => {
     const listParams = [branch_id, ...dateArgs];
     let listExtraWhere = '';
     if (userIdFilter != null) {
+      // kasir: strict match (user_id + branch aktif).
+      // query user_id (tanpa validated_by_only) tetap strict juga.
       listExtraWhere += ` AND p.validated_by = $${listParams.length + 1}`;
       listParams.push(userIdFilter);
     }
@@ -2410,7 +2637,7 @@ app.get('/payments/daily-summary', async (req, res) => {
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
       JOIN customers c ON o.customer_id = c.customer_id
-      WHERE o.branch_id = $1
+      WHERE ${payBranchExprSummary} = $1
         AND ${paymentDateSql}
         ${listExtraWhere}
       ORDER BY p.created_at DESC
@@ -2419,6 +2646,7 @@ app.get('/payments/daily-summary', async (req, res) => {
     const summaryParams = [branch_id, ...dateArgs];
     let summaryExtraWhere = '';
     if (userIdFilter != null) {
+      // Keep summary consistent with list filtering rules above.
       summaryExtraWhere += ` AND p.validated_by = $${summaryParams.length + 1}`;
       summaryParams.push(userIdFilter);
     }
@@ -2446,7 +2674,7 @@ app.get('/payments/daily-summary', async (req, res) => {
           COALESCE(SUM(CASE WHEN method = 'qris' THEN amount ELSE 0 END), 0) as qris_amount
         FROM payments p
         JOIN orders o ON p.order_id = o.order_id
-        WHERE o.branch_id = $1
+        WHERE ${payBranchExprSummary} = $1
           AND ${paymentDateSql}
           AND p.status = 'completed'
           ${summaryExtraWhere}
@@ -4270,6 +4498,18 @@ const server = app.listen(port, '0.0.0.0', () => {
 // Tambahkan WebSocket untuk notifikasi realtime
 const wss = new WebSocket.Server({ server }); // Use the same server for WebSocket
 
+/** Trafik kosong panjang sering diputus proxy (Nginx, load balancer). Frame ping + ping aplikasi menjaga koneksi. */
+const WS_KEEPALIVE_MS = 25000;
+const serverWsPingInterval = setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.ping();
+      } catch (_) { }
+    }
+  });
+}, WS_KEEPALIVE_MS);
+
 wss.on('connection', (ws, req) => {
   console.log('New client connected'); // Log tambahan untuk koneksi baru
 
@@ -4295,6 +4535,17 @@ wss.on('connection', (ws, req) => {
               : { type: 'presence_error', error: 'invalid_token' },
           ),
         );
+        return;
+      }
+      if (msg && msg.type === 'ping') {
+        try {
+          ws.send(
+            JSON.stringify({
+              type: 'pong',
+              t: msg.t != null ? msg.t : null,
+            }),
+          );
+        } catch (_) { }
         return;
       }
     } catch (_) {
@@ -4407,8 +4658,12 @@ app.post('/payments', async (req, res) => {
     // Cek apakah order ada dan ambil order_type + branch_id (untuk stock mutation buyback)
     const hasPickedUpAtCol = await ordersHasPickedUpAtColumn(client);
     const pickedUpSelect = hasPickedUpAtCol ? 'picked_up_at' : 'NULL::timestamp AS picked_up_at';
+    const hasPickupColPay = await ordersHasPickupBranchColumn(client);
+    const pickupSelect = hasPickupColPay
+      ? 'pickup_branch_id'
+      : 'NULL::bigint AS pickup_branch_id';
     const orderCheck = await client.query(
-      `SELECT order_id, order_type, branch_id, status, ${pickedUpSelect} FROM orders WHERE order_id = $1`,
+      `SELECT order_id, order_type, branch_id, status, ${pickedUpSelect}, ${pickupSelect} FROM orders WHERE order_id = $1`,
       [parsedOrderId]
     );
     if (orderCheck.rows.length === 0) {
@@ -4417,14 +4672,49 @@ app.post('/payments', async (req, res) => {
 
     const orderType = orderCheck.rows[0].order_type;
     const orderBranchId = orderCheck.rows[0].branch_id;
+    const orderRowPay = orderCheck.rows[0];
+    const lowerOrderTypePay = (orderType ?? '').toString().trim().toLowerCase();
+    const allowMultiCompletedPay =
+      lowerOrderTypePay === 'service' || lowerOrderTypePay === 'custom';
 
-    // Cek apakah order sudah pernah dibayar (completed payment)
+    // Cek apakah order sudah pernah dibayar (completed payment) — service/custom boleh DP + pelunasan.
     const existingPayment = await client.query(
       'SELECT payment_id FROM payments WHERE order_id = $1 AND status = $2',
       [parsedOrderId, 'completed']
     );
-    if (existingPayment.rows.length > 0) {
+    const hasPriorCompletedPay = existingPayment.rows.length > 0;
+    if (!allowMultiCompletedPay && hasPriorCompletedPay) {
       return res.status(400).json({ error: 'Order ini sudah dibayar. Tidak dapat melakukan pembayaran ganda.' });
+    }
+
+    const hasRevColPay = await paymentsHasRevenueBranchColumn(client);
+    /** @type {number | null} */
+    let revenueBranchIdParam = null;
+    if (hasRevColPay) {
+      const orderBidPay = parseInt(String(orderBranchId), 10);
+      if (lowerOrderTypePay === 'service' || lowerOrderTypePay === 'custom') {
+        const pkRaw = (req.body.payment_kind ?? '').toString().trim().toLowerCase();
+        let kind = pkRaw;
+        if (!kind) {
+          kind = hasPriorCompletedPay ? 'settlement' : 'dp';
+        }
+        const isSettlementKind =
+          kind === 'settlement' ||
+          kind === 'pelunasan' ||
+          kind === 'pickup' ||
+          kind === 'final' ||
+          kind === 'lunas';
+        const pickupRaw = orderRowPay.pickup_branch_id;
+        const pickupBid =
+          pickupRaw != null ? parseInt(String(pickupRaw), 10) : NaN;
+        const effectivePickup =
+          Number.isFinite(pickupBid) && pickupBid > 0 ? pickupBid : orderBidPay;
+        revenueBranchIdParam = isSettlementKind
+          ? (Number.isFinite(effectivePickup) ? effectivePickup : orderBidPay)
+          : (Number.isFinite(orderBidPay) ? orderBidPay : null);
+      } else {
+        revenueBranchIdParam = Number.isFinite(orderBidPay) ? orderBidPay : null;
+      }
     }
 
     const hasProofCol = await paymentsHasProofUrlColumn(client);
@@ -4457,6 +4747,12 @@ app.post('/payments', async (req, res) => {
       params.push(validatedBy);
     }
 
+    if (hasRevColPay) {
+      cols.push('revenue_branch_id');
+      values.push(`$${++idx}`);
+      params.push(revenueBranchIdParam);
+    }
+
     cols.push('payment_date');
     values.push('CURRENT_TIMESTAMP');
 
@@ -4473,7 +4769,7 @@ app.post('/payments', async (req, res) => {
       const orderStatus = (orderCheck.rows[0].status ?? '').toString().trim().toLowerCase();
       const pickedUpAt = orderCheck.rows[0].picked_up_at;
       let nextOrderStatus = 'completed';
-      const lowerOrderType = (orderType ?? '').toString().trim().toLowerCase();
+      const lowerOrderType = lowerOrderTypePay;
       if (lowerOrderType === 'service' || lowerOrderType === 'custom') {
         const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
         const workshopEntryStatus = supportsWorkshopStatuses
@@ -4584,13 +4880,13 @@ app.post('/payments', async (req, res) => {
   } catch (error) {
     try {
       await client.query('ROLLBACK');
-    } catch (_) {}
+    } catch (_) { }
     console.error('Error creating payment:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     try {
       client.release?.();
-    } catch (_) {}
+    } catch (_) { }
   }
 });
 
@@ -5905,10 +6201,47 @@ app.get('/payments/daily', async (req, res) => {
       return res.status(400).json({ error: 'date and branch_id are required' });
     }
 
-    // Parse date untuk mendapatkan range hari ini
-    const startDate = new Date(date);
-    const endDate = new Date(date);
-    endDate.setDate(endDate.getDate() + 1);
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const tokenUserIdRaw = req.user?.user_id ?? req.user?.id;
+    const tokenUserId =
+      tokenUserIdRaw != null ? parseInt(String(tokenUserIdRaw), 10) : NaN;
+
+    // IMPORTANT:
+    // Jangan pakai `new Date('yyyy-MM-dd')` + toISOString() untuk filter harian.
+    // JS akan menganggap string itu UTC midnight → bergeser jika bisnis pakai Asia/Jakarta
+    // dan kolom DB bertipe TIMESTAMP tanpa timezone / tersimpan "waktu lokal".
+    const BUSINESS_TZ =
+      /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
+        ? String(process.env.BUSINESS_TIMEZONE).trim()
+        : 'Asia/Jakarta';
+
+    const targetDate = String(date).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return res
+        .status(400)
+        .json({ error: 'date must be in format yyyy-MM-dd' });
+    }
+
+    // Match tanggal secara robust untuk TIMESTAMP (tanpa timezone) dan TIMESTAMPTZ.
+    // Kita cocokkan baik interpretasi "naive local", maupun "naive sebenarnya UTC".
+    const paymentDateMatch = (paramRef) => `
+      (
+        (timezone('${BUSINESS_TZ}', p.payment_date))::date = ${paramRef}::date
+        OR (timezone('${BUSINESS_TZ}', p.payment_date AT TIME ZONE 'UTC'))::date = ${paramRef}::date
+        OR p.payment_date::date = ${paramRef}::date
+      )
+    `;
+
+    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
+    const hasRevBranchColDaily = await paymentsHasRevenueBranchColumn(db);
+    const payBranchExprDaily = hasRevBranchColDaily
+      ? 'COALESCE(p.revenue_branch_id, o.branch_id)'
+      : 'o.branch_id';
+    const kasirScope =
+      role === 'kasir' &&
+      hasValidatedByCol &&
+      Number.isFinite(tokenUserId) &&
+      tokenUserId > 0;
 
     // Query untuk summary pembayaran harian
     const summaryQuery = `
@@ -5919,15 +6252,18 @@ app.get('/payments/daily', async (req, res) => {
         COUNT(*) as method_count
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
-      WHERE o.branch_id = $1
-        AND p.payment_date >= $2
-        AND p.payment_date < $3
+      WHERE ${payBranchExprDaily} = $1
+        AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
+        ${kasirScope ? 'AND p.validated_by = $3' : ''}
       GROUP BY method
       ORDER BY total_amount DESC
     `;
 
-    const summaryResult = await db.query(summaryQuery, [branch_id, startDate.toISOString(), endDate.toISOString()]);
+    const summaryParams = kasirScope
+      ? [branch_id, targetDate, tokenUserId]
+      : [branch_id, targetDate];
+    const summaryResult = await db.query(summaryQuery, summaryParams);
 
     // Query untuk detail transaksi
     const detailQuery = `
@@ -5943,15 +6279,18 @@ app.get('/payments/daily', async (req, res) => {
       JOIN orders o ON p.order_id = o.order_id
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      WHERE o.branch_id = $1
-        AND p.payment_date >= $2
-        AND p.payment_date < $3
+      WHERE ${payBranchExprDaily} = $1
+        AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
+        ${kasirScope ? 'AND p.validated_by = $3' : ''}
       GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.payment_date, c.name
       ORDER BY p.payment_date DESC
     `;
 
-    const detailResult = await db.query(detailQuery, [branch_id, startDate.toISOString(), endDate.toISOString()]);
+    const detailParams = kasirScope
+      ? [branch_id, targetDate, tokenUserId]
+      : [branch_id, targetDate];
+    const detailResult = await db.query(detailQuery, detailParams);
 
     // Hitung total keseluruhan
     const totalAmount = summaryResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount || 0), 0);
@@ -6432,26 +6771,43 @@ app.get("/api/workshop/order-cost-breakdown", async (req, res) => {
 });
 
 app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
+  const { order_id, branch_id, material_cost, labor_cost, other_cost, notes } = req.body ?? {};
+  const orderId = parseInt(String(order_id ?? ""), 10);
+  const branchId = parseInt(String(branch_id ?? ""), 10);
+  if (!Number.isFinite(orderId) || orderId <= 0) {
+    return res.status(400).json({ error: "order_id tidak valid" });
+  }
+  if (!Number.isFinite(branchId) || branchId <= 0) {
+    return res.status(400).json({ error: "branch_id wajib diisi" });
+  }
+
+  const role = (req.user?.role ?? "").toString().trim().toLowerCase();
+  const allowedRoles = new Set(["superadmin", "admin_toko", "admin_workshop", "tukang"]);
+  if (!allowedRoles.has(role)) {
+    return res.status(403).json({ error: "Role tidak diizinkan update biaya" });
+  }
+
+  const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
+  if (!hasBreakdownTable) {
+    return res.status(400).json({ error: "Tabel order_cost_breakdowns belum tersedia" });
+  }
+
+  const materialCost = Math.max(0, parseFloat(String(material_cost ?? 0)) || 0);
+  const laborCost = Math.max(0, parseFloat(String(labor_cost ?? 0)) || 0);
+  const otherCost = Math.max(0, parseFloat(String(other_cost ?? 0)) || 0);
+  const cleanNotes = String(notes ?? "").trim() || null;
+  const updatedBy = parseInt(String(req.user?.user_id ?? req.body?.technician_id ?? 0), 10);
+  const safeUpdatedBy = Number.isFinite(updatedBy) && updatedBy > 0 ? updatedBy : null;
+
+  const client = await db.connect();
+  let committed = false;
   try {
-    const { order_id, branch_id, material_cost, labor_cost, other_cost, notes } = req.body ?? {};
-    const orderId = parseInt(String(order_id ?? ""), 10);
-    const branchId = parseInt(String(branch_id ?? ""), 10);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      return res.status(400).json({ error: "order_id tidak valid" });
-    }
-    if (!Number.isFinite(branchId) || branchId <= 0) {
-      return res.status(400).json({ error: "branch_id wajib diisi" });
-    }
+    await client.query("BEGIN");
 
-    const role = (req.user?.role ?? "").toString().trim().toLowerCase();
-    const allowedRoles = new Set(["superadmin", "admin_toko", "admin_workshop", "tukang"]);
-    if (!allowedRoles.has(role)) {
-      return res.status(403).json({ error: "Role tidak diizinkan update biaya" });
-    }
-
-    const orderRes = await db.query(
+    const orderRes = await client.query(
       `
-        SELECT order_id, branch_id, order_type
+        SELECT order_id, branch_id, order_type, status,
+               COALESCE(diskon, 0)::float8 AS diskon
         FROM orders
         WHERE order_id = $1
         LIMIT 1
@@ -6459,31 +6815,30 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
       [orderId]
     );
     if (orderRes.rows.length === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ error: "Order tidak ditemukan" });
     }
     const order = orderRes.rows[0];
     if (parseInt(order.branch_id, 10) !== branchId) {
+      await client.query("ROLLBACK");
       return res.status(403).json({ error: "Order bukan milik branch ini" });
     }
     const orderType = String(order.order_type ?? "").toLowerCase();
     if (orderType !== "service" && orderType !== "custom") {
+      await client.query("ROLLBACK");
       return res.status(400).json({ error: "Hanya order service/custom" });
     }
 
-    const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
-    if (!hasBreakdownTable) {
-      return res.status(400).json({ error: "Tabel order_cost_breakdowns belum tersedia" });
+    const st = (order.status ?? "").toString().trim().toLowerCase();
+    const noCostEditStatuses = new Set(["cancelled", "completed", "sold"]);
+    if (noCostEditStatuses.has(st)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: `Tidak bisa mengubah biaya pada status "${st}"`,
+      });
     }
 
-    const materialCost = Math.max(0, parseFloat(String(material_cost ?? 0)) || 0);
-    const laborCost = Math.max(0, parseFloat(String(labor_cost ?? 0)) || 0);
-    const otherCost = Math.max(0, parseFloat(String(other_cost ?? 0)) || 0);
-    const cleanNotes = String(notes ?? "").trim() || null;
-    const updatedBy = parseInt(String(req.user?.user_id ?? req.body?.technician_id ?? 0), 10);
-    const safeUpdatedBy = Number.isFinite(updatedBy) && updatedBy > 0 ? updatedBy : null;
-
-    await db.query("BEGIN");
-    const revRes = await db.query(
+    const revRes = await client.query(
       `
         SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision
         FROM order_cost_breakdowns
@@ -6493,7 +6848,7 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
     );
     const nextRevision = parseInt(revRes.rows?.[0]?.next_revision ?? 1, 10) || 1;
 
-    const inserted = await db.query(
+    const inserted = await client.query(
       `
         INSERT INTO order_cost_breakdowns (
           order_id,
@@ -6509,9 +6864,82 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
       [orderId, nextRevision, materialCost, laborCost, otherCost, cleanNotes, safeUpdatedBy]
     );
 
-    const hasOrdersMetadata = await ordersHasMetadataColumn(db);
+    // Opsi B: selaraskan tagihan (orders.total) dengan breakdown — sama seperti POST /orders:
+    // jumlah baris (dibulatkan ke kelipatan 5.000) lalu diskon level order.
+    const preDiscountBase = materialCost + laborCost + otherCost;
+    const diskonOrder = parseFloat(order.diskon) || 0;
+    const lineRounded =
+      preDiscountBase > 0 ? Math.ceil(preDiscountBase / 5000) * 5000 : 0;
+    const newOrderTotal = lineRounded * (1 - diskonOrder / 100);
+
+    const itemsRes = await client.query(
+      `
+        SELECT order_item_id
+        FROM order_items
+        WHERE order_id = $1
+        ORDER BY order_item_id ASC
+      `,
+      [orderId]
+    );
+    if (itemsRes.rows.length > 0) {
+      const firstId = itemsRes.rows[0].order_item_id;
+      await client.query(
+        `
+          UPDATE order_items
+          SET subtotal = $1,
+              total = $2,
+              diskon = 0
+          WHERE order_item_id = $3
+        `,
+        [preDiscountBase, lineRounded, firstId]
+      );
+      if (itemsRes.rows.length > 1) {
+        await client.query(
+          `
+            UPDATE order_items
+            SET subtotal = 0,
+                total = 0,
+                diskon = 0
+            WHERE order_id = $1
+              AND order_item_id <> $2
+          `,
+          [orderId, firstId]
+        );
+      }
+    }
+
+    try {
+      await client.query(
+        `
+          UPDATE orders
+          SET total = $1,
+              updated_at = NOW()
+          WHERE order_id = $2
+        `,
+        [newOrderTotal, orderId]
+      );
+    } catch (updErr) {
+      await client.query("ROLLBACK");
+      console.error("order-cost-breakdown: update orders.total failed:", updErr);
+      return res.status(500).json({ error: "Gagal memperbarui total order" });
+    }
+
+    const estCols = await ordersEstimateColumns(client);
+    if (estCols.estimate_amount) {
+      await client.query(
+        `
+          UPDATE orders
+          SET estimate_amount = $1,
+              updated_at = NOW()
+          WHERE order_id = $2
+        `,
+        [preDiscountBase, orderId]
+      );
+    }
+
+    const hasOrdersMetadata = await ordersHasMetadataColumn(client);
     if (hasOrdersMetadata) {
-      await db.query(
+      await client.query(
         `
           UPDATE orders
           SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
@@ -6523,7 +6951,9 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
             material_cost: materialCost,
             labor_cost: laborCost,
             other_cost: otherCost,
-            actual_total_cost: materialCost + laborCost + otherCost,
+            actual_total_cost: preDiscountBase,
+            invoice_pre_discount_rounded: lineRounded,
+            order_total_after_discount: newOrderTotal,
             cost_revision: nextRevision,
             cost_updated_at: new Date().toISOString(),
           }),
@@ -6532,10 +6962,15 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
       );
     }
 
-    await db.query("COMMIT");
+    await client.query("COMMIT");
+    committed = true;
+
     const row = inserted.rows[0] || {};
     return res.status(200).json({
       success: true,
+      order_total: newOrderTotal,
+      items_pre_discount_rounded: lineRounded,
+      pre_discount_sum: preDiscountBase,
       breakdown: {
         ...row,
         breakdown_id: row.breakdown_id == null ? null : String(row.breakdown_id),
@@ -6548,9 +6983,17 @@ app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
       },
     });
   } catch (error) {
-    try { await db.query("ROLLBACK"); } catch (_) {}
+    if (!committed) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) { /* ignore */ }
+    }
     console.error("Error saving order cost breakdown:", error);
     return res.status(500).json({ error: "Internal server error" });
+  } finally {
+    try {
+      client.release();
+    } catch (_) { /* ignore */ }
   }
 });
 

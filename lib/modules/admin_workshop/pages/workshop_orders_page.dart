@@ -4,8 +4,10 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/widgets/workshop_cost_breakdown_sheet.dart';
 
 class WorkshopOrdersPage extends ConsumerStatefulWidget {
   const WorkshopOrdersPage({super.key});
@@ -298,6 +300,10 @@ const desktopW = 960.0;
                                           child: Text('Assign teknisi'),
                                         ),
                                         PopupMenuItem(
+                                          value: 'cost_breakdown',
+                                          child: Text('Biaya aktual (tagihan)'),
+                                        ),
+                                        PopupMenuItem(
                                           value: 'update_status',
                                           child: Text('Update status'),
                                         ),
@@ -514,24 +520,14 @@ dataRowMinHeight: narrow ? 52 : 48,
   }
 
   Color _getStatusColor(String? status) {
-    switch (status) {
-      case 'pending':
-        return Colors.grey;
-      case 'sent-to-workshop':
-        return Colors.blueGrey;
-      case 'in_workshop':
+    // Keep workshop-specific statuses mapped, fallback to shared mapping.
+    switch (status?.toLowerCase()) {
       case 'repairing':
       case 'polishing':
       case 'custom_work':
         return Colors.orange;
-      case 'done_workshop':
-      case 'ready_for_pickup':
-      case 'completed':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
       default:
-        return Colors.grey;
+        return OrderStatusUi.color(status);
     }
   }
 
@@ -539,30 +535,16 @@ dataRowMinHeight: narrow ? 52 : 48,
     switch (status) {
       case 'all':
         return 'Semua Status';
-      case 'pending':
-        return 'Pending';
       case 'in_progress':
         return 'Dalam Proses';
-      case 'completed':
-        return 'Selesai';
-      case 'sent-to-workshop':
-        return 'Kirim ke Workshop';
-      case 'in_workshop':
-        return 'Diterima Workshop';
       case 'repairing':
         return 'Dikerjakan';
       case 'polishing':
         return 'Poles/Finishing';
       case 'custom_work':
         return 'Custom Work';
-      case 'done_workshop':
-        return 'Siap Kirim ke Toko';
-      case 'ready_for_pickup':
-        return 'Siap Diambil Customer';
-      case 'cancelled':
-        return 'Dibatalkan';
       default:
-        return status ?? 'Unknown';
+        return OrderStatusUi.label(status);
     }
   }
 
@@ -573,6 +555,17 @@ dataRowMinHeight: narrow ? 52 : 48,
           SnackBar(
             content: Text('Assign teknisi untuk order #${order['order_id']}'),
           ),
+        );
+        break;
+      case 'cost_breakdown':
+        final oid = int.tryParse(order['order_id']?.toString() ?? '');
+        if (oid == null) return;
+        final branch = ref.read(userStateProvider).branch;
+        showWorkshopCostBreakdownSheet(
+          context,
+          orderId: oid,
+          branchId: branch,
+          onSaved: _loadWorkshopOrders,
         );
         break;
       case 'update_status':

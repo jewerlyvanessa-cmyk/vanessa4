@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'faktur_page.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/order_status_ui.dart';
 
 class OrderDetailPage extends ConsumerStatefulWidget {
   final Map<String, dynamic> order;
@@ -104,51 +105,9 @@ class _OrderDetailPageState extends ConsumerState<OrderDetailPage> {
     }
   }
 
-  String _getStatusLabel(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'draft':
-        return 'Draft';
-      case 'reserved':
-        return 'Reserved';
-      case 'sold':
-        return 'Terjual';
-      case 'buyback':
-        return 'Buyback';
-      case 'on-service':
-        return 'Sedang Service';
-      case 'production':
-        return 'Produksi';
-      case 'completed':
-        return 'Selesai';
-      case 'cancelled':
-        return 'Dibatalkan';
-      default:
-        return status ?? 'Unknown';
-    }
-  }
+  String _getStatusLabel(String? status) => OrderStatusUi.label(status);
 
-  Color _getStatusColor(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'draft':
-        return Colors.grey;
-      case 'reserved':
-        return Colors.blue;
-      case 'sold':
-        return Colors.green;
-      case 'buyback':
-        return Colors.teal;
-      case 'on-service':
-        return Colors.orange;
-      case 'production':
-        return Colors.purple;
-      case 'completed':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
+  Color _getStatusColor(String? status) => OrderStatusUi.color(status);
 
   @override
   Widget build(BuildContext context) {
