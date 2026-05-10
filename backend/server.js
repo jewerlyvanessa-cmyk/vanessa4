@@ -27,40 +27,14 @@ const dashboardOrdersRoute = require('./routes/dashboard_orders'); // Import das
 const branchesRoute = require('./routes/branches'); // Import branches route
 const userInfoRoute = require('./routes/userInfo');
 const getOrdersDaily = require('./routes/orders_daily_handler');
-
-/**
- * Stockist clients send item_name as a display label "KODE - Nama" while
- * `items.name` in DB is usually just "Nama" (kode is in kode_produk). Extract
- * the code so we can match the source row when the label !== items.name.
- */
-function parseKodeProdukFromTransferItemLabel(itemLabel) {
-  const t = String(itemLabel ?? '').trim();
-  if (!t) return null;
-  const m = t.match(/^(.+?)\s*[-\u2013\u2014]\s+(.+)$/u);
-  if (m) return m[1].trim();
-  const idx = t.indexOf(' - ');
-  if (idx > 0) return t.slice(0, idx).trim();
-  return null;
-}
-
-/**
- * If DB has no `transfers.courier` column, POST may prefix notes with
- * "Kurir: …" — expose that as `courier` in GET for clients.
- */
-function extractKurirFromTransferNotes(notes) {
-  if (notes == null) return null;
-  const s = String(notes);
-  const m = s.match(/^\s*Kurir:\s*([^\n\r]+)/m);
-  return m ? m[1].trim() : null;
-}
-
-function extractTransferSourceTypeFromNotes(notes) {
-  if (notes == null) return null;
-  const s = String(notes);
-  const m = s.match(/^\s*Sumber asli:\s*([^\n\r]+)/im);
-  return m ? m[1].trim().toLowerCase() : null;
-}
-
+const { registerWorkshopRoutes } = require('./routes/workshop');
+const { registerTransfersRoutes } = require('./routes/transfers');
+const { registerPaymentsCoreRoutes } = require('./routes/payments_core');
+const {
+  ordersHasMetadataColumn,
+  ordersEstimateColumns,
+  ordersHasPickupBranchColumn,
+} = require('./lib/orders_workshop_helpers');
 function roundUpToNearest5000(amount) {
   const n = typeof amount === 'number' ? amount : parseFloat(amount);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -121,240 +95,6 @@ async function getOrderItemsPhotoColumn(client) {
     _cachedOrderItemsPhotoColumn = null;
   }
   return _cachedOrderItemsPhotoColumn;
-}
-
-let _cachedPaymentsProofColumnExists = null; // boolean | null (unknown)
-async function paymentsHasProofUrlColumn(client) {
-  if (_cachedPaymentsProofColumnExists !== null) return _cachedPaymentsProofColumnExists;
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'payments'
-          AND column_name = 'proof_url'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedPaymentsProofColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedPaymentsProofColumnExists = false;
-  }
-  return _cachedPaymentsProofColumnExists;
-}
-
-let _cachedPaymentsValidatedByColumnExists = null; // boolean | null (unknown)
-async function paymentsHasValidatedByColumn(client) {
-  if (_cachedPaymentsValidatedByColumnExists !== null) {
-    return _cachedPaymentsValidatedByColumnExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'payments'
-          AND column_name = 'validated_by'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedPaymentsValidatedByColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedPaymentsValidatedByColumnExists = false;
-  }
-  return _cachedPaymentsValidatedByColumnExists;
-}
-
-let _cachedOrdersPickedUpAtColumnExists = null; // boolean | null (unknown)
-async function ordersHasPickedUpAtColumn(client) {
-  if (_cachedOrdersPickedUpAtColumnExists !== null) {
-    return _cachedOrdersPickedUpAtColumnExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'orders'
-          AND column_name = 'picked_up_at'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedOrdersPickedUpAtColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedOrdersPickedUpAtColumnExists = false;
-  }
-  return _cachedOrdersPickedUpAtColumnExists;
-}
-
-let _cachedOrdersMetadataColumnExists = null; // boolean | null (unknown)
-async function ordersHasMetadataColumn(client) {
-  if (_cachedOrdersMetadataColumnExists !== null) {
-    return _cachedOrdersMetadataColumnExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'orders'
-          AND column_name = 'metadata'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedOrdersMetadataColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedOrdersMetadataColumnExists = false;
-  }
-  return _cachedOrdersMetadataColumnExists;
-}
-
-let _cachedOrdersSupportsWorkshopStatuses = null; // boolean | null (unknown)
-async function ordersSupportsWorkshopStatuses(client) {
-  if (_cachedOrdersSupportsWorkshopStatuses !== null) {
-    return _cachedOrdersSupportsWorkshopStatuses;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT pg_get_constraintdef(c.oid) AS def
-        FROM pg_constraint c
-        JOIN pg_class t ON t.oid = c.conrelid
-        JOIN pg_namespace n ON n.oid = c.connamespace
-        WHERE n.nspname = 'public'
-          AND t.relname = 'orders'
-          AND c.conname = 'orders_status_check'
-        LIMIT 1
-      `,
-      []
-    );
-    const def = (r.rows?.[0]?.def ?? '').toString().toLowerCase();
-    _cachedOrdersSupportsWorkshopStatuses =
-      def.includes('sent-to-workshop') ||
-      def.includes('in_workshop') ||
-      def.includes('ready_for_pickup');
-  } catch (_) {
-    _cachedOrdersSupportsWorkshopStatuses = false;
-  }
-  return _cachedOrdersSupportsWorkshopStatuses;
-}
-
-let _cachedOrdersEstimateColumns = null; // { estimate_amount, estimate_due_at, estimate_duration_text, estimate_notes }
-async function ordersEstimateColumns(client) {
-  if (_cachedOrdersEstimateColumns !== null) {
-    return _cachedOrdersEstimateColumns;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'orders'
-          AND column_name IN (
-            'estimate_amount',
-            'estimate_due_at',
-            'estimate_duration_text',
-            'estimate_notes'
-          )
-      `,
-      []
-    );
-    const set = new Set((r.rows ?? []).map((row) => String(row.column_name)));
-    _cachedOrdersEstimateColumns = {
-      estimate_amount: set.has('estimate_amount'),
-      estimate_due_at: set.has('estimate_due_at'),
-      estimate_duration_text: set.has('estimate_duration_text'),
-      estimate_notes: set.has('estimate_notes'),
-    };
-  } catch (_) {
-    _cachedOrdersEstimateColumns = {
-      estimate_amount: false,
-      estimate_due_at: false,
-      estimate_duration_text: false,
-      estimate_notes: false,
-    };
-  }
-  return _cachedOrdersEstimateColumns;
-}
-
-let _cachedOrderCostBreakdownsTableExists = null; // boolean | null (unknown)
-async function orderCostBreakdownsTableExists(client) {
-  if (_cachedOrderCostBreakdownsTableExists !== null) {
-    return _cachedOrderCostBreakdownsTableExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name = 'order_cost_breakdowns'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedOrderCostBreakdownsTableExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedOrderCostBreakdownsTableExists = false;
-  }
-  return _cachedOrderCostBreakdownsTableExists;
-}
-
-let _cachedOrdersPickupBranchColumnExists = null;
-async function ordersHasPickupBranchColumn(client) {
-  if (_cachedOrdersPickupBranchColumnExists !== null) {
-    return _cachedOrdersPickupBranchColumnExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'orders'
-          AND column_name = 'pickup_branch_id'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedOrdersPickupBranchColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedOrdersPickupBranchColumnExists = false;
-  }
-  return _cachedOrdersPickupBranchColumnExists;
-}
-
-let _cachedPaymentsRevenueBranchColumnExists = null;
-async function paymentsHasRevenueBranchColumn(client) {
-  if (_cachedPaymentsRevenueBranchColumnExists !== null) {
-    return _cachedPaymentsRevenueBranchColumnExists;
-  }
-  try {
-    const r = await client.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'payments'
-          AND column_name = 'revenue_branch_id'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedPaymentsRevenueBranchColumnExists = r.rows.length > 0;
-  } catch (_) {
-    _cachedPaymentsRevenueBranchColumnExists = false;
-  }
-  return _cachedPaymentsRevenueBranchColumnExists;
 }
 
 let _cachedItemConditionsColumns = null; // Set<string> | null
@@ -558,7 +298,11 @@ app.use('/stock-mutations', authRequired);
 app.use('/stock-history', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
 app.use('/reports', authRequired, requireRoles('superadmin', 'manajer'));
 app.use('/api', authRequired);
-app.use('/api/workshop', authRequired, requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer'));
+app.use(
+  '/api/workshop',
+  authRequired,
+  requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer', 'stockist')
+);
 
 // Debug helper: inspect JWT payload (for troubleshooting role/branch issues)
 app.get('/api/whoami', authRequired, (req, res) => {
@@ -703,7 +447,11 @@ app.post('/api/admin/active-sessions/:userId/kick', requireRoles('superadmin'), 
   }
 });
 
-app.use('/workshop-orders', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang'));
+app.use(
+  '/workshop-orders',
+  authRequired,
+  requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang', 'stockist')
+);
 app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
 app.use('/test-db', authRequired, requireRoles('superadmin'));
 app.use(['/orders', '/payments', '/transfers', '/items', '/stock-history', '/stock-mutations', '/employees', '/branches', '/users', '/store-operational'], writeApiLimiter);
@@ -882,15 +630,24 @@ app.get('/orders', async (req, res) => {
         tipe: row.tipe || row.item_tipe,
       })).filter(item => item.nama_item || item.item_id); // Filter out null items
 
+      const custName =
+        order.customer_name ||
+        order.name ||
+        null;
       const orderData = {
         order_id: order.order_id.toString(),
         order_number: order.order_number,
         order_type: order.order_type,
         status: order.status,
-        customer_id: order.customer_id.toString(),
-        customer_name: order.customer_name,
-        customer_phone: order.customer_phone,
-        customer_address: order.customer_address,
+        customer_id:
+          order.customer_id != null && order.customer_id !== undefined
+            ? order.customer_id.toString()
+            : null,
+        customer_name: custName,
+        customer_phone: order.customer_phone || order.phone || null,
+        customer_address: order.customer_address || order.address || null,
+        // Nama pada baris order (legacy / cadangan jika belum ada customers row)
+        name: order.name ?? null,
         branch_id: order.branch_id.toString(),
         user_id: order.user_id.toString(),
         total: parseFloat(order.total || 0),
@@ -901,6 +658,51 @@ app.get('/orders', async (req, res) => {
         updated_at: order.updated_at,
         items: items,
       };
+      const parseOrderMetadataObject = (raw) => {
+        if (raw == null || raw === '') return {};
+        if (typeof raw === 'object' && !Array.isArray(raw)) return { ...raw };
+        try {
+          const p = JSON.parse(String(raw));
+          return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
+        } catch (_) {
+          return {};
+        }
+      };
+      // Faktur / detail servis: GET tunggal sebelumnya hanya mengirim subset kolom — sertakan metadata & estimasi dari `o.*`.
+      if (order.metadata !== undefined && order.metadata !== null) {
+        orderData.metadata = order.metadata;
+      }
+      for (const k of [
+        'estimate_amount',
+        'estimate_due_at',
+        'estimate_duration_text',
+        'estimate_notes',
+      ]) {
+        if (order[k] !== undefined && order[k] !== null) {
+          orderData[k] = order[k];
+        }
+      }
+      // Selaraskan dengan payload POST /orders: field form servis/custom ada di metadata — salin ke root jika belum terisi.
+      const metaObj = parseOrderMetadataObject(order.metadata);
+      const metaRootKeys = [
+        'kelengkapan',
+        'keterangan',
+        'estimasi_selesai',
+        'estimasi_selesai_text',
+        'jenis_service',
+        'estimasi_waktu',
+        'service_dp_amount',
+        'spesifikasi',
+      ];
+      for (const mk of metaRootKeys) {
+        const mv = metaObj[mk];
+        if (mv == null || (typeof mv === 'string' && mv.trim() === '')) continue;
+        const cur = orderData[mk];
+        const curEmpty =
+          cur == null ||
+          (typeof cur === 'string' && cur.trim() === '');
+        if (curEmpty) orderData[mk] = mv;
+      }
 
       try {
         res.status(200).json(orderData);
@@ -1565,7 +1367,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       order_items,
       status: requestedStatus,
       service_estimated_total,
-      service_dp_amount,
+      service_dp_amount: _service_dp_amount,
       // For backward compatibility
       item_id: _item_id,
       item_data: _item_data,
@@ -1640,22 +1442,14 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       .toString()
       .trim()
       .toLowerCase();
-    const workflowEst = parseFloat(service_estimated_total ?? orderData.custom_estimated_total ?? 0);
-    const workflowDp = parseFloat(service_dp_amount ?? orderData.custom_dp_amount ?? 0);
-    const hasWorkflowCost =
-      Number.isFinite(workflowEst) && workflowEst > 0 &&
-      Number.isFinite(workflowDp) && workflowDp > 0;
     let initialStatus = 'pending';
     if (order_type === 'service' || order_type === 'custom') {
-      const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
-      const workshopEntryStatus = supportsWorkshopStatuses
-        ? 'sent-to-workshop'
-        : 'pending';
-      initialStatus = hasWorkflowCost ? 'pending' : workshopEntryStatus;
+      // Cabang toko: pending (DP → kasir; non-DP → admin toko). Workshop hanya setelah gudang setuju.
+      initialStatus = 'pending';
       if (rawRequestedStatus === 'pending') {
         initialStatus = 'pending';
       } else if (rawRequestedStatus === 'sent-to-workshop') {
-        initialStatus = workshopEntryStatus;
+        initialStatus = 'pending';
       }
     } else if (rawRequestedStatus) {
       initialStatus = rawRequestedStatus;
@@ -1750,6 +1544,67 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             order.order_id,
           ]
         );
+      }
+    }
+
+    // Service/custom: simpan field form ke metadata agar cetak ulang / GET order sinkron dengan faktur.
+    if ((order_type === 'service' || order_type === 'custom') && order?.order_id) {
+      const hasSvcMeta = await ordersHasMetadataColumn(client);
+      if (hasSvcMeta) {
+        const firstReqItem =
+          Array.isArray(order_items) && order_items.length > 0 ? order_items[0] : {};
+        const kelengkapan = String(orderData.kelengkapan ?? '').trim();
+        const keterangan = String(
+          orderData.keterangan ?? orderData.estimate_notes ?? '',
+        ).trim();
+        const jenisService = String(
+          firstReqItem.tipe ?? orderData.jenis_service ?? '',
+        ).trim();
+        const estimasiSelesaiRaw = String(orderData.estimasi_selesai ?? '').trim();
+        const estimasiWaktuRaw = String(orderData.estimasi_waktu ?? '').trim();
+        const metaPatch = {};
+        if (kelengkapan) metaPatch.kelengkapan = kelengkapan;
+        if (keterangan) metaPatch.keterangan = keterangan;
+        if (jenisService) metaPatch.jenis_service = jenisService;
+        if (estimasiWaktuRaw) metaPatch.estimasi_waktu = estimasiWaktuRaw;
+        if (estimasiSelesaiRaw) {
+          metaPatch.estimasi_selesai = estimasiSelesaiRaw;
+          if (!estimateDueAtIso) metaPatch.estimasi_selesai_text = estimasiSelesaiRaw;
+        } else if (
+          order_type === 'custom' &&
+          estimasiWaktuRaw &&
+          !estimateDueAtIso
+        ) {
+          // Form custom: field "estimasi waktu" dipakai sebagai teks estimasi selesai bila tidak ada tanggal ter-parse.
+          metaPatch.estimasi_selesai = estimasiWaktuRaw;
+          metaPatch.estimasi_selesai_text = estimasiWaktuRaw;
+        }
+        if (estimateAmount !== null && estimateAmount > 0) {
+          metaPatch.service_estimated_total = estimateAmount;
+        }
+        if (order_type === 'custom') {
+          const spek = String(orderData.spesifikasi ?? '').trim();
+          if (spek) metaPatch.spesifikasi = spek;
+        }
+        const serviceDpPersist = firstFiniteNumber(
+          orderData.service_dp_amount,
+          orderData.serviceDpAmount,
+          _service_dp_amount,
+          0,
+        );
+        if (serviceDpPersist > 0) {
+          metaPatch.service_dp_amount = serviceDpPersist;
+        }
+        if (Object.keys(metaPatch).length > 0) {
+          await client.query(
+            `
+              UPDATE orders
+              SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb, updated_at = NOW()
+              WHERE order_id = $2
+            `,
+            [JSON.stringify(metaPatch), order.order_id],
+          );
+        }
       }
     }
 
@@ -2376,6 +2231,13 @@ app.get('/orders/pending-payment', async (req, res) => {
               WHERE p.order_id = o.order_id
                 AND p.status = 'completed'
             )
+            AND NOT (
+              LOWER(TRIM(COALESCE(o.order_type::text, ''))) IN ('service', 'custom')
+              AND o.status = 'pending'
+              AND NOT EXISTS (
+                SELECT 1 FROM payments p0 WHERE p0.order_id = o.order_id
+              )
+            )
           )
           OR (
             LOWER(TRIM(COALESCE(o.order_type::text, ''))) IN ('service', 'custom')
@@ -2436,241 +2298,6 @@ app.get('/orders/pending-payment', async (req, res) => {
   }
 });
 
-// Get daily payments for kasir and admin toko
-app.get('/payments/daily-summary', async (req, res) => {
-  try {
-    const { branch_id, date, user_id } = req.query;
-
-    if (!branch_id) {
-      return res.status(400).json({ error: 'branch_id is required' });
-    }
-
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-
-    const datePat = /^\d{4}-\d{2}-\d{2}$/;
-    const dfRaw = String(req.query.date_from ?? '').trim();
-    const dtRaw = String(req.query.date_to ?? '').trim();
-    const MAX_PAYMENT_RANGE_DAYS = 93;
-
-    let paymentDateSql = 'DATE(p.created_at) = $2';
-    /** @type {string[]} */
-    let dateArgs;
-    if (datePat.test(dfRaw) && datePat.test(dtRaw)) {
-      if (dfRaw > dtRaw) {
-        return res.status(400).json({ error: 'date_from harus <= date_to' });
-      }
-      const spanMs =
-        Date.parse(`${dtRaw}T12:00:00`) - Date.parse(`${dfRaw}T12:00:00`);
-      const spanDays = Math.floor(spanMs / 86400000) + 1;
-      if (spanDays > MAX_PAYMENT_RANGE_DAYS) {
-        return res.status(400).json({
-          error: `Rentang tanggal maksimal ${MAX_PAYMENT_RANGE_DAYS} hari`,
-        });
-      }
-      paymentDateSql = 'DATE(p.created_at) BETWEEN $2 AND $3';
-      dateArgs = [dfRaw, dtRaw];
-    } else {
-      const single = String(date ?? '').trim();
-      const targetDate = datePat.test(single)
-        ? single
-        : new Date().toISOString().split('T')[0];
-      dateArgs = [targetDate];
-    }
-
-    const hasProofCol = await paymentsHasProofUrlColumn(db);
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
-    const hasRevBranchColSummary = await paymentsHasRevenueBranchColumn(db);
-    const payBranchExprSummary = hasRevBranchColSummary
-      ? 'COALESCE(p.revenue_branch_id, o.branch_id)'
-      : 'o.branch_id';
-
-    const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
-    // Role-based scope:
-    // - kasir: hanya pembayaran yang divalidasi oleh user login (validated_by = user_id JWT)
-    // - admin_toko: semua pembayaran pada branch aktif
-    // - manajer: semua pembayaran (dipanggil per-branch dari Flutter)
-    const validatedOnlyFromQuery =
-      validatedOnlyRaw === '1' || validatedOnlyRaw === 'true' || validatedOnlyRaw === 'yes';
-    const validatedOnly = role === 'kasir' ? true : validatedOnlyFromQuery;
-
-    const orderTypeRaw = (req.query.order_type ?? '').toString().trim().toLowerCase();
-    const allowedOrderTypes = new Set(['jual', 'buyback', 'service', 'custom']);
-    const orderTypeFilter =
-      orderTypeRaw && allowedOrderTypes.has(orderTypeRaw) ? orderTypeRaw : null;
-
-    const userIdFilterRaw = (user_id ?? '').toString().trim();
-    let userIdFromQuery =
-      userIdFilterRaw.length > 0 ? parseInt(userIdFilterRaw, 10) : null;
-    if (userIdFilterRaw.length > 0 && (userIdFromQuery == null || Number.isNaN(userIdFromQuery))) {
-      return res.status(400).json({ error: 'user_id must be a number' });
-    }
-
-    let userIdFilter = null;
-    if (validatedOnly) {
-      if (!hasValidatedByCol) {
-        return res.status(400).json({
-          error: 'Kolom payments.validated_by belum tersedia',
-          details:
-            'Jalankan migration backend/migrations/20260502_000006_add_payments_validated_by.sql agar filter pembayaran per kasir bisa dipakai.',
-        });
-      }
-      const tokenUserId = req.user?.user_id ?? req.user?.id;
-      const parsedTokenUserId =
-        tokenUserId != null ? parseInt(String(tokenUserId), 10) : NaN;
-      if (tokenUserId == null || Number.isNaN(parsedTokenUserId)) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-          details: 'Token tidak berisi user_id; silakan login ulang.',
-        });
-      }
-      userIdFilter = parsedTokenUserId;
-    } else if (userIdFromQuery != null) {
-      if (!hasValidatedByCol) {
-        console.warn(
-          '[payments/daily-summary] Ignoring user_id query filter: payments.validated_by column missing.',
-        );
-      } else {
-        userIdFilter = userIdFromQuery;
-      }
-    }
-
-    const listParams = [branch_id, ...dateArgs];
-    let listExtraWhere = '';
-    if (userIdFilter != null) {
-      // kasir: strict match (user_id + branch aktif).
-      // query user_id (tanpa validated_by_only) tetap strict juga.
-      listExtraWhere += ` AND p.validated_by = $${listParams.length + 1}`;
-      listParams.push(userIdFilter);
-    }
-    if (orderTypeFilter) {
-      listExtraWhere += ` AND o.order_type = $${listParams.length + 1}`;
-      listParams.push(orderTypeFilter);
-    }
-
-    // Get payments for the day (or date range)
-    const paymentsResult = await db.query(`
-      SELECT
-        p.payment_id,
-        p.order_id,
-        p.amount,
-        p.method as payment_method,
-        p.status,
-        ${hasProofCol ? 'p.proof_url' : 'NULL'} as proof_url,
-        ${hasValidatedByCol ? 'p.validated_by' : 'NULL'} as validated_by,
-        p.notes,
-        p.created_at,
-        p.updated_at,
-        o.order_number,
-        o.order_type,
-        c.name as customer_name,
-        c.phone
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      JOIN customers c ON o.customer_id = c.customer_id
-      WHERE ${payBranchExprSummary} = $1
-        AND ${paymentDateSql}
-        ${listExtraWhere}
-      ORDER BY p.created_at DESC
-    `, listParams);
-
-    const summaryParams = [branch_id, ...dateArgs];
-    let summaryExtraWhere = '';
-    if (userIdFilter != null) {
-      // Keep summary consistent with list filtering rules above.
-      summaryExtraWhere += ` AND p.validated_by = $${summaryParams.length + 1}`;
-      summaryParams.push(userIdFilter);
-    }
-    if (orderTypeFilter) {
-      summaryExtraWhere += ` AND o.order_type = $${summaryParams.length + 1}`;
-      summaryParams.push(orderTypeFilter);
-    }
-
-    // Get summary
-    // Business rule:
-    // - jual/service/custom = pendapatan (uang masuk)
-    // - buyback = pengeluaran (uang keluar)
-    const summaryResult = await db.query(
-      `
-        SELECT
-          COUNT(*) as total_payments,
-          SUM(amount) as total_amount,
-          COALESCE(SUM(CASE WHEN o.order_type IN ('jual', 'service', 'custom') THEN amount ELSE 0 END), 0) as income_amount,
-          COALESCE(SUM(CASE WHEN o.order_type = 'buyback' THEN amount ELSE 0 END), 0) as expense_amount,
-          COUNT(CASE WHEN method = 'cash' THEN 1 END) as cash_payments,
-          COUNT(CASE WHEN method = 'transfer' THEN 1 END) as transfer_payments,
-          COUNT(CASE WHEN method = 'qris' THEN 1 END) as qris_payments,
-          COALESCE(SUM(CASE WHEN method = 'cash' THEN amount ELSE 0 END), 0) as cash_amount,
-          COALESCE(SUM(CASE WHEN method = 'transfer' THEN amount ELSE 0 END), 0) as transfer_amount,
-          COALESCE(SUM(CASE WHEN method = 'qris' THEN amount ELSE 0 END), 0) as qris_amount
-        FROM payments p
-        JOIN orders o ON p.order_id = o.order_id
-        WHERE ${payBranchExprSummary} = $1
-          AND ${paymentDateSql}
-          AND p.status = 'completed'
-          ${summaryExtraWhere}
-      `,
-      summaryParams,
-    );
-
-    const summary = summaryResult.rows[0] || {
-      total_payments: 0,
-      total_amount: 0,
-      cash_payments: 0,
-      transfer_payments: 0,
-      qris_payments: 0,
-      cash_amount: 0,
-      transfer_amount: 0,
-      qris_amount: 0,
-    };
-
-    // Convert BigInt and other data types for JSON serialization
-    const processedPayments = paymentsResult.rows.map(row => ({
-      payment_id: row.payment_id.toString(),
-      order_id: row.order_id.toString(),
-      amount: parseFloat(row.amount || 0),
-      payment_method: row.payment_method,
-      status: row.status,
-      proof_url: row.proof_url,
-      validated_by: row.validated_by,
-      notes: row.notes,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      order_number: row.order_number,
-      order_type: row.order_type,
-      customer_name: row.customer_name,
-      phone: row.phone
-    }));
-
-    const processedSummary = {
-      total_payments: parseInt(summary.total_payments || 0),
-      // Backward-compatible:
-      // - total_amount: total nominal semua pembayaran completed (income + expense)
-      // - income_amount: nominal masuk (jual/service/custom)
-      // - expense_amount: nominal keluar (buyback)
-      // - net_amount: income - expense
-      total_amount: parseFloat(summary.total_amount || 0),
-      income_amount: parseFloat(summary.income_amount || 0),
-      expense_amount: parseFloat(summary.expense_amount || 0),
-      net_amount:
-        (parseFloat(summary.income_amount || 0) || 0) -
-        (parseFloat(summary.expense_amount || 0) || 0),
-      cash_payments: parseInt(summary.cash_payments || 0),
-      transfer_payments: parseInt(summary.transfer_payments || 0),
-      qris_payments: parseInt(summary.qris_payments || 0),
-      cash_amount: parseFloat(summary.cash_amount || 0),
-      transfer_amount: parseFloat(summary.transfer_amount || 0),
-      qris_amount: parseFloat(summary.qris_amount || 0),
-    };
-
-    res.status(200).json({
-      transactions: processedPayments,
-      summary: processedSummary
-    });
-  } catch (error) {
-    console.error('Error fetching daily payments:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
 
 // Get orders with date filter for admin toko
 app.get('/orders/by-date', async (req, res) => {
@@ -4444,6 +4071,11 @@ function sendNotificationToClients(message) {
   emitNotification(wss, message);
 }
 
+registerPaymentsCoreRoutes(app, {
+  db,
+  notifyClients: sendNotificationToClients,
+});
+
 // Endpoint untuk mencatat perubahan stok
 app.post('/stock-history', (req, res) => {
   const { item_id, user_id, branch_id, change_type, quantity } = req.body;
@@ -4469,279 +4101,6 @@ app.post('/stock-history', (req, res) => {
   res.status(201).json({ message: 'Perubahan stok berhasil dicatat', stockChange });
 });
 
-// Endpoint untuk mencatat transaksi pembayaran
-app.post('/payments', async (req, res) => {
-  const client = await db.getClient();
-  try {
-    const { order_id, amount, method, status, notes, proof_url } = req.body;
-
-    if (!order_id || !amount || !method) {
-      return res.status(400).json({ error: 'order_id, amount, dan method wajib diisi' });
-    }
-
-    const parsedOrderId = parseInt(order_id, 10);
-    if (isNaN(parsedOrderId)) {
-      return res.status(400).json({ error: 'order_id harus berupa angka' });
-    }
-
-    // Validasi method pembayaran
-    const validMethods = ['cash', 'transfer', 'qris', 'e-wallet'];
-    if (!validMethods.includes(method)) {
-      return res.status(400).json({ error: 'Method pembayaran tidak valid' });
-    }
-
-    // For non-cash methods, payment proof photo is required
-    const requiresProof = method === 'transfer' || method === 'qris' || method === 'e-wallet';
-    if (requiresProof) {
-      const proof = (proof_url ?? '').toString().trim();
-      if (!proof) {
-        return res.status(400).json({
-          error: 'Bukti pembayaran (proof_url) wajib untuk metode transfer/qris/e-wallet',
-        });
-      }
-    }
-
-    // Validasi status
-    const validStatuses = ['pending', 'completed', 'failed', 'cancelled'];
-    const paymentStatus = status || 'completed';
-    if (!validStatuses.includes(paymentStatus)) {
-      return res.status(400).json({ error: 'Status pembayaran tidak valid' });
-    }
-
-    // Cek apakah order ada dan ambil order_type + branch_id (untuk stock mutation buyback)
-    const hasPickedUpAtCol = await ordersHasPickedUpAtColumn(client);
-    const pickedUpSelect = hasPickedUpAtCol ? 'picked_up_at' : 'NULL::timestamp AS picked_up_at';
-    const hasPickupColPay = await ordersHasPickupBranchColumn(client);
-    const pickupSelect = hasPickupColPay
-      ? 'pickup_branch_id'
-      : 'NULL::bigint AS pickup_branch_id';
-    const orderCheck = await client.query(
-      `SELECT order_id, order_type, branch_id, status, ${pickedUpSelect}, ${pickupSelect} FROM orders WHERE order_id = $1`,
-      [parsedOrderId]
-    );
-    if (orderCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'Order tidak ditemukan' });
-    }
-
-    const orderType = orderCheck.rows[0].order_type;
-    const orderBranchId = orderCheck.rows[0].branch_id;
-    const orderRowPay = orderCheck.rows[0];
-    const lowerOrderTypePay = (orderType ?? '').toString().trim().toLowerCase();
-    const allowMultiCompletedPay =
-      lowerOrderTypePay === 'service' || lowerOrderTypePay === 'custom';
-
-    // Cek apakah order sudah pernah dibayar (completed payment) — service/custom boleh DP + pelunasan.
-    const existingPayment = await client.query(
-      'SELECT payment_id FROM payments WHERE order_id = $1 AND status = $2',
-      [parsedOrderId, 'completed']
-    );
-    const hasPriorCompletedPay = existingPayment.rows.length > 0;
-    if (!allowMultiCompletedPay && hasPriorCompletedPay) {
-      return res.status(400).json({ error: 'Order ini sudah dibayar. Tidak dapat melakukan pembayaran ganda.' });
-    }
-
-    const hasRevColPay = await paymentsHasRevenueBranchColumn(client);
-    /** @type {number | null} */
-    let revenueBranchIdParam = null;
-    if (hasRevColPay) {
-      const orderBidPay = parseInt(String(orderBranchId), 10);
-      if (lowerOrderTypePay === 'service' || lowerOrderTypePay === 'custom') {
-        const pkRaw = (req.body.payment_kind ?? '').toString().trim().toLowerCase();
-        let kind = pkRaw;
-        if (!kind) {
-          kind = hasPriorCompletedPay ? 'settlement' : 'dp';
-        }
-        const isSettlementKind =
-          kind === 'settlement' ||
-          kind === 'pelunasan' ||
-          kind === 'pickup' ||
-          kind === 'final' ||
-          kind === 'lunas';
-        const pickupRaw = orderRowPay.pickup_branch_id;
-        const pickupBid =
-          pickupRaw != null ? parseInt(String(pickupRaw), 10) : NaN;
-        const effectivePickup =
-          Number.isFinite(pickupBid) && pickupBid > 0 ? pickupBid : orderBidPay;
-        revenueBranchIdParam = isSettlementKind
-          ? (Number.isFinite(effectivePickup) ? effectivePickup : orderBidPay)
-          : (Number.isFinite(orderBidPay) ? orderBidPay : null);
-      } else {
-        revenueBranchIdParam = Number.isFinite(orderBidPay) ? orderBidPay : null;
-      }
-    }
-
-    const hasProofCol = await paymentsHasProofUrlColumn(client);
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(client);
-    let finalNotes = notes;
-    const proofTrimmed = (proof_url ?? '').toString().trim();
-    if (!hasProofCol && proofTrimmed) {
-      const n = (finalNotes ?? '').toString().trim();
-      finalNotes = n ? `${n}\nBukti: ${proofTrimmed}` : `Bukti: ${proofTrimmed}`;
-    }
-
-    await client.query('BEGIN');
-
-    // Insert pembayaran ke database (backward-compatible with older DBs)
-    const validatedBy = req.user?.user_id ?? req.user?.id ?? null;
-    const cols = ['order_id', 'amount', 'method', 'status', 'notes'];
-    const values = ['$1', '$2', '$3', '$4', '$5'];
-    const params = [parsedOrderId, amount, method, paymentStatus, finalNotes];
-    let idx = params.length;
-
-    if (hasProofCol) {
-      cols.push('proof_url');
-      values.push(`$${++idx}`);
-      params.push(proof_url || null);
-    }
-
-    if (hasValidatedByCol) {
-      cols.push('validated_by');
-      values.push(`$${++idx}`);
-      params.push(validatedBy);
-    }
-
-    if (hasRevColPay) {
-      cols.push('revenue_branch_id');
-      values.push(`$${++idx}`);
-      params.push(revenueBranchIdParam);
-    }
-
-    cols.push('payment_date');
-    values.push('CURRENT_TIMESTAMP');
-
-    const insertQuery = `
-      INSERT INTO payments (${cols.join(', ')})
-      VALUES (${values.join(', ')})
-      RETURNING *
-    `;
-
-    const result = await client.query(insertQuery, params);
-
-    // Update status order jika pembayaran completed
-    if (paymentStatus === 'completed') {
-      const orderStatus = (orderCheck.rows[0].status ?? '').toString().trim().toLowerCase();
-      const pickedUpAt = orderCheck.rows[0].picked_up_at;
-      let nextOrderStatus = 'completed';
-      const lowerOrderType = lowerOrderTypePay;
-      if (lowerOrderType === 'service' || lowerOrderType === 'custom') {
-        const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
-        const workshopEntryStatus = supportsWorkshopStatuses
-          ? 'sent-to-workshop'
-          : 'pending';
-        // Service/custom flow:
-        // - sebelum pickup customer: selesai bayar => kirim ke workshop
-        // - sesudah pickup customer: pembayaran final => completed
-        nextOrderStatus = pickedUpAt ? 'completed' : workshopEntryStatus;
-        // Jika sudah berada di fase workshop, jangan mundur status.
-        if (
-          ['in_workshop', 'repairing', 'polishing', 'done_workshop', 'ready_for_pickup'].includes(orderStatus)
-        ) {
-          nextOrderStatus = orderStatus;
-        }
-      }
-      await client.query(
-        'UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE order_id = $2',
-        [nextOrderStatus, parsedOrderId]
-      );
-
-      // BUYBACK: stock in happens ONLY when paid by kasir (completed)
-      // Stock in but NOT ready for sale: items.status stays 'buyback' (not in allowed sale statuses).
-      if ((orderType ?? '').toString().trim().toLowerCase() === 'buyback') {
-        const itemsRes = await client.query(
-          `
-            SELECT oi.item_id, oi.qty
-            FROM order_items oi
-            WHERE oi.order_id = $1
-              AND oi.item_id IS NOT NULL
-          `,
-          [parsedOrderId]
-        );
-
-        for (const row of itemsRes.rows) {
-          const itemId = parseInt(row.item_id, 10);
-          const qtyVal = parseInt(row.qty, 10) || 1;
-          if (!Number.isFinite(itemId) || qtyVal <= 0) continue;
-
-          // Lock item row to avoid race conditions on quantity
-          const prev = await client.query(
-            `SELECT COALESCE(quantity, 0) AS quantity, status
-             FROM items
-             WHERE item_id = $1
-             FOR UPDATE`,
-            [itemId]
-          );
-          const prevQty = prev.rows.length > 0 ? parseInt(prev.rows[0].quantity, 10) : 0;
-          const prevStatus = prev.rows.length > 0 ? (prev.rows[0].status ?? 'unknown').toString() : 'unknown';
-
-          const upd = await client.query(
-            `
-              UPDATE items
-              SET quantity = COALESCE(quantity, 0) + $1,
-                  status = 'buyback',
-                  ownership = 'toko',
-                  stock_type = 'inventory',
-                  updated_at = NOW()
-              WHERE item_id = $2
-              RETURNING COALESCE(quantity, 0) AS quantity
-            `,
-            [qtyVal, itemId]
-          );
-          const nextQty = upd.rows.length > 0 ? parseInt(upd.rows[0].quantity, 10) : prevQty + qtyVal;
-
-          await client.query(
-            `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [
-              itemId,
-              prevStatus,
-              'buyback',
-              validatedBy,
-              `Order buyback paid (order_id ${parsedOrderId})`,
-            ]
-          );
-
-          await client.query(
-            `
-              INSERT INTO stock_mutations (
-                item_id, branch_id, type, quantity, previous_stock, current_stock,
-                notes, reference_id, reference_type, created_by
-              )
-              VALUES ($1, $2, 'in', $3, $4, $5, $6, $7, 'order', $8)
-            `,
-            [
-              itemId,
-              orderBranchId,
-              qtyVal,
-              prevQty,
-              nextQty,
-              `Order buyback completed (order_id ${parsedOrderId})`,
-              parsedOrderId,
-              validatedBy,
-            ]
-          );
-        }
-      }
-
-      // Kirim notifikasi realtime
-      sendNotificationToClients(`Order ${parsedOrderId} (${orderType}) telah dibayar dan status diperbarui`);
-    }
-
-    const payment = result.rows[0];
-    console.log('Pembayaran dicatat:', payment);
-    await client.query('COMMIT');
-    res.status(201).json({ message: 'Pembayaran berhasil dicatat', payment });
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (_) { }
-    console.error('Error creating payment:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    try {
-      client.release?.();
-    } catch (_) { }
-  }
-});
 
 // Endpoint untuk login dan pengaturan session
 app.post('/login', loginLimiter, async (req, res) => {
@@ -4898,6 +4257,90 @@ app.post('/login', loginLimiter, async (req, res) => {
   }
 });
 
+/**
+ * Tukar konteks JWT ke kombinasi cabang + peran yang valid di user_branch_roles.
+ * Diperlukan karena login hanya mengembalikan satu assignment (primary) sementara
+ * app bisa mengganti peran lewat UI tanpa login ulang — tanpa ini, JWT tetap berisi role lama.
+ */
+app.post('/api/auth/switch-context', async (req, res) => {
+  try {
+    const uid = req.user?.user_id;
+    const username = req.user?.username;
+    if (uid == null) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const branchIdRaw = req.body?.branch_id ?? req.body?.branch;
+    const roleRaw = req.body?.role;
+    const branchIdNum = parseInt(String(branchIdRaw ?? '').trim(), 10);
+    const role = (roleRaw ?? '').toString().trim().toLowerCase();
+    if (!Number.isFinite(branchIdNum) || branchIdNum <= 0 || !role) {
+      return res.status(400).json({ error: 'branch_id and role are required' });
+    }
+    const chk = await db.query(
+      `
+        SELECT 1
+        FROM user_branch_roles
+        WHERE user_id = $1
+          AND branch_id = $2
+          AND lower(trim(role::text)) = $3
+        LIMIT 1
+      `,
+      [uid, branchIdNum, role]
+    );
+    if (chk.rows.length === 0) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        details: 'Kombinasi cabang dan peran tidak valid untuk akun ini.',
+      });
+    }
+    const branchIdStr = String(branchIdNum);
+    let mainModule = 'dashboard';
+    switch (role) {
+      case 'cs':
+        mainModule = 'cs';
+        break;
+      case 'kasir':
+        mainModule = 'kasir';
+        break;
+      case 'superadmin':
+        mainModule = 'superadmin';
+        break;
+      case 'admin_toko':
+        mainModule = 'order';
+        break;
+      case 'admin_workshop':
+      case 'tukang':
+        mainModule = 'workshop';
+        break;
+      case 'manajer':
+        mainModule = 'reporting';
+        break;
+      default:
+        mainModule = 'dashboard';
+    }
+    const token = jwt.sign(
+      {
+        user_id: uid,
+        username,
+        role,
+        branch_id: branchIdStr,
+      },
+      SECRET_KEY,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+    res.status(200).json({
+      success: true,
+      token,
+      role,
+      branch: branchIdStr,
+      mainModule,
+    });
+  } catch (error) {
+    console.error('Error in switch-context:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Endpoint untuk laporan dan analitik
 app.get('/reports', async (req, res) => {
   try {
@@ -5026,740 +4469,10 @@ app.post('/order', async (req, res) => {
   }
 });
 
-// Endpoint untuk mendapatkan daftar pembayaran
-app.get('/payments', async (req, res) => {
-  try {
-    const { branch_id, order_id, status, method, limit = 50, offset = 0 } = req.query;
-
-    let query = `
-      SELECT
-        p.*,
-        COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
-        o.total as order_total,
-        c.name as customer_name,
-        b.name as branch_name
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      LEFT JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN branches b ON o.branch_id = b.branch_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      WHERE 1=1
-    `;
-
-    const params = [];
-    let paramIndex = 1;
-
-    if (branch_id) {
-      query += ` AND o.branch_id = $${paramIndex}`;
-      params.push(branch_id);
-      paramIndex++;
-    }
-
-    if (order_id) {
-      query += ` AND p.order_id = $${paramIndex}`;
-      params.push(order_id);
-      paramIndex++;
-    }
-
-    if (status) {
-      query += ` AND p.status = $${paramIndex}`;
-      params.push(status);
-      paramIndex++;
-    }
-
-    if (method) {
-      query += ` AND p.method = $${paramIndex}`;
-      params.push(method);
-      paramIndex++;
-    }
-
-    query += ` GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.status, p.created_at, p.updated_at, o.total, c.name, b.name ORDER BY p.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(limit, offset);
-
-    const result = await db.query(query, params);
-    res.status(200).json(result.rows);
-  } catch (error) {
-    console.error('Error fetching payments:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 // Order harian: juga lewat router /api (dashboard_orders) → GET /api/orders/daily.
 app.get('/orders/daily', getOrdersDaily);
 
-// Endpoint untuk mendapatkan data transfer barang (admin_toko)
-app.get('/transfers', async (req, res) => {
-  try {
-    const { branch_id, status, type } = req.query;
-
-    // Backward-compatible: columns may not exist yet.
-    async function hasTransfersColumn(columnName) {
-      try {
-        const r = await db.query(
-          `
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'transfers'
-              AND column_name = $1
-            LIMIT 1
-          `,
-          [columnName]
-        );
-        return r.rows.length > 0;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
-      hasTransfersColumn('source_type'),
-      hasTransfersColumn('courier'),
-    ]);
-
-    let query = `
-      SELECT
-        t.transfer_id,
-        t.from_branch_id,
-        t.to_branch_id,
-        t.item_name,
-        t.quantity,
-        ${hasSourceTypeCol ? 't.source_type' : "'stok'"} as source_type,
-        ${hasCourierCol ? 't.courier' : 'NULL'} as courier,
-        t.notes,
-        t.order_id,
-        t.created_by,
-        t.approved_by,
-        t.status,
-        t.created_at,
-        t.updated_at,
-        fb.name as from_branch_name,
-        tb.name as to_branch_name,
-        u.username as created_by_name,
-        uap.username as approved_by_name
-      FROM transfers t
-      LEFT JOIN branches fb ON t.from_branch_id = fb.branch_id
-      LEFT JOIN branches tb ON t.to_branch_id = tb.branch_id
-      LEFT JOIN users u ON t.created_by = u.user_id
-      LEFT JOIN users uap ON t.approved_by = uap.user_id
-      WHERE 1=1
-    `;
-
-    const params = [];
-    let paramIndex = 1;
-
-    if (branch_id) {
-      query += ` AND (t.from_branch_id = $${paramIndex} OR t.to_branch_id = $${paramIndex})`;
-      params.push(branch_id);
-      paramIndex++;
-    }
-
-    if (status) {
-      query += ` AND t.status = $${paramIndex}`;
-      params.push(status);
-      paramIndex++;
-    }
-
-    if (type) {
-      if (type === 'incoming') {
-        query += ` AND t.to_branch_id = $${paramIndex}`;
-        params.push(branch_id);
-        paramIndex++;
-      } else if (type === 'outgoing') {
-        query += ` AND t.from_branch_id = $${paramIndex}`;
-        params.push(branch_id);
-        paramIndex++;
-      }
-    }
-
-    query += ` ORDER BY t.created_at DESC`;
-
-    const result = await db.query(query, params);
-    // Prevent "Do not know how to serialize a BigInt" when sending JSON
-    const processedRows = result.rows.map(row => {
-      const rawC = row.courier;
-      let displayCourier = rawC;
-      if (displayCourier == null || (typeof displayCourier === 'string' && displayCourier.trim() === '')) {
-        const fromNotes = extractKurirFromTransferNotes(row.notes);
-        if (fromNotes) displayCourier = fromNotes;
-      }
-      return {
-        ...row,
-        courier: displayCourier,
-        transfer_id: row.transfer_id?.toString?.() ?? row.transfer_id,
-        from_branch_id: row.from_branch_id?.toString?.() ?? row.from_branch_id,
-        to_branch_id: row.to_branch_id?.toString?.() ?? row.to_branch_id,
-        order_id: row.order_id?.toString?.() ?? row.order_id,
-        created_by: row.created_by?.toString?.() ?? row.created_by,
-        approved_by: row.approved_by?.toString?.() ?? row.approved_by,
-        quantity: row.quantity == null ? null : parseInt(row.quantity, 10),
-      };
-    });
-
-    res.status(200).json(processedRows);
-  } catch (error) {
-    console.error('Error fetching transfers:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Endpoint untuk membuat transfer barang baru
-app.post('/transfers', async (req, res) => {
-  try {
-    const {
-      from_branch_id,
-      to_branch_id,
-      item_name,
-      quantity,
-      notes: bodyNotes,
-      order_id,
-      created_by,
-      source_type,
-      courier: bodyCourier,
-    } = req.body;
-
-    if (!from_branch_id || !to_branch_id || !item_name || !quantity) {
-      return res.status(400).json({ error: 'from_branch_id, to_branch_id, item_name, and quantity are required' });
-    }
-
-    const sourceTypeNormalized = (source_type ?? '').toString().trim().toLowerCase();
-    const normalizedSourceType = ['stok', 'buyback', 'service', 'custom'].includes(sourceTypeNormalized)
-      ? sourceTypeNormalized
-      : 'stok';
-
-    async function hasTransfersColumn(columnName) {
-      try {
-        const r = await db.query(
-          `
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'transfers'
-              AND column_name = $1
-            LIMIT 1
-          `,
-          [columnName]
-        );
-        return r.rows.length > 0;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
-      hasTransfersColumn('source_type'),
-      hasTransfersColumn('courier'),
-    ]);
-
-    const trimmedCourier =
-      bodyCourier == null || String(bodyCourier).trim() === ''
-        ? ''
-        : String(bodyCourier).trim();
-    // No `courier` column yet: persist kurir in notes (common when source_type migration ran but courier did not)
-    let notes = bodyNotes;
-    if (!hasCourierCol && trimmedCourier) {
-      const n = bodyNotes == null || String(bodyNotes).trim() === '' ? '' : String(bodyNotes);
-      notes = n ? `Kurir: ${trimmedCourier}\n${n}` : `Kurir: ${trimmedCourier}`;
-    }
-
-    let insertQuery;
-    let params;
-
-    if (hasSourceTypeCol && hasCourierCol) {
-      insertQuery = `
-        INSERT INTO transfers (
-          from_branch_id, to_branch_id, item_name, quantity,
-          source_type, courier, notes, order_id, created_by, status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
-        RETURNING *
-      `;
-      params = [
-        from_branch_id,
-        to_branch_id,
-        item_name,
-        quantity,
-        normalizedSourceType,
-        trimmedCourier || null,
-        notes,
-        order_id,
-        created_by,
-      ];
-    } else if (hasSourceTypeCol && !hasCourierCol) {
-      insertQuery = `
-        INSERT INTO transfers (
-          from_branch_id, to_branch_id, item_name, quantity,
-          source_type, notes, order_id, created_by, status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
-        RETURNING *
-      `;
-      params = [
-        from_branch_id,
-        to_branch_id,
-        item_name,
-        quantity,
-        normalizedSourceType,
-        notes,
-        order_id,
-        created_by,
-      ];
-    } else if (!hasSourceTypeCol && hasCourierCol) {
-      insertQuery = `
-        INSERT INTO transfers (
-          from_branch_id, to_branch_id, item_name, quantity,
-          courier, notes, order_id, created_by, status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
-        RETURNING *
-      `;
-      params = [
-        from_branch_id,
-        to_branch_id,
-        item_name,
-        quantity,
-        trimmedCourier || null,
-        notes,
-        order_id,
-        created_by,
-      ];
-    } else {
-      insertQuery = `
-        INSERT INTO transfers (
-          from_branch_id, to_branch_id, item_name, quantity,
-          notes, order_id, created_by, status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
-        RETURNING *
-      `;
-      params = [
-        from_branch_id,
-        to_branch_id,
-        item_name,
-        quantity,
-        notes,
-        order_id,
-        created_by,
-      ];
-    }
-
-    let result;
-    try {
-      result = await db.query(insertQuery, params);
-    } catch (err) {
-      const isSourceTypeConstraintError =
-        err?.code === '23514' &&
-        String(err?.constraint ?? '') === 'transfers_source_type_check';
-      if (!isSourceTypeConstraintError || !hasSourceTypeCol) {
-        throw err;
-      }
-
-      // Backward compatibility: some DBs still enforce older source_type values.
-      // Fallback to "stok" so transfer still succeeds, while preserving original source in notes.
-      const fallbackParams = [...params];
-      const sourceTypeParamIndex = 4; // source_type is always the 5th bound param when present
-      if (fallbackParams[sourceTypeParamIndex] !== 'stok') {
-        const notesParamIndex = hasCourierCol ? 6 : 5;
-        const oldNotes =
-          fallbackParams[notesParamIndex] == null
-            ? ''
-            : String(fallbackParams[notesParamIndex]);
-        const fallbackPrefix = `Sumber asli: ${fallbackParams[sourceTypeParamIndex]}`;
-        fallbackParams[notesParamIndex] = oldNotes.trim().isEmpty
-          ? fallbackPrefix
-          : `${fallbackPrefix}\n${oldNotes}`;
-        fallbackParams[sourceTypeParamIndex] = 'stok';
-      }
-      result = await db.query(insertQuery, fallbackParams);
-    }
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating transfer:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Endpoint untuk update status transfer
-app.put('/transfers/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, approved_by } = req.body;
-
-    if (!status) {
-      return res.status(400).json({ error: 'status is required' });
-    }
-
-    const approverUserId =
-      approved_by ??
-      (req.user?.user_id ? parseInt(req.user.user_id, 10) : null);
-
-    const client = await db.getClient();
-    try {
-      await client.query('BEGIN');
-
-      const transferRes = await client.query(
-        `
-          SELECT *
-          FROM transfers
-          WHERE transfer_id = $1
-          FOR UPDATE
-        `,
-        [id]
-      );
-
-      if (transferRes.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Transfer not found' });
-      }
-
-      const transfer = transferRes.rows[0];
-      const prevStatus = transfer.status;
-
-      // Update transfer status first (idempotent friendly)
-      const updateRes = await client.query(
-        `
-          UPDATE transfers
-          SET status = $1, approved_by = $2, updated_at = CURRENT_TIMESTAMP
-          WHERE transfer_id = $3
-          RETURNING *
-        `,
-        [status, approverUserId, id]
-      );
-
-      // Apply stock movement only once when transitioning into "completed"
-      if (status === 'completed' && prevStatus !== 'completed') {
-        const fromBranchId = transfer.from_branch_id;
-        const toBranchId = transfer.to_branch_id;
-        const qty = parseInt(transfer.quantity, 10);
-        const itemName = String(transfer.item_name ?? '').trim();
-        const sourceTypeFromColumn =
-          (transfer.source_type ?? '').toString().trim().toLowerCase();
-        const sourceTypeFromNotes = extractTransferSourceTypeFromNotes(transfer.notes);
-        const sourceTypeRaw =
-          sourceTypeFromColumn === 'stok' && sourceTypeFromNotes
-            ? sourceTypeFromNotes
-            : (sourceTypeFromColumn || sourceTypeFromNotes || 'stok');
-        const transferSourceType = ['stok', 'buyback', 'service', 'custom'].includes(sourceTypeRaw)
-          ? sourceTypeRaw
-          : 'stok';
-        const sourceStatusCandidatesByType = {
-          stok: ['ready'],
-          buyback: ['buyback'],
-          service: ['on-service'],
-          custom: ['on-custom'],
-        };
-        const sourceStatusCandidates =
-          sourceStatusCandidatesByType[transferSourceType] || [];
-        const destinationStatusByType = {
-          stok: 'ready',
-          buyback: 'buyback',
-          service: 'on-service',
-          custom: 'on-custom',
-        };
-        const destinationStatus =
-          destinationStatusByType[transferSourceType] || 'ready';
-
-        // Find source item: exact `name` first, then "KODE - label" by kode_produk (see parseKodeProdukFromTransferItemLabel).
-        let sourceItemRes;
-        if (sourceStatusCandidates.length > 0) {
-          sourceItemRes = await client.query(
-            `
-              SELECT *
-              FROM items
-              WHERE branch_id = $1
-                AND name = $2
-                AND status = ANY($3::text[])
-              ORDER BY updated_at DESC
-              LIMIT 1
-              FOR UPDATE
-            `,
-            [fromBranchId, itemName, sourceStatusCandidates]
-          );
-        } else {
-          sourceItemRes = await client.query(
-            `
-              SELECT *
-              FROM items
-              WHERE branch_id = $1 AND name = $2
-              ORDER BY updated_at DESC
-              LIMIT 1
-              FOR UPDATE
-            `,
-            [fromBranchId, itemName]
-          );
-        }
-
-        if (sourceItemRes.rows.length === 0) {
-          const kode = parseKodeProdukFromTransferItemLabel(itemName);
-          if (kode) {
-            if (sourceStatusCandidates.length > 0) {
-              sourceItemRes = await client.query(
-                `
-                  SELECT *
-                  FROM items
-                  WHERE branch_id = $1
-                    AND kode_produk = $2
-                    AND status = ANY($3::text[])
-                  ORDER BY updated_at DESC
-                  LIMIT 1
-                  FOR UPDATE
-                `,
-                [fromBranchId, kode, sourceStatusCandidates]
-              );
-            } else {
-              sourceItemRes = await client.query(
-                `
-                  SELECT *
-                  FROM items
-                  WHERE branch_id = $1 AND kode_produk = $2
-                  ORDER BY updated_at DESC
-                  LIMIT 1
-                  FOR UPDATE
-                `,
-                [fromBranchId, kode]
-              );
-            }
-          }
-        }
-
-        // Fallback for legacy/dirty rows: retry without status restriction
-        if (sourceItemRes.rows.length === 0 && sourceStatusCandidates.length > 0) {
-          sourceItemRes = await client.query(
-            `
-              SELECT *
-              FROM items
-              WHERE branch_id = $1 AND name = $2
-              ORDER BY updated_at DESC
-              LIMIT 1
-              FOR UPDATE
-            `,
-            [fromBranchId, itemName]
-          );
-          if (sourceItemRes.rows.length === 0) {
-            const kode = parseKodeProdukFromTransferItemLabel(itemName);
-            if (kode) {
-              sourceItemRes = await client.query(
-                `
-                  SELECT *
-                  FROM items
-                  WHERE branch_id = $1 AND kode_produk = $2
-                  ORDER BY updated_at DESC
-                  LIMIT 1
-                  FOR UPDATE
-                `,
-                [fromBranchId, kode]
-              );
-            }
-          }
-        }
-
-        if (sourceItemRes.rows.length === 0) {
-          throw new Error(
-            `Source item not found in branch ${fromBranchId} for name "${itemName}"`
-          );
-        }
-
-        const sourceItem = sourceItemRes.rows[0];
-        const sourcePrevStock = parseInt(sourceItem.quantity, 10);
-        const sourceNextStock = sourcePrevStock - qty;
-
-        if (sourceNextStock < 0) {
-          return res.status(400).json({
-            error: 'Insufficient stock in source branch',
-            detail: `Stock ${sourcePrevStock} < transfer quantity ${qty}`,
-          });
-        }
-
-        // Decrease stock in source branch
-        await client.query(
-          `
-            UPDATE items
-            SET quantity = $1, updated_at = CURRENT_TIMESTAMP
-            WHERE item_id = $2
-          `,
-          [sourceNextStock, sourceItem.item_id]
-        );
-
-        // Upsert destination WITHOUT relying on a unique constraint.
-        // Update by (branch_id, kode_produk) to handle potential duplicates.
-        let destItemId;
-        let destPrevStock;
-        let destCurrentStock;
-
-        const preDest = await client.query(
-          `
-            SELECT item_id, status, quantity
-            FROM items
-            WHERE branch_id = $1 AND kode_produk = $2
-            ORDER BY updated_at DESC
-          `,
-          [toBranchId, sourceItem.kode_produk]
-        );
-
-        const destUpdateRes = await client.query(
-          `
-            UPDATE items
-            SET quantity = quantity + $1,
-                status = $4,
-                ownership = COALESCE($5, ownership),
-                stock_type = COALESCE($6, stock_type),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE branch_id = $2 AND kode_produk = $3
-            RETURNING item_id, quantity
-          `,
-          [
-            qty,
-            toBranchId,
-            sourceItem.kode_produk,
-            destinationStatus,
-            sourceItem.ownership ?? null,
-            sourceItem.stock_type ?? null,
-          ]
-        );
-
-        if (destUpdateRes.rows.length > 0) {
-          // If duplicates exist, we just pick the first returned row for mutation logging.
-          // All matching rows already had status forced to destination status.
-          destItemId = destUpdateRes.rows[0].item_id;
-          destCurrentStock = parseInt(destUpdateRes.rows[0].quantity, 10);
-          destPrevStock = destCurrentStock - qty;
-
-          const destRowCount = destUpdateRes.rows.length;
-          const singleUnambiguous =
-            preDest.rows.length === 1 &&
-            destRowCount === 1 &&
-            String(preDest.rows[0].item_id) === String(destItemId);
-          if (singleUnambiguous) {
-            const oldDestStatus = String(preDest.rows[0].status ?? '');
-            if (oldDestStatus !== destinationStatus) {
-              await client.query(
-                `
-                  INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
-                  VALUES ($1, $2, $3, $4, $5)
-                `,
-                [
-                  destItemId,
-                  oldDestStatus,
-                  destinationStatus,
-                  approverUserId,
-                  `Transfer masuk selesai (#${transfer.transfer_id})`,
-                ]
-              );
-            }
-          }
-        } else {
-          destPrevStock = 0;
-          destCurrentStock = qty;
-
-          const destInsertRes = await client.query(
-            `
-              INSERT INTO items (
-                branch_id,
-                kode_produk,
-                kategori,
-                jenis,
-                tipe,
-                name,
-                material,
-                purity,
-                weight,
-                quantity,
-                status,
-                ownership,
-                stock_type,
-                source,
-                metadata,
-                created_at,
-                updated_at
-              )
-              VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9,
-                $10, $11, $12, $13, $14, $15,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-              )
-              RETURNING item_id
-            `,
-            [
-              toBranchId,
-              sourceItem.kode_produk,
-              sourceItem.kategori,
-              sourceItem.jenis,
-              sourceItem.tipe,
-              sourceItem.name,
-              sourceItem.material,
-              sourceItem.purity,
-              sourceItem.weight,
-              qty,
-              destinationStatus,
-              sourceItem.ownership ?? 'toko',
-              sourceItem.stock_type ?? (destinationStatus === 'ready' ? 'inventory' : 'non_inventory'),
-              'transfer',
-              sourceItem.metadata,
-            ]
-          );
-
-          destItemId = destInsertRes.rows[0].item_id;
-        }
-
-        // Record stock mutation for source (out)
-        await client.query(
-          `
-            INSERT INTO stock_mutations (
-              item_id, branch_id, type, quantity, previous_stock, current_stock,
-              notes, reference_id, reference_type, created_by
-            )
-            VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'transfer', $8)
-          `,
-          [
-            sourceItem.item_id,
-            fromBranchId,
-            -qty,
-            sourcePrevStock,
-            sourceNextStock,
-            `Transfer keluar ke branch ${toBranchId}`,
-            transfer.transfer_id,
-            approverUserId,
-          ]
-        );
-
-        // Record stock mutation for destination (in)
-        await client.query(
-          `
-            INSERT INTO stock_mutations (
-              item_id, branch_id, type, quantity, previous_stock, current_stock,
-              notes, reference_id, reference_type, created_by
-            )
-            VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'transfer', $8)
-          `,
-          [
-            destItemId,
-            toBranchId,
-            qty,
-            destPrevStock,
-            destCurrentStock,
-            `Transfer masuk dari branch ${fromBranchId}`,
-            transfer.transfer_id,
-            approverUserId,
-          ]
-        );
-      }
-
-      await client.query('COMMIT');
-      res.status(200).json(updateRes.rows[0]);
-    } catch (txError) {
-      await client.query('ROLLBACK');
-      console.error('Error updating transfer (tx):', txError);
-      res.status(500).json({ error: 'Internal server error', detail: txError.message });
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error('Error updating transfer:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+registerTransfersRoutes(app, { db });
 
 // Endpoint untuk mendapatkan data mutasi stok (admin_toko)
 app.get('/stock-mutations', async (req, res) => {
@@ -6044,138 +4757,6 @@ app.delete('/employees/:id', async (req, res) => {
   }
 });
 
-// Endpoint untuk mendapatkan order yang perlu dibayar (kasir)
-// Endpoint untuk mendapatkan summary pembayaran harian
-app.get('/payments/daily', async (req, res) => {
-  try {
-    const { date, branch_id } = req.query;
-
-    if (!date || !branch_id) {
-      return res.status(400).json({ error: 'date and branch_id are required' });
-    }
-
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    const tokenUserIdRaw = req.user?.user_id ?? req.user?.id;
-    const tokenUserId =
-      tokenUserIdRaw != null ? parseInt(String(tokenUserIdRaw), 10) : NaN;
-
-    // IMPORTANT:
-    // Jangan pakai `new Date('yyyy-MM-dd')` + toISOString() untuk filter harian.
-    // JS akan menganggap string itu UTC midnight → bergeser jika bisnis pakai Asia/Jakarta
-    // dan kolom DB bertipe TIMESTAMP tanpa timezone / tersimpan "waktu lokal".
-    const BUSINESS_TZ =
-      /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-        ? String(process.env.BUSINESS_TIMEZONE).trim()
-        : 'Asia/Jakarta';
-
-    const targetDate = String(date).trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
-      return res
-        .status(400)
-        .json({ error: 'date must be in format yyyy-MM-dd' });
-    }
-
-    // Match tanggal secara robust untuk TIMESTAMP (tanpa timezone) dan TIMESTAMPTZ.
-    // Kita cocokkan baik interpretasi "naive local", maupun "naive sebenarnya UTC".
-    const paymentDateMatch = (paramRef) => `
-      (
-        (timezone('${BUSINESS_TZ}', p.payment_date))::date = ${paramRef}::date
-        OR (timezone('${BUSINESS_TZ}', p.payment_date AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-        OR p.payment_date::date = ${paramRef}::date
-      )
-    `;
-
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
-    const hasRevBranchColDaily = await paymentsHasRevenueBranchColumn(db);
-    const payBranchExprDaily = hasRevBranchColDaily
-      ? 'COALESCE(p.revenue_branch_id, o.branch_id)'
-      : 'o.branch_id';
-    const kasirScope =
-      role === 'kasir' &&
-      hasValidatedByCol &&
-      Number.isFinite(tokenUserId) &&
-      tokenUserId > 0;
-
-    // Query untuk summary pembayaran harian
-    const summaryQuery = `
-      SELECT
-        COUNT(*) as total_transactions,
-        SUM(amount) as total_amount,
-        method,
-        COUNT(*) as method_count
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      WHERE ${payBranchExprDaily} = $1
-        AND ${paymentDateMatch('$2')}
-        AND p.status = 'completed'
-        ${kasirScope ? 'AND p.validated_by = $3' : ''}
-      GROUP BY method
-      ORDER BY total_amount DESC
-    `;
-
-    const summaryParams = kasirScope
-      ? [branch_id, targetDate, tokenUserId]
-      : [branch_id, targetDate];
-    const summaryResult = await db.query(summaryQuery, summaryParams);
-
-    // Query untuk detail transaksi
-    const detailQuery = `
-      SELECT
-        p.payment_id,
-        p.order_id,
-        p.amount,
-        p.method,
-        p.payment_date,
-        COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
-        c.name as customer_name
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      LEFT JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      WHERE ${payBranchExprDaily} = $1
-        AND ${paymentDateMatch('$2')}
-        AND p.status = 'completed'
-        ${kasirScope ? 'AND p.validated_by = $3' : ''}
-      GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.payment_date, c.name
-      ORDER BY p.payment_date DESC
-    `;
-
-    const detailParams = kasirScope
-      ? [branch_id, targetDate, tokenUserId]
-      : [branch_id, targetDate];
-    const detailResult = await db.query(detailQuery, detailParams);
-
-    // Hitung total keseluruhan
-    const totalAmount = summaryResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount || 0), 0);
-    const totalTransactions = summaryResult.rows.reduce((sum, row) => sum + parseInt(row.total_transactions || 0), 0);
-
-    // Format payment methods sebagai object
-    const paymentMethods = {};
-    summaryResult.rows.forEach(row => {
-      paymentMethods[row.method] = parseFloat(row.total_amount || 0);
-    });
-
-    res.status(200).json({
-      summary: {
-        total_amount: totalAmount,
-        total_transactions: totalTransactions,
-        payment_methods: paymentMethods,
-        by_method: summaryResult.rows.map(row => ({
-          method: row.method,
-          total_amount: parseFloat(row.total_amount || 0),
-          method_count: parseInt(row.method_count || 0),
-        })),
-      },
-      transactions: detailResult.rows.map(row => ({
-        ...row,
-        timestamp: row.payment_date, // backward compatibility for clients expecting `timestamp`
-      })),
-    });
-  } catch (error) {
-    console.error('Error fetching daily payments:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 // Endpoint untuk menguji koneksi database
 app.get('/test-db', async (req, res) => {
@@ -6199,1264 +4780,4 @@ app.use('/api', branchesRoute);
 // User info route
 app.use('/api', userInfoRoute);
 
-// Workshop API endpoints
-app.get("/api/workshop/work-queue", async (req, res) => {
-  try {
-    const branchId = req.query.branch_id;
-    const technicianIdRaw = req.query.technician_id;
-    const technicianId = parseInt(String(technicianIdRaw ?? ''), 10);
-
-    if (!branchId) {
-      return res.status(400).json({ error: "branch_id is required" });
-    }
-
-    let query = `
-      SELECT *
-      FROM orders
-      WHERE branch_id = $1
-        AND status IN ('in_workshop', 'repairing', 'polishing', 'custom_work')
-    `;
-    const params = [branchId];
-    if (Number.isFinite(technicianId) && technicianId > 0) {
-      const hasOrdersMetadata = await ordersHasMetadataColumn(db);
-      if (hasOrdersMetadata) {
-        query += ` AND (
-          user_id = $2
-          OR COALESCE(metadata->>'assigned_technician_id', '') = $2::text
-          OR COALESCE(metadata->>'assigned_technician', '') = $2::text
-        )`;
-        params.push(technicianId);
-      } else {
-        query += ` AND user_id = $2`;
-        params.push(technicianId);
-      }
-    }
-    query += ' ORDER BY created_at ASC';
-
-    const result = await db.query(query, params);
-    res.status(200).json(result.rows);
-  } catch (error) {
-    console.error("Error fetching work queue:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.get("/api/workshop/material-stock", async (req, res) => {
-  try {
-    const { branch_id } = req.query;
-    console.log("Material stock request for branch_id:", branch_id, typeof branch_id);
-
-    // Get material stock for workshop
-    const result = await db.query(`
-      SELECT
-        item_id,
-        name,
-        material,
-        purity,
-        kategori,
-        weight,
-        quantity,
-        status,
-        COALESCE(metadata->>'location', 'Rak Umum') as location,
-        COALESCE(metadata->>'min_stock', '0') as min_stock,
-        COALESCE(metadata->>'supplier', 'N/A') as supplier,
-        COALESCE(metadata->>'price_per_unit', '0') as price_per_unit,
-        updated_at
-      FROM items
-      WHERE branch_id = $1
-        AND stock_type = 'non_inventory'
-        AND status IN ('ready', 'available', 'sold')
-      ORDER BY material, name
-    `, [branch_id]);
-
-    console.log("Query result rows:", result.rows.length);
-    console.log("First row sample:", result.rows[0]);
-
-    // Convert BigInt and other data types for JSON serialization
-    const processedRows = result.rows.map(row => ({
-      item_id: row.item_id.toString(),
-      name: row.name,
-      material: row.material,
-      purity: row.purity,
-      kategori: row.kategori,
-      weight: parseFloat(row.weight || 0),
-      quantity: parseInt(row.quantity || 0),
-      status: row.status,
-      location: row.location,
-      min_stock: parseInt(row.min_stock || 0),
-      supplier: row.supplier,
-      price_per_unit: parseFloat(row.price_per_unit || 0),
-      updated_at: row.updated_at
-    }));
-
-    const jsonResponse = JSON.stringify(processedRows);
-    console.log("JSON length:", jsonResponse.length);
-
-    res.status(200).json(processedRows);
-  } catch (error) {
-    console.error("Error fetching material stock:", error);
-    console.error("Error stack:", error.stack);
-    res.status(500).json({ error: "Internal server error", details: error.message });
-  }
-});
-
-app.get("/api/workshop/dashboard", async (req, res) => {
-  try {
-    const { branch_id, user_id: _user_id } = req.query;
-
-    // Get workshop statistics (consistent with other role dashboards)
-    const statsResult = await db.query(`
-      SELECT
-        COUNT(CASE WHEN status IN ('in_workshop', 'repairing', 'polishing', 'custom_work') THEN 1 END) as pending_orders,
-        COUNT(CASE WHEN status IN ('repairing', 'polishing') THEN 1 END) as in_progress_orders,
-        COUNT(CASE WHEN status IN ('completed', 'delivered') THEN 1 END) as completed_orders
-      FROM orders
-      WHERE branch_id = $1
-        AND order_type IN ('service', 'custom')
-        AND DATE(created_at) = CURRENT_DATE
-    `, [branch_id]);
-
-    const stats = statsResult.rows[0];
-
-    // Get recent orders
-    const recentOrdersResult = await db.query(`
-      SELECT
-        o.order_id,
-        o.order_type,
-        o.status,
-        o.created_at,
-        i.name as item_name,
-        c.name as customer_name
-      FROM orders o
-      LEFT JOIN items i ON o.item_id = i.item_id
-      LEFT JOIN customers c ON o.customer_id = c.customer_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-      ORDER BY o.created_at DESC
-      LIMIT 5
-    `, [branch_id]);
-
-    // Get technician count (simplified - count users with technician role in this branch)
-    const technicianResult = await db.query(`
-      SELECT COUNT(*) as total_technicians
-      FROM user_branch_roles ubr
-      JOIN users u ON ubr.user_id = u.user_id
-      WHERE ubr.branch_id = $1 AND ubr.role = 'tukang'
-    `, [branch_id]);
-
-    const technicianCount = technicianResult.rows[0]?.total_technicians || 0;
-
-    const response = {
-      pending_orders: parseInt(stats.pending_orders) || 0,
-      in_progress_orders: parseInt(stats.in_progress_orders) || 0,
-      completed_orders: parseInt(stats.completed_orders) || 0,
-      total_technicians: technicianCount,
-      active_technicians: technicianCount, // Simplified
-      recent_orders: recentOrdersResult.rows,
-      last_updated: new Date().toISOString(),
-    };
-
-    res.status(200).json(response);
-  } catch (error) {
-    console.error("Error fetching workshop dashboard:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.get("/api/workshop/reports", async (req, res) => {
-  try {
-    const branchId = parseInt(String(req.query.branch_id ?? ""), 10);
-    const periodRaw = String(req.query.period ?? "month").toLowerCase();
-    const period = ["week", "month", "year", "quarter"].includes(periodRaw)
-      ? periodRaw
-      : "month";
-
-    if (!Number.isFinite(branchId) || branchId <= 0) {
-      return res.status(400).json({ error: "branch_id wajib diisi dan valid" });
-    }
-
-    let dateFilter = "";
-    if (period === "week") {
-      dateFilter = "AND o.created_at >= DATE_TRUNC('week', CURRENT_DATE)";
-    } else if (period === "year") {
-      dateFilter = "AND o.created_at >= DATE_TRUNC('year', CURRENT_DATE)";
-    } else if (period === "quarter") {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '90 days'";
-    } else {
-      dateFilter = "AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE)";
-    }
-
-    const hasOrdersMetadata = await ordersHasMetadataColumn(db);
-    const technicianExpr = hasOrdersMetadata
-      ? "COALESCE(NULLIF(o.metadata->>'assigned_technician', ''), NULLIF(o.metadata->>'assigned_technician_id', ''), 'Unassigned')"
-      : "'Unassigned'";
-    const sellingPriceExpr = hasOrdersMetadata
-      ? "COALESCE((o.metadata->>'selling_price')::numeric, 0)"
-      : "0::numeric";
-    const buybackPriceExpr = hasOrdersMetadata
-      ? "COALESCE((o.metadata->>'buyback_price')::numeric, 0)"
-      : "0::numeric";
-    const materialCostExpr = hasOrdersMetadata
-      ? "COALESCE((o.metadata->>'material_cost')::numeric, 0)"
-      : "0::numeric";
-    const laborCostExpr = hasOrdersMetadata
-      ? "COALESCE((o.metadata->>'labor_cost')::numeric, 0)"
-      : "0::numeric";
-
-    const orderStats = await db.query(
-      `
-        SELECT
-          COUNT(*) as total_orders,
-          COUNT(CASE WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered') THEN 1 END) as completed_orders,
-          COUNT(CASE WHEN o.status IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_orders,
-          COUNT(CASE WHEN o.status IN ('pending', 'sent-to-workshop', 'in_workshop') THEN 1 END) as pending_orders,
-          AVG(
-            CASE
-              WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
-              THEN EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
-              ELSE NULL
-            END
-          ) as avg_completion_hours
-        FROM orders o
-        WHERE o.branch_id = $1
-          AND o.order_type IN ('service', 'custom')
-          ${dateFilter}
-      `,
-      [branchId]
-    );
-
-    const technicianStats = await db.query(
-      `
-        SELECT
-          ${technicianExpr} as technician,
-          COUNT(*) as orders_assigned,
-          COUNT(CASE WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered') THEN 1 END) as orders_completed,
-          AVG(
-            CASE
-              WHEN o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
-              THEN EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
-              ELSE NULL
-            END
-          ) as avg_time_hours
-        FROM orders o
-        WHERE o.branch_id = $1
-          AND o.order_type IN ('service', 'custom')
-          ${dateFilter}
-        GROUP BY 1
-        ORDER BY orders_assigned DESC
-      `,
-      [branchId]
-    );
-
-    const materialStats = await db.query(
-      `
-        SELECT
-          COALESCE(
-            NULLIF(BTRIM(oi.jenis), ''),
-            NULLIF(BTRIM(i.material), ''),
-            'Unknown'
-          ) as material,
-          SUM(COALESCE(oi.qty, 1)) as usage_count,
-          SUM(COALESCE(oi.weight, i.weight, 0) * GREATEST(COALESCE(oi.qty, 1), 1)) as total_weight_used
-        FROM orders o
-        LEFT JOIN order_items oi ON o.order_id = oi.order_id
-        LEFT JOIN items i ON oi.item_id = i.item_id
-        WHERE o.branch_id = $1
-          AND o.order_type IN ('service', 'custom')
-          AND o.status IN ('completed', 'done_workshop', 'ready_for_pickup', 'delivered')
-          ${dateFilter}
-        GROUP BY 1
-        ORDER BY total_weight_used DESC NULLS LAST
-      `,
-      [branchId]
-    );
-
-    const financialStats = await db.query(
-      `
-        SELECT
-          SUM(CASE WHEN o.order_type = 'jual' THEN ${sellingPriceExpr} ELSE 0 END) as sales_revenue,
-          SUM(CASE WHEN o.order_type = 'buyback' THEN ${buybackPriceExpr} ELSE 0 END) as buyback_revenue,
-          SUM(${materialCostExpr}) as material_cost,
-          SUM(${laborCostExpr}) as labor_cost
-        FROM orders o
-        WHERE o.branch_id = $1
-          ${dateFilter}
-      `,
-      [branchId]
-    );
-
-    const stats = orderStats.rows[0] || {};
-    const financial = financialStats.rows[0] || {};
-    const totalOrders = parseInt(stats.total_orders || 0, 10) || 0;
-    const completedOrders = parseInt(stats.completed_orders || 0, 10) || 0;
-    const inProgressOrders = parseInt(stats.in_progress_orders || 0, 10) || 0;
-    const pendingOrders = parseInt(stats.pending_orders || 0, 10) || 0;
-    const avgCompletionHours = parseFloat(stats.avg_completion_hours || 0) || 0;
-
-    const totalMaterialUsed = materialStats.rows.reduce(
-      (acc, row) => acc + (parseFloat(row.total_weight_used || 0) || 0),
-      0
-    );
-    const materialTypes = materialStats.rows.filter(
-      (row) => String(row.material ?? "").trim().isNotEmpty
-    ).length;
-    const materialEfficiency = totalOrders > 0
-      ? (completedOrders / totalOrders) * 100
-      : 0;
-    const activeTechnicians = technicianStats.rows.filter(
-      (row) => (parseInt(row.orders_assigned || 0, 10) || 0) > 0
-    ).length;
-
-    const salesRevenue = parseFloat(financial.sales_revenue || 0) || 0;
-    const buybackRevenue = parseFloat(financial.buyback_revenue || 0) || 0;
-    const materialCost = parseFloat(financial.material_cost || 0) || 0;
-    const laborCost = parseFloat(financial.labor_cost || 0) || 0;
-
-    res.status(200).json({
-      // Flat keys for legacy/mobile UI compatibility
-      total_orders: totalOrders,
-      completed_orders: completedOrders,
-      in_progress_orders: inProgressOrders,
-      pending_orders: pendingOrders,
-      avg_production_time: avgCompletionHours,
-      total_material_used: totalMaterialUsed,
-      material_types: materialTypes,
-      material_efficiency: materialEfficiency,
-      total_technicians: technicianStats.rows.length,
-      active_technicians: activeTechnicians,
-
-      // Rich structure for newer UI/widgets
-      period,
-      order_summary: {
-        total_orders: totalOrders,
-        completed_orders: completedOrders,
-        in_progress_orders: inProgressOrders,
-        pending_orders: pendingOrders,
-        avg_completion_time: `${Math.round(avgCompletionHours * 10) / 10} jam`,
-      },
-      technician_performance: technicianStats.rows,
-      material_usage: materialStats.rows,
-      financial_summary: {
-        total_revenue: salesRevenue + buybackRevenue,
-        total_cost: materialCost + laborCost,
-        net_profit: (salesRevenue + buybackRevenue) - (materialCost + laborCost),
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching workshop reports:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.get("/api/workshop/order-cost-breakdown", async (req, res) => {
-  try {
-    const orderId = parseInt(String(req.query.order_id ?? ""), 10);
-    const branchId = parseInt(String(req.query.branch_id ?? ""), 10);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      return res.status(400).json({ error: "order_id tidak valid" });
-    }
-    if (!Number.isFinite(branchId) || branchId <= 0) {
-      return res.status(400).json({ error: "branch_id wajib diisi" });
-    }
-
-    const orderRes = await db.query(
-      `
-        SELECT order_id, branch_id, order_type
-        FROM orders
-        WHERE order_id = $1
-        LIMIT 1
-      `,
-      [orderId]
-    );
-    if (orderRes.rows.length === 0) {
-      return res.status(404).json({ error: "Order tidak ditemukan" });
-    }
-    const order = orderRes.rows[0];
-    if (parseInt(order.branch_id, 10) !== branchId) {
-      return res.status(403).json({ error: "Order bukan milik branch ini" });
-    }
-    const orderType = String(order.order_type ?? "").toLowerCase();
-    if (orderType !== "service" && orderType !== "custom") {
-      return res.status(400).json({ error: "Hanya order service/custom" });
-    }
-
-    const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
-    if (!hasBreakdownTable) {
-      return res.status(200).json({ latest: null, history: [] });
-    }
-
-    const rows = await db.query(
-      `
-        SELECT
-          breakdown_id,
-          order_id,
-          revision,
-          material_cost,
-          labor_cost,
-          other_cost,
-          notes,
-          created_by,
-          created_at
-        FROM order_cost_breakdowns
-        WHERE order_id = $1
-        ORDER BY revision DESC
-      `,
-      [orderId]
-    );
-    const history = rows.rows.map((row) => ({
-      ...row,
-      breakdown_id: String(row.breakdown_id),
-      order_id: String(row.order_id),
-      revision: parseInt(row.revision ?? 0, 10) || 0,
-      material_cost: parseFloat(row.material_cost ?? 0) || 0,
-      labor_cost: parseFloat(row.labor_cost ?? 0) || 0,
-      other_cost: parseFloat(row.other_cost ?? 0) || 0,
-      created_by: row.created_by == null ? null : String(row.created_by),
-    }));
-    return res.status(200).json({
-      latest: history.length > 0 ? history[0] : null,
-      history,
-    });
-  } catch (error) {
-    console.error("Error fetching order cost breakdown:", error);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.post("/api/workshop/order-cost-breakdown", async (req, res) => {
-  const { order_id, branch_id, material_cost, labor_cost, other_cost, notes } = req.body ?? {};
-  const orderId = parseInt(String(order_id ?? ""), 10);
-  const branchId = parseInt(String(branch_id ?? ""), 10);
-  if (!Number.isFinite(orderId) || orderId <= 0) {
-    return res.status(400).json({ error: "order_id tidak valid" });
-  }
-  if (!Number.isFinite(branchId) || branchId <= 0) {
-    return res.status(400).json({ error: "branch_id wajib diisi" });
-  }
-
-  const role = (req.user?.role ?? "").toString().trim().toLowerCase();
-  const allowedRoles = new Set(["superadmin", "admin_toko", "admin_workshop", "tukang"]);
-  if (!allowedRoles.has(role)) {
-    return res.status(403).json({ error: "Role tidak diizinkan update biaya" });
-  }
-
-  const hasBreakdownTable = await orderCostBreakdownsTableExists(db);
-  if (!hasBreakdownTable) {
-    return res.status(400).json({ error: "Tabel order_cost_breakdowns belum tersedia" });
-  }
-
-  const materialCost = Math.max(0, parseFloat(String(material_cost ?? 0)) || 0);
-  const laborCost = Math.max(0, parseFloat(String(labor_cost ?? 0)) || 0);
-  const otherCost = Math.max(0, parseFloat(String(other_cost ?? 0)) || 0);
-  const cleanNotes = String(notes ?? "").trim() || null;
-  const updatedBy = parseInt(String(req.user?.user_id ?? req.body?.technician_id ?? 0), 10);
-  const safeUpdatedBy = Number.isFinite(updatedBy) && updatedBy > 0 ? updatedBy : null;
-
-  const client = await db.connect();
-  let committed = false;
-  try {
-    await client.query("BEGIN");
-
-    const orderRes = await client.query(
-      `
-        SELECT order_id, branch_id, order_type, status,
-               COALESCE(diskon, 0)::float8 AS diskon
-        FROM orders
-        WHERE order_id = $1
-        LIMIT 1
-      `,
-      [orderId]
-    );
-    if (orderRes.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Order tidak ditemukan" });
-    }
-    const order = orderRes.rows[0];
-    if (parseInt(order.branch_id, 10) !== branchId) {
-      await client.query("ROLLBACK");
-      return res.status(403).json({ error: "Order bukan milik branch ini" });
-    }
-    const orderType = String(order.order_type ?? "").toLowerCase();
-    if (orderType !== "service" && orderType !== "custom") {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Hanya order service/custom" });
-    }
-
-    const st = (order.status ?? "").toString().trim().toLowerCase();
-    const noCostEditStatuses = new Set(["cancelled", "completed", "sold"]);
-    if (noCostEditStatuses.has(st)) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        error: `Tidak bisa mengubah biaya pada status "${st}"`,
-      });
-    }
-
-    const revRes = await client.query(
-      `
-        SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision
-        FROM order_cost_breakdowns
-        WHERE order_id = $1
-      `,
-      [orderId]
-    );
-    const nextRevision = parseInt(revRes.rows?.[0]?.next_revision ?? 1, 10) || 1;
-
-    const inserted = await client.query(
-      `
-        INSERT INTO order_cost_breakdowns (
-          order_id,
-          revision,
-          material_cost,
-          labor_cost,
-          other_cost,
-          notes,
-          created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *
-      `,
-      [orderId, nextRevision, materialCost, laborCost, otherCost, cleanNotes, safeUpdatedBy]
-    );
-
-    // Opsi B: selaraskan tagihan (orders.total) dengan breakdown — sama seperti POST /orders:
-    // jumlah baris (dibulatkan ke kelipatan 5.000) lalu diskon level order.
-    const preDiscountBase = materialCost + laborCost + otherCost;
-    const diskonOrder = parseFloat(order.diskon) || 0;
-    const lineRounded =
-      preDiscountBase > 0 ? Math.ceil(preDiscountBase / 5000) * 5000 : 0;
-    const newOrderTotal = lineRounded * (1 - diskonOrder / 100);
-
-    const itemsRes = await client.query(
-      `
-        SELECT order_item_id
-        FROM order_items
-        WHERE order_id = $1
-        ORDER BY order_item_id ASC
-      `,
-      [orderId]
-    );
-    if (itemsRes.rows.length > 0) {
-      const firstId = itemsRes.rows[0].order_item_id;
-      await client.query(
-        `
-          UPDATE order_items
-          SET subtotal = $1,
-              total = $2,
-              diskon = 0
-          WHERE order_item_id = $3
-        `,
-        [preDiscountBase, lineRounded, firstId]
-      );
-      if (itemsRes.rows.length > 1) {
-        await client.query(
-          `
-            UPDATE order_items
-            SET subtotal = 0,
-                total = 0,
-                diskon = 0
-            WHERE order_id = $1
-              AND order_item_id <> $2
-          `,
-          [orderId, firstId]
-        );
-      }
-    }
-
-    try {
-      await client.query(
-        `
-          UPDATE orders
-          SET total = $1,
-              updated_at = NOW()
-          WHERE order_id = $2
-        `,
-        [newOrderTotal, orderId]
-      );
-    } catch (updErr) {
-      await client.query("ROLLBACK");
-      console.error("order-cost-breakdown: update orders.total failed:", updErr);
-      return res.status(500).json({ error: "Gagal memperbarui total order" });
-    }
-
-    const estCols = await ordersEstimateColumns(client);
-    if (estCols.estimate_amount) {
-      await client.query(
-        `
-          UPDATE orders
-          SET estimate_amount = $1,
-              updated_at = NOW()
-          WHERE order_id = $2
-        `,
-        [preDiscountBase, orderId]
-      );
-    }
-
-    const hasOrdersMetadata = await ordersHasMetadataColumn(client);
-    if (hasOrdersMetadata) {
-      await client.query(
-        `
-          UPDATE orders
-          SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-              updated_at = NOW()
-          WHERE order_id = $2
-        `,
-        [
-          JSON.stringify({
-            material_cost: materialCost,
-            labor_cost: laborCost,
-            other_cost: otherCost,
-            actual_total_cost: preDiscountBase,
-            invoice_pre_discount_rounded: lineRounded,
-            order_total_after_discount: newOrderTotal,
-            cost_revision: nextRevision,
-            cost_updated_at: new Date().toISOString(),
-          }),
-          orderId,
-        ]
-      );
-    }
-
-    await client.query("COMMIT");
-    committed = true;
-
-    const row = inserted.rows[0] || {};
-    return res.status(200).json({
-      success: true,
-      order_total: newOrderTotal,
-      items_pre_discount_rounded: lineRounded,
-      pre_discount_sum: preDiscountBase,
-      breakdown: {
-        ...row,
-        breakdown_id: row.breakdown_id == null ? null : String(row.breakdown_id),
-        order_id: row.order_id == null ? null : String(row.order_id),
-        revision: parseInt(row.revision ?? 0, 10) || 0,
-        material_cost: parseFloat(row.material_cost ?? 0) || 0,
-        labor_cost: parseFloat(row.labor_cost ?? 0) || 0,
-        other_cost: parseFloat(row.other_cost ?? 0) || 0,
-        created_by: row.created_by == null ? null : String(row.created_by),
-      },
-    });
-  } catch (error) {
-    if (!committed) {
-      try {
-        await client.query("ROLLBACK");
-      } catch (_) { /* ignore */ }
-    }
-    console.error("Error saving order cost breakdown:", error);
-    return res.status(500).json({ error: "Internal server error" });
-  } finally {
-    try {
-      client.release();
-    } catch (_) { /* ignore */ }
-  }
-});
-
-app.post("/api/workshop/update-progress", async (req, res) => {
-  try {
-    const { order_id, status, technician_id, notes, branch_id } = req.body;
-    const orderId = parseInt(String(order_id ?? ''), 10);
-    const branchId = parseInt(
-      String(branch_id ?? req.query?.branch_id ?? ''),
-      10
-    );
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      return res.status(400).json({ error: 'order_id tidak valid' });
-    }
-    if (!Number.isFinite(branchId) || branchId <= 0) {
-      return res.status(400).json({ error: 'branch_id wajib diisi' });
-    }
-
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    const allowedRoles = new Set([
-      'superadmin',
-      'admin_toko',
-      'admin_workshop',
-      'tukang',
-    ]);
-    if (!allowedRoles.has(role)) {
-      return res
-        .status(403)
-        .json({ error: 'Role tidak diizinkan update progress workshop' });
-    }
-
-    const curRes = await db.query(
-      `
-        SELECT order_id, order_type, branch_id, status
-        FROM orders
-        WHERE order_id = $1
-        LIMIT 1
-      `,
-      [orderId]
-    );
-    if (curRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Order tidak ditemukan' });
-    }
-    const order = curRes.rows[0];
-    if (parseInt(order.branch_id, 10) !== branchId) {
-      return res.status(403).json({ error: 'Order bukan milik branch ini' });
-    }
-    const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
-    if (orderType !== 'service' && orderType !== 'custom') {
-      return res.status(400).json({
-        error: 'Hanya order service/custom untuk workflow workshop',
-      });
-    }
-
-    const incoming = (status ?? '').toString().trim().toLowerCase();
-    const statusAlias = {
-      pending: 'in_workshop',
-      in_progress: 'repairing',
-      completed: 'done_workshop',
-    };
-    const nextStatus = statusAlias[incoming] ?? incoming;
-
-    const allowedByRole = {
-      admin_toko: new Set(['sent-to-workshop', 'ready_for_pickup']),
-      admin_workshop: new Set([
-        'in_workshop',
-        'repairing',
-        'polishing',
-        'done_workshop',
-      ]),
-      tukang: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
-      superadmin: new Set([
-        'sent-to-workshop',
-        'in_workshop',
-        'repairing',
-        'polishing',
-        'done_workshop',
-        'ready_for_pickup',
-      ]),
-    };
-    const roleAllowedSet = allowedByRole[role] ?? new Set();
-    if (!roleAllowedSet.has(nextStatus)) {
-      return res.status(400).json({
-        error: `Status "${nextStatus}" tidak diizinkan untuk role ${role}`,
-      });
-    }
-
-    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
-    const validTransitions = {
-      pending: new Set(['sent-to-workshop']),
-      completed: new Set(['sent-to-workshop']),
-      'sent-to-workshop': new Set(['in_workshop']),
-      in_workshop: new Set(['repairing', 'polishing', 'done_workshop']),
-      repairing: new Set(['polishing', 'done_workshop']),
-      polishing: new Set(['done_workshop']),
-      custom_work: new Set(['done_workshop']),
-      'done_workshop': new Set(['ready_for_pickup']),
-      'ready_for_pickup': new Set(['completed']),
-    };
-    if (
-      validTransitions[currentStatus] &&
-      !validTransitions[currentStatus].has(nextStatus) &&
-      currentStatus !== nextStatus
-    ) {
-      return res.status(400).json({
-        error: `Transisi status tidak valid (${currentStatus} -> ${nextStatus})`,
-      });
-    }
-
-    await db.query(`
-      UPDATE orders
-      SET status = $1, updated_at = NOW(),
-          metadata = metadata || $2
-      WHERE order_id = $3
-    `, [nextStatus, JSON.stringify({
-      "last_updated_by": technician_id,
-      "last_update_notes": notes,
-      "updated_at": new Date().toISOString()
-    }), orderId]);
-
-    res.status(200).json({ success: true, message: "Progress updated successfully" });
-  } catch (error) {
-    console.error("Error updating work progress:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.post("/api/workshop/update-stock", async (req, res) => {
-  try {
-    const { item_id, quantity, technician_id, notes } = req.body;
-
-    await db.query(`
-      UPDATE items
-      SET quantity = $1, updated_at = NOW(),
-          metadata = metadata || $2
-      WHERE item_id = $3
-    `, [quantity, JSON.stringify({
-      "last_updated_by": technician_id,
-      "last_update_notes": notes,
-      "updated_at": new Date().toISOString()
-    }), item_id]);
-
-    res.status(200).json({ success: true, message: "Stock updated successfully" });
-  } catch (error) {
-    console.error("Error updating material stock:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-app.get("/api/workshop/work-history", async (req, res) => {
-  try {
-    const { technician_id: _technician_id, branch_id, period = 'all' } = req.query;
-
-    let dateFilter = '';
-    if (period === 'today') {
-      dateFilter = "AND DATE(o.created_at) = CURRENT_DATE";
-    } else if (period === 'week') {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '7 days'";
-    } else if (period === 'month') {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '30 days'";
-    }
-
-    const result = await db.query(`
-      SELECT
-        o.order_id,
-        o.status,
-        o.created_at,
-        o.updated_at,
-        c.name as customer_name,
-        c.phone,
-        COALESCE(oi.nama_item, i.name) as item_name,
-        COALESCE(oi.kategori, i.kategori) as item_type,
-        COALESCE(oi.qty, 1) as ordered_quantity,
-        COALESCE(oi.weight, i.weight, 0) as weight,
-        COALESCE(oi.jenis, i.material) as material,
-        CASE
-          WHEN o.status = 'completed' THEN
-            EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
-          ELSE NULL
-        END as duration_hours
-      FROM orders o
-      JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1
-        AND o.status IN ('completed', 'cancelled')
-        ${dateFilter}
-      ORDER BY o.updated_at DESC NULLS LAST, o.created_at DESC
-      LIMIT 100
-    `, [branch_id]);
-
-    // Convert BigInt and other data types for JSON serialization
-    const processedRows = result.rows.map(row => ({
-      order_id: row.order_id.toString(),
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      customer_name: row.customer_name,
-      phone: row.phone,
-      item_name: row.item_name,
-      item_type: row.item_type,
-      ordered_quantity: parseInt(row.ordered_quantity || 0),
-      weight: parseFloat(row.weight || 0),
-      material: row.material,
-      duration_hours: row.duration_hours ? parseFloat(row.duration_hours) : null
-    }));
-
-    res.status(200).json(processedRows);
-  } catch (error) {
-    console.error("Error fetching work history:", error);
-    res.status(500).json({ error: "Internal server error", details: error.message });
-  }
-});
-
-app.get("/api/workshop/technician-reports", async (req, res) => {
-  try {
-    const { technician_id: _technician_id, branch_id, period = 'month' } = req.query;
-
-    let dateFilter = '';
-    if (period === 'week') {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '7 days'";
-    } else if (period === 'month') {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '30 days'";
-    } else if (period === 'quarter') {
-      dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '90 days'";
-    }
-
-    // Get work statistics
-    const workStats = await db.query(`
-      SELECT
-        COUNT(*) as total_orders,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-        COUNT(CASE WHEN status IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_orders,
-        COUNT(CASE WHEN status IN ('in_workshop', 'sent-to-workshop', 'pending') THEN 1 END) as pending_orders,
-        AVG(CASE
-          WHEN status = 'completed' THEN
-            EXTRACT(EPOCH FROM (updated_at - created_at))/3600
-          ELSE NULL
-        END) as avg_duration_hours,
-        SUM(CASE
-          WHEN status = 'completed' THEN
-            EXTRACT(EPOCH FROM (updated_at - created_at))/3600
-          ELSE NULL
-        END) as total_work_hours
-      FROM orders
-      WHERE branch_id = $1
-        AND order_type IN ('service', 'custom')
-        ${dateFilter.replace('o.created_at', 'created_at')}
-    `, [branch_id]);
-
-    // Get material usage statistics
-    const materialStats = await db.query(`
-      SELECT
-        COALESCE(
-          NULLIF(BTRIM(oi.jenis), ''),
-          NULLIF(BTRIM(i.material), ''),
-          'Unknown'
-        ) as material_type,
-        SUM(COALESCE(oi.weight, i.weight, 0) * COALESCE(oi.qty, 1)) as total_weight_used,
-        SUM(COALESCE(oi.qty, 1)) as usage_count
-      FROM orders o
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1 AND o.status = 'completed'
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
-      GROUP BY 1
-      ORDER BY total_weight_used DESC
-    `, [branch_id]);
-
-    // Get daily work distribution
-    const dailyStats = await db.query(`
-      SELECT
-        DATE(o.created_at) as work_date,
-        COUNT(*) as orders_count,
-        COUNT(CASE WHEN o.status = 'completed' THEN 1 END) as completed_count
-      FROM orders o
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
-      GROUP BY DATE(o.created_at)
-      ORDER BY work_date DESC
-      LIMIT 30
-    `, [branch_id]);
-
-    // Get work type distribution
-    const workTypeStats = await db.query(`
-      SELECT
-        COALESCE(
-          NULLIF(BTRIM(oi.kategori), ''),
-          NULLIF(BTRIM(i.kategori), ''),
-          'Unknown'
-        ) as item_type,
-        SUM(COALESCE(oi.qty, 1)) as count,
-        AVG(CASE
-          WHEN o.status = 'completed' THEN
-            EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
-          ELSE NULL
-        END) as avg_duration
-      FROM orders o
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
-      GROUP BY 1
-      ORDER BY count DESC
-    `, [branch_id]);
-
-    const stats = workStats.rows[0];
-    const efficiency = stats.total_orders > 0 ? (stats.completed_orders / stats.total_orders * 100) : 0;
-    const onTimeRate = stats.completed_orders > 0 ? (stats.completed_orders / stats.total_orders * 100) : 0;
-
-    res.status(200).json({
-      period: period,
-      work_stats: {
-        total_orders: parseInt(stats.total_orders) || 0,
-        completed_orders: parseInt(stats.completed_orders) || 0,
-        in_progress_orders: parseInt(stats.in_progress_orders) || 0,
-        pending_orders: parseInt(stats.pending_orders) || 0,
-        avg_duration_hours: parseFloat(stats.avg_duration_hours) || 0,
-        total_work_hours: parseFloat(stats.total_work_hours) || 0,
-        efficiency: Math.round(efficiency),
-        on_time_rate: Math.round(onTimeRate)
-      },
-      material_usage: materialStats.rows,
-      daily_distribution: dailyStats.rows,
-      work_type_distribution: workTypeStats.rows
-    });
-  } catch (error) {
-    console.error("Error fetching technician reports:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Technician Dashboard endpoint
-app.get("/api/technician/dashboard", async (req, res) => {
-  try {
-    const { branch_id, user_id: _user_id } = req.query;
-
-    // Get technician-specific statistics (consistent with other role dashboards)
-    const statsResult = await db.query(`
-      SELECT
-        COUNT(CASE WHEN status IN ('in_workshop', 'repairing', 'polishing', 'custom_work') THEN 1 END) as pending_work_orders,
-        COUNT(CASE WHEN status IN ('repairing', 'polishing') THEN 1 END) as in_progress_work_orders,
-        COUNT(CASE WHEN status IN ('completed', 'delivered') THEN 1 END) as completed_work_orders
-      FROM orders
-      WHERE branch_id = $1
-        AND order_type IN ('service', 'custom')
-        AND DATE(created_at) = CURRENT_DATE
-    `, [branch_id]);
-
-    const stats = statsResult.rows[0];
-
-    // Get recent assignments for this technician
-    const recentAssignmentsResult = await db.query(`
-      SELECT
-        o.order_id,
-        o.order_type,
-        o.status,
-        o.created_at,
-        i.name as item_name,
-        c.name as customer_name
-      FROM orders o
-      LEFT JOIN items i ON o.item_id = i.item_id
-      LEFT JOIN customers c ON o.customer_id = c.customer_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        AND o.status IN ('in_workshop', 'repairing', 'polishing', 'custom_work')
-      ORDER BY o.created_at DESC
-      LIMIT 5
-    `, [branch_id]);
-
-    const response = {
-      pending_work_orders: parseInt(stats.pending_work_orders) || 0,
-      in_progress_work_orders: parseInt(stats.in_progress_work_orders) || 0,
-      completed_work_orders: parseInt(stats.completed_work_orders) || 0,
-      recent_assignments: recentAssignmentsResult.rows,
-      last_updated: new Date().toISOString(),
-    };
-
-    res.status(200).json(response);
-  } catch (error) {
-    console.error("Error fetching technician dashboard:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Get workshop orders for admin workshop
-app.get('/workshop-orders', async (req, res) => {
-  try {
-    const { branch_id, status } = req.query;
-
-    if (!branch_id) {
-      return res.status(400).json({ error: 'branch_id is required' });
-    }
-
-    let query = `
-      SELECT
-        o.order_id,
-        o.order_number,
-        o.order_type,
-        o.status,
-        o.created_at,
-        o.updated_at,
-        c.name as customer_name,
-        c.phone,
-        COALESCE(oi.nama_item, i.name) as item_name,
-        COALESCE(oi.qty, 1) as quantity,
-        COALESCE(oi.weight, i.weight, 0) as weight,
-        COALESCE(oi.jenis, i.material) as material
-      FROM orders o
-      JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        AND o.status IN ('sent-to-workshop', 'in_workshop', 'repairing', 'polishing', 'custom_work', 'done_workshop', 'ready_for_pickup')
-    `;
-
-    let params = [branch_id];
-    let conditions = [];
-
-    if (status && status !== 'all') {
-      if (status === 'pending') {
-        conditions.push(`o.status IN ('sent-to-workshop', 'in_workshop')`);
-      } else if (status === 'in_progress') {
-        conditions.push(`o.status IN ('repairing', 'polishing', 'custom_work')`);
-      } else if (status === 'completed') {
-        conditions.push(`o.status IN ('done_workshop', 'ready_for_pickup')`);
-      } else {
-        conditions.push(`o.status = $${params.length + 1}`);
-        params.push(status);
-      }
-    }
-
-    if (conditions.length > 0) {
-      query += ' AND ' + conditions.join(' AND ');
-    }
-
-    query += ' ORDER BY o.updated_at DESC, o.created_at DESC';
-
-    const result = await db.query(query, params);
-
-    // Convert BigInt and other data types for JSON serialization
-    const processedRows = result.rows.map(row => ({
-      order_id: row.order_id.toString(),
-      order_number: row.order_number,
-      order_type: row.order_type,
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      customer_name: row.customer_name,
-      phone: row.phone,
-      item_name: row.item_name,
-      quantity: parseInt(row.quantity || 1),
-      weight: parseFloat(row.weight || 0),
-      material: row.material
-    }));
-
-    res.status(200).json(processedRows);
-  } catch (error) {
-    console.error('Error fetching workshop orders:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
-
-// Update status order workshop (service/custom) by admin_workshop/admin_toko/tukang
-app.put('/workshop-orders/:id/status', async (req, res) => {
-  try {
-    const orderId = parseInt(req.params.id, 10);
-    const nextStatusRaw = (req.body?.status ?? '').toString().trim().toLowerCase();
-    const branchId = parseInt(String(req.body?.branch_id ?? req.query?.branch_id ?? ''), 10);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      return res.status(400).json({ error: 'order_id tidak valid' });
-    }
-    if (!Number.isFinite(branchId) || branchId <= 0) {
-      return res.status(400).json({ error: 'branch_id wajib diisi' });
-    }
-
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    const allowedRoles = new Set(['superadmin', 'admin_toko', 'admin_workshop', 'tukang']);
-    if (!allowedRoles.has(role)) {
-      return res.status(403).json({ error: 'Role tidak diizinkan update status workshop' });
-    }
-
-    const curRes = await db.query(
-      `
-        SELECT order_id, order_type, branch_id, status
-        FROM orders
-        WHERE order_id = $1
-        LIMIT 1
-      `,
-      [orderId]
-    );
-    if (curRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Order tidak ditemukan' });
-    }
-    const order = curRes.rows[0];
-    if (parseInt(order.branch_id, 10) !== branchId) {
-      return res.status(403).json({ error: 'Order bukan milik branch ini' });
-    }
-    const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
-    if (orderType !== 'service' && orderType !== 'custom') {
-      return res.status(400).json({ error: 'Hanya order service/custom untuk workflow workshop' });
-    }
-    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
-
-    const allowedByRole = {
-      admin_toko: new Set(['sent-to-workshop', 'ready_for_pickup']),
-      admin_workshop: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
-      tukang: new Set(['in_workshop', 'repairing', 'polishing', 'done_workshop']),
-      superadmin: new Set(['sent-to-workshop', 'in_workshop', 'repairing', 'polishing', 'done_workshop', 'ready_for_pickup']),
-    };
-    const roleAllowedSet = allowedByRole[role] ?? new Set();
-    if (!roleAllowedSet.has(nextStatusRaw)) {
-      return res.status(400).json({
-        error: `Status "${nextStatusRaw}" tidak diizinkan untuk role ${role}`,
-      });
-    }
-
-    // Guard transitions to keep service flow consistent
-    const validTransitions = {
-      pending: new Set(['sent-to-workshop']),
-      completed: new Set(['sent-to-workshop']),
-      'sent-to-workshop': new Set(['in_workshop']),
-      in_workshop: new Set(['repairing', 'polishing', 'done_workshop']),
-      repairing: new Set(['polishing', 'done_workshop']),
-      polishing: new Set(['done_workshop']),
-      custom_work: new Set(['done_workshop']),
-      'done_workshop': new Set(['ready_for_pickup']),
-      'ready_for_pickup': new Set(['completed']),
-    };
-    if (
-      validTransitions[currentStatus] &&
-      !validTransitions[currentStatus].has(nextStatusRaw) &&
-      currentStatus !== nextStatusRaw
-    ) {
-      return res.status(400).json({
-        error: `Transisi status tidak valid (${currentStatus} -> ${nextStatusRaw})`,
-      });
-    }
-
-    await db.query(
-      `
-        UPDATE orders
-        SET status = $1, updated_at = NOW()
-        WHERE order_id = $2
-      `,
-      [nextStatusRaw, orderId]
-    );
-    return res.status(200).json({
-      success: true,
-      order_id: String(orderId),
-      old_status: currentStatus,
-      new_status: nextStatusRaw,
-    });
-  } catch (error) {
-    console.error('Error updating workshop order status:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Get technicians for admin workshop
-app.get('/technicians', async (req, res) => {
-  try {
-    const { branch_id } = req.query;
-
-    if (!branch_id) {
-      return res.status(400).json({ error: 'branch_id is required' });
-    }
-
-    const result = await db.query(`
-      SELECT
-        u.user_id,
-        u.username,
-        u.status,
-        u.created_at,
-        u.updated_at,
-        ubr.role,
-        COUNT(o.order_id) as active_orders,
-        COUNT(CASE WHEN o.status IN ('completed', 'delivered') THEN 1 END) as completed_orders_today
-      FROM users u
-      JOIN user_branch_roles ubr ON u.user_id = ubr.user_id
-      LEFT JOIN orders o ON o.user_id = u.user_id
-        AND o.branch_id = ubr.branch_id
-        AND DATE(o.updated_at) = CURRENT_DATE
-        AND o.status IN ('in_workshop', 'repairing', 'polishing', 'custom_work')
-      WHERE ubr.branch_id = $1
-        AND ubr.role = 'tukang'
-        AND u.status = 'active'
-      GROUP BY u.user_id, u.username, u.status, u.created_at, u.updated_at, ubr.role
-      ORDER BY u.username
-    `, [branch_id]);
-
-    // Convert BigInt and other data types for JSON serialization
-    const processedRows = result.rows.map(row => ({
-      user_id: row.user_id.toString(),
-      username: row.username,
-      status: row.status,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      role: row.role,
-      active_orders: parseInt(row.active_orders || 0),
-      completed_orders_today: parseInt(row.completed_orders_today || 0)
-    }));
-
-    res.status(200).json(processedRows);
-  } catch (error) {
-    console.error('Error fetching technicians:', error);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
-  }
-});
+registerWorkshopRoutes(app, { db });

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../routes/app_routes.dart';
+import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 
 class SwitchBranchRolePage extends ConsumerStatefulWidget {
@@ -14,6 +15,7 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
   String? selectedBranchId;
   String? selectedRole;
   Map<String, dynamic>? userData;
+  bool _continuing = false;
 
   @override
   void didChangeDependencies() {
@@ -31,7 +33,7 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
     }
   }
 
-  void _continueToModule() {
+  Future<void> _continueToModule() async {
     if (selectedBranchId == null || selectedRole == null || userData == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Silakan pilih cabang dan peran')),
@@ -40,22 +42,42 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
     }
 
     final normalizedRole = selectedRole!.trim().toLowerCase();
+    setState(() => _continuing = true);
 
-    // Update user state with selected branch and role
+    String newToken;
+    try {
+      final data = await ApiService.switchSessionContext(
+        branchId: selectedBranchId!,
+        role: normalizedRole,
+      );
+      newToken = data['token']?.toString() ?? '';
+      if (newToken.isEmpty) {
+        throw Exception('Token kosong dari server');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _continuing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal mengaktifkan sesi: $e')),
+        );
+      }
+      return;
+    }
+
     final userStateNotifier = ref.read(userStateProvider.notifier);
-    final currentAuthToken = ref.read(userStateProvider).authToken;
-
     userStateNotifier.setUserData(
       userId: int.tryParse(userData!['user_id'].toString()),
       username: userData!['username'] ?? '',
       branch: selectedBranchId!,
       role: normalizedRole,
-      authToken: currentAuthToken,
+      authToken: newToken,
       roles: List<String>.from(userData!['roles'] ?? []),
       branches: List<Map<String, dynamic>>.from(userData!['branches'] ?? []),
     );
 
-    // Navigate to appropriate module based on selected role
+    if (!mounted) return;
+    setState(() => _continuing = false);
+
     String route = '';
     switch (normalizedRole) {
       case 'cs':
@@ -218,17 +240,23 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _continueToModule,
+                onPressed: _continuing ? null : _continueToModule,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                child: const Text(
-                  'Lanjutkan',
-                  style: TextStyle(fontSize: 16),
-                ),
+                child: _continuing
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text(
+                        'Lanjutkan',
+                        style: TextStyle(fontSize: 16),
+                      ),
               ),
             ),
           ],

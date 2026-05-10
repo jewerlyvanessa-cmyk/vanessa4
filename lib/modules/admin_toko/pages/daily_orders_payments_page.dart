@@ -297,15 +297,15 @@ class _DailyOrdersPaymentsPageState
   String? _nextAdminTokoWorkshopStatus(Map<String, dynamic> row) {
     if (!_isServiceCustomOrder(row)) return null;
     final status = (row['status'] ?? '').toString().trim().toLowerCase();
-    if (status == 'pending' || status == 'completed') return 'sent-to-workshop';
+    if (status == 'pending' || status == 'confirmed') return 'awaiting_warehouse';
     if (status == 'done_workshop') return 'ready_for_pickup';
     return null;
   }
 
   String _adminTokoActionLabel(String nextStatus) {
     switch (nextStatus) {
-      case 'sent-to-workshop':
-        return 'Kirim WS';
+      case 'awaiting_warehouse':
+        return 'Kirim Gudang';
       case 'ready_for_pickup':
         return 'Terima';
       default:

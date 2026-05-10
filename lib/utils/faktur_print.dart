@@ -11,6 +11,263 @@ import 'package:vanessa3/utils/terbilang.dart';
 
 final Map<String, Uint8List> _imageByteCache = <String, Uint8List>{};
 
+Map<String, dynamic> _fakturMetadataMap(Map<String, dynamic> orderData) {
+  final raw = orderData['metadata'];
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String) {
+    final s = raw.trim();
+    if (s.isEmpty) return const {};
+    try {
+      final d = jsonDecode(s);
+      if (d is Map) return Map<String, dynamic>.from(d);
+    } catch (_) {}
+  }
+  return const {};
+}
+
+/// DP / uang muka dari payload + metadata (tanpa jaringan).
+double fakturDpFromPayloadSync(Map<String, dynamic> orderData) {
+  final type = (orderData['order_type'] ?? '').toString().trim().toLowerCase();
+  if (type != 'service' && type != 'custom') return 0;
+  final metadata = _fakturMetadataMap(orderData);
+  for (final raw in [
+    orderData['service_dp_amount'],
+    orderData['dp_amount'],
+    orderData['uang_muka'],
+    metadata['service_dp_amount'],
+  ]) {
+    final n = double.tryParse(raw?.toString() ?? '');
+    if (n != null && n > 0) return n;
+  }
+  return 0;
+}
+
+/// DP untuk service/custom: jumlah pembayaran bertipe DP di server, fallback [fakturDpFromPayloadSync].
+Future<double> resolveFakturDpAmount(Map<String, dynamic> orderData) async {
+  final type = (orderData['order_type'] ?? '').toString().trim().toLowerCase();
+  if (type != 'service' && type != 'custom') return 0;
+
+  double fromPayload() => fakturDpFromPayloadSync(orderData);
+
+  try {
+    final oid = orderData['order_id']?.toString().trim();
+    if (oid != null && oid.isNotEmpty) {
+      final uri = Uri.parse('${NetworkConfig.baseUrl}/payments').replace(
+        queryParameters: {'order_id': oid, 'limit': '50'},
+      );
+      final resp = await http
+          .get(uri, headers: NetworkConfig.defaultHeaders)
+          .timeout(const Duration(seconds: 4));
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is List) {
+          double sum = 0;
+          for (final raw in decoded) {
+            if (raw is! Map) continue;
+            final m = Map<String, dynamic>.from(raw);
+            final st = (m['status'] ?? '').toString().toLowerCase();
+            if (st == 'cancelled' || st == 'failed') continue;
+            final kind = (m['payment_kind'] ?? '').toString().toLowerCase();
+            final notes = (m['notes'] ?? '').toString().toLowerCase();
+            final isDp =
+                kind == 'dp' ||
+                notes.contains('uang muka') ||
+                notes.contains('muka (service)') ||
+                notes.contains('muka (custom)');
+            if (!isDp) continue;
+            final amt = double.tryParse(m['amount']?.toString() ?? '') ?? 0;
+            if (amt > 0) sum += amt;
+          }
+          if (sum > 0) return sum;
+        }
+      }
+    }
+  } catch (_) {}
+
+  return fromPayload();
+}
+
+/// Field servis/custom untuk faktur layar & PDF (sinkron dengan sumber data backend + metadata).
+Map<String, String> fakturServiceCustomFieldRows(
+  Map<String, dynamic> orderData, {
+  Map<String, dynamic>? orderItemSource,
+}) {
+  final type = (orderData['order_type'] ?? '').toString().trim().toLowerCase();
+  if (type != 'service' && type != 'custom') {
+    return const {};
+  }
+
+  Map<String, dynamic> toMap(dynamic raw) {
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    if (raw is String) {
+      final s = raw.trim();
+      if (s.isEmpty) return const {};
+      try {
+        final d = jsonDecode(s);
+        if (d is Map) return Map<String, dynamic>.from(d);
+      } catch (_) {}
+    }
+    return const {};
+  }
+
+  final items = orderData['items'] as List<dynamic>? ?? [];
+  Map<String, dynamic> primaryItem = {};
+  if (items.isNotEmpty && items.first is Map) {
+    primaryItem = Map<String, dynamic>.from(items.first as Map);
+  }
+  final src = orderItemSource ?? primaryItem;
+  final metadata = _fakturMetadataMap(orderData);
+  final orderConditionMap = toMap(orderData['kondisi_barang']);
+
+  String norm(dynamic v) {
+    if (v == null) return '';
+    if (v is List) {
+      return v
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .join(', ');
+    }
+    return v.toString().trim();
+  }
+
+  String pickFirstText(List<dynamic> candidates, {String fallback = '-'}) {
+    for (final c in candidates) {
+      final s = norm(c);
+      if (s.isNotEmpty && s != '-' && s.toUpperCase() != 'NULL') return s;
+    }
+    return fallback;
+  }
+
+  String fmtDots(dynamic v) {
+    final n = double.tryParse(v?.toString() ?? '');
+    if (n == null) return '0';
+    final s = n.toStringAsFixed(0);
+    return s.replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]}.',
+    );
+  }
+
+  String fmtMoneyOrDashEst(dynamic v) {
+    final d = double.tryParse(v?.toString() ?? '');
+    if (d == null || d <= 0) return '-';
+    return 'Rp. ${fmtDots(d)}';
+  }
+
+  double? pickFirstPositiveNumber(List<dynamic> values) {
+    for (final raw in values) {
+      final n = double.tryParse((raw ?? '').toString());
+      if (n != null && n > 0) return n;
+    }
+    return null;
+  }
+
+  String formatLongDate(dynamic raw) {
+    final s = (raw ?? '').toString().trim();
+    if (s.isEmpty || s == '-') return '-';
+    try {
+      final dt = DateTime.parse(s).toLocal();
+      const monthNames = [
+        'Januari',
+        'Februari',
+        'Maret',
+        'April',
+        'Mei',
+        'Juni',
+        'Juli',
+        'Agustus',
+        'September',
+        'Oktober',
+        'November',
+        'Desember',
+      ];
+      return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
+    } catch (_) {
+      return s;
+    }
+  }
+
+  final jenisService = pickFirstText([
+    src['tipe'],
+    src['jenis_service'],
+    src['item_tipe'],
+    primaryItem['tipe'],
+    orderData['jenis_service'],
+    orderData['service_type'],
+    metadata['jenis_service'],
+    metadata['service_type'],
+    orderConditionMap['jenis_service'],
+    orderConditionMap['service_type'],
+  ]);
+  final kelengkapan = pickFirstText([
+    orderData['kelengkapan'],
+    orderData['barang_bawaan'],
+    metadata['kelengkapan'],
+    metadata['barang_bawaan'],
+    orderConditionMap['kelengkapan'],
+    orderConditionMap['barang_bawaan'],
+  ]);
+  final catatan = pickFirstText([
+    orderData['keterangan'],
+    orderData['spesifikasi'],
+    orderData['estimate_notes'],
+    orderData['catatan_service'],
+    orderData['service_notes'],
+    orderData['catatan'],
+    metadata['keterangan'],
+    metadata['spesifikasi'],
+    metadata['catatan_service'],
+    metadata['service_notes'],
+    metadata['estimate_notes'],
+    orderConditionMap['catatan_service'],
+    orderConditionMap['catatan'],
+  ]);
+  final estNum = pickFirstPositiveNumber([
+    orderData['estimate_amount'],
+    orderData['service_estimated_total'],
+    orderData['custom_estimated_total'],
+    orderData['estimasi_biaya'],
+    orderData['estimate_cost'],
+    metadata['estimate_amount'],
+    metadata['service_estimated_total'],
+    metadata['estimasi_biaya'],
+    metadata['estimate_cost'],
+    orderConditionMap['estimasi_biaya'],
+    src['manual_total'],
+    src['total'],
+    src['subtotal'],
+    orderData['total'],
+    orderData['jumlah'],
+  ]);
+  final estimasiBiaya =
+      estNum != null ? fmtMoneyOrDashEst(estNum) : '-';
+
+  final estimasiSelesai = pickFirstText([
+    formatLongDate(
+      orderData['estimate_due_at'] ??
+          orderData['estimated_finish_at'] ??
+          orderData['estimated_completion_date'] ??
+          metadata['estimate_due_at'] ??
+          metadata['estimated_finish_at'],
+    ),
+    orderData['estimasi_selesai'],
+    metadata['estimasi_selesai_text'],
+    metadata['estimasi_selesai'],
+    orderData['estimate_duration_text'],
+    orderData['estimasi_waktu'],
+    metadata['estimate_duration_text'],
+    metadata['estimasi_waktu'],
+  ]);
+
+  return {
+    'jenis_service': jenisService,
+    'kelengkapan': kelengkapan,
+    'catatan': catatan,
+    'estimasi_biaya': estimasiBiaya,
+    'estimasi_selesai': estimasiSelesai,
+  };
+}
+
 /// Builds a simple invoice PDF and opens the system print / share UI.
 Future<void> printFakturOrder(
   BuildContext context,
@@ -295,6 +552,8 @@ Future<void> printFakturOrder(
     final orderType = (orderData['order_type'] ?? '').toString().toLowerCase();
     final isBuyback = orderType == 'buyback';
     final isServiceOrder = orderType == 'service';
+    final isCustomOrder = orderType == 'custom';
+    final isServiceOrCustom = isServiceOrder || isCustomOrder;
     final isSaleOrder = orderType == 'jual';
     final metadata = toMap(orderData['metadata']);
     final orderConditionMap = toMap(orderData['kondisi_barang']);
@@ -322,9 +581,11 @@ Future<void> printFakturOrder(
     }
 
     final oldNotaReference = extractOldNotaReference();
-    final shouldResolveFromOldNota = isBuyback || isServiceOrder;
+    // Hanya buyback: ambil baris dari nota jual lama (kondisi / harga buyback).
+    // Service/custom jangan lewat sini — parameter `isBuyback` pernah salah `true` untuk
+    // service sehingga item diganti ke order lama → Jenis Service / Harga/gram jadi kosong.
     final orderItemSource = await fetchOrderItemFromOldNota(
-      isBuyback: shouldResolveFromOldNota,
+      isBuyback: isBuyback,
       fallbackItem: primaryItem,
     );
     String transactionLabelByOrderType(String type) {
@@ -452,6 +713,9 @@ Future<void> printFakturOrder(
     final noNota = (orderData['order_number'] ?? orderData['order_id'] ?? '-')
         .toString();
     final orderNumber = (orderData['order_number'] ?? '').toString().trim();
+    final qrPayload = orderNumber.isNotEmpty
+        ? orderNumber
+        : (orderData['order_id'] ?? '').toString().trim();
     final tanggal = dateStr(orderData['created_at']);
     final tanggalDisplay = (() {
       try {
@@ -488,7 +752,7 @@ Future<void> printFakturOrder(
         (orderItemSource['kode_produk'] ?? orderItemSource['item_code'] ?? '-')
             .toString();
     final idProdukWithOldNota =
-        (isBuyback || isServiceOrder) && oldNotaReference.isNotEmpty
+        (isBuyback || isServiceOrCustom) && oldNotaReference.isNotEmpty
         ? '$idProduk (Nota lama: $oldNotaReference)'
         : idProduk;
     final deskripsi =
@@ -521,9 +785,28 @@ Future<void> printFakturOrder(
       orderItemSource['price_per_gram'],
       orderItemSource['harga_gram'],
     ]);
-    final hargaPerGramOrderItems = hargaPerGramOrderItemsRaw == null
-        ? '-'
-        : fmtMoney(hargaPerGramOrderItemsRaw);
+    final beratNum = double.tryParse(
+      (orderItemSource['weight'] ?? orderItemSource['berat'] ?? '').toString(),
+    );
+    final totalLine = double.tryParse(
+      (orderItemSource['manual_total'] ??
+              orderItemSource['total'] ??
+              orderItemSource['subtotal'] ??
+              '')
+          .toString(),
+    );
+    final derivedHargaPerGram =
+        (hargaPerGramOrderItemsRaw == null || hargaPerGramOrderItemsRaw <= 0) &&
+            beratNum != null &&
+            beratNum > 0 &&
+            totalLine != null &&
+            totalLine > 0
+        ? totalLine / beratNum
+        : null;
+    final hargaPerGramOrderItems = hargaPerGramOrderItemsRaw != null &&
+            hargaPerGramOrderItemsRaw > 0
+        ? fmtMoney(hargaPerGramOrderItemsRaw)
+        : (derivedHargaPerGram != null ? fmtMoney(derivedHargaPerGram) : '-');
     final hargaPerGramOrderItemsDisplay = hargaPerGramOrderItems == '-'
         ? '-'
         : 'Rp. $hargaPerGramOrderItems';
@@ -547,88 +830,20 @@ Future<void> printFakturOrder(
     final beratSesuai = kondisiBarang['berat_akhir'] ?? '-';
     final nilaiUntungRugi = fmtMoney(kondisiBarang['nilai_untung_rugi'] ?? 0);
     final potonganKondisi = fmtMoney(kondisiBarang['potongan_kondisi'] ?? 0);
-    String pickFirstText(List<dynamic> candidates, {String fallback = '-'}) {
-      for (final c in candidates) {
-        final s = (c ?? '').toString().trim();
-        if (s.isNotEmpty && s != '-' && s.toUpperCase() != 'NULL') return s;
-      }
-      return fallback;
-    }
-
-    String fmtMoneyOrDash(dynamic v) {
-      final d = double.tryParse(v?.toString() ?? '');
-      if (d == null || d <= 0) return '-';
-      return 'Rp. ${fmtMoney(v)}';
-    }
-
-    String formatLongDate(dynamic raw) {
-      final s = (raw ?? '').toString().trim();
-      if (s.isEmpty || s == '-') return '-';
-      try {
-        final dt = DateTime.parse(s).toLocal();
-        final monthNames = const [
-          'Januari',
-          'Februari',
-          'Maret',
-          'April',
-          'Mei',
-          'Juni',
-          'Juli',
-          'Agustus',
-          'September',
-          'Oktober',
-          'November',
-          'Desember',
-        ];
-        return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
-      } catch (_) {
-        return s;
-      }
-    }
-
-    final serviceType = pickFirstText([
-      orderData['jenis_service'],
-      orderData['service_type'],
-      metadata['jenis_service'],
-      metadata['service_type'],
-      orderConditionMap['jenis_service'],
-      orderConditionMap['service_type'],
-    ]);
-    final serviceAccessories = pickFirstText([
-      orderData['kelengkapan'],
-      orderData['barang_bawaan'],
-      metadata['kelengkapan'],
-      metadata['barang_bawaan'],
-      orderConditionMap['kelengkapan'],
-      orderConditionMap['barang_bawaan'],
-    ]);
-    final serviceNote = pickFirstText([
-      orderData['catatan_service'],
-      orderData['service_notes'],
-      orderData['catatan'],
-      metadata['catatan_service'],
-      metadata['service_notes'],
-      orderConditionMap['catatan_service'],
-      orderConditionMap['catatan'],
-    ]);
-    final serviceEstimateCost = fmtMoneyOrDash(
-      orderData['estimate_amount'] ??
-          orderData['estimasi_biaya'] ??
-          orderData['estimate_cost'] ??
-          metadata['estimasi_biaya'] ??
-          metadata['estimate_cost'] ??
-          orderConditionMap['estimasi_biaya'],
+    final svcFields = fakturServiceCustomFieldRows(
+      orderData,
+      orderItemSource: orderItemSource,
     );
-    final serviceEstimatedFinish = formatLongDate(
-      orderData['estimate_due_at'] ??
-          orderData['estimasi_selesai'] ??
-          orderData['estimated_finish_at'] ??
-          orderData['estimated_completion_date'] ??
-          metadata['estimasi_selesai'] ??
-          metadata['estimated_finish_at'] ??
-          orderData['estimate_duration_text'] ??
-          orderData['estimasi_waktu'],
-    );
+    final serviceType = svcFields['jenis_service'] ?? '-';
+    final serviceAccessories = svcFields['kelengkapan'] ?? '-';
+    final serviceNote = svcFields['catatan'] ?? '-';
+    final serviceEstimateCost = svcFields['estimasi_biaya'] ?? '-';
+    final serviceEstimatedFinish = svcFields['estimasi_selesai'] ?? '-';
+    final serviceDpAmount = isServiceOrCustom
+        ? await resolveFakturDpAmount(orderData)
+        : 0.0;
+    final serviceDpDisplay =
+        serviceDpAmount > 0 ? 'Rp. ${fmtMoney(serviceDpAmount)}' : '-';
     String oneLineItemName(String text) {
       final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
       if (compact.length <= 28) return compact;
@@ -1012,7 +1227,7 @@ Future<void> printFakturOrder(
                                       ],
                                     ),
                                   )
-                                : isServiceOrder
+                                : isServiceOrCustom
                                 ? pw.Container(
                                     decoration: pw.BoxDecoration(
                                       border: pw.Border.all(
@@ -1102,6 +1317,11 @@ Future<void> printFakturOrder(
                                               buybackInfoLine(
                                                 'Estimasi Biaya',
                                                 serviceEstimateCost,
+                                                leftInsetPx: 12,
+                                              ),
+                                              buybackInfoLine(
+                                                'Uang Muka (DP)',
+                                                serviceDpDisplay,
                                                 leftInsetPx: 12,
                                               ),
                                             ],
@@ -1243,7 +1463,7 @@ Future<void> printFakturOrder(
                                               ),
                                               pw.SizedBox(
                                                 width:
-                                                    (isServiceOrder &&
+                                                    (isServiceOrCustom &&
                                                         oldNotaReference
                                                             .isNotEmpty)
                                                     ? pxX(190)
@@ -1303,7 +1523,7 @@ Future<void> printFakturOrder(
                                               ),
                                               pw.SizedBox(
                                                 width:
-                                                    (isServiceOrder &&
+                                                    (isServiceOrCustom &&
                                                         oldNotaReference
                                                             .isNotEmpty)
                                                     ? pxX(190)
@@ -1346,7 +1566,7 @@ Future<void> printFakturOrder(
                                       ],
                                     ),
                                   ),
-                            if (isServiceOrder)
+                            if (isServiceOrCustom)
                               pw.Padding(
                                 padding: pw.EdgeInsets.fromLTRB(
                                   0,
@@ -1619,7 +1839,7 @@ Future<void> printFakturOrder(
                                       decoration: pw.BoxDecoration(
                                         color: PdfColors.white,
                                       ),
-                                      child: orderNumber.isEmpty
+                                      child: qrPayload.isEmpty
                                           ? pw.Center(
                                               child: detailItemText('QR'),
                                             )
@@ -1629,7 +1849,7 @@ Future<void> printFakturOrder(
                                               ),
                                               child: pw.BarcodeWidget(
                                                 barcode: pw.Barcode.qrCode(),
-                                                data: orderNumber,
+                                                data: qrPayload,
                                               ),
                                             ),
                                     ),
@@ -1669,20 +1889,22 @@ Future<void> printFakturOrder(
                             pw.Container(
                               color: isBuyback
                                   ? green
-                                  : (isServiceOrder ? purple : red),
+                                  : (isServiceOrCustom ? purple : red),
                               padding: pw.EdgeInsets.symmetric(
                                 vertical: pxY(8),
                               ),
                               child: pw.Center(
                                 child: pw.Text(
-                                  isServiceOrder
-                                      ? 'ORDER SERVICE'
-                                      : transactionLabel,
+                                  isCustomOrder
+                                      ? 'ORDER CUSTOM'
+                                      : (isServiceOrder
+                                            ? 'ORDER SERVICE'
+                                            : transactionLabel),
                                   maxLines: 1,
                                   softWrap: false,
                                   style: pw.TextStyle(
                                     font: pw.Font.helvetica(),
-                                    fontSize: isServiceOrder ? 13 : 12,
+                                    fontSize: isServiceOrCustom ? 13 : 12,
                                     color: PdfColors.white,
                                   ),
                                 ),

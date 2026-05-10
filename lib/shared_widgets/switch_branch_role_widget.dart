@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/module_navigation_util.dart';
 
@@ -41,13 +42,15 @@ class SwitchBranchRoleWidget extends ConsumerWidget {
               : PopupMenuButton<String>(
                   icon: const Icon(Icons.account_tree),
                   tooltip: 'Ganti Branch',
-                  onSelected: (branchId) => _onBranchSelected(
-                    context,
-                    ref,
-                    branchList,
-                    branchId,
-                    onSwitched,
-                  ),
+                  onSelected: (branchId) {
+                    _onBranchSelected(
+                      context,
+                      ref,
+                      branchList,
+                      branchId,
+                      onSwitched,
+                    );
+                  },
                   itemBuilder: (context) => branchList
                       .map(
                         (branch) => PopupMenuItem<String>(
@@ -76,13 +79,15 @@ class SwitchBranchRoleWidget extends ConsumerWidget {
               : PopupMenuButton<String>(
                   icon: const Icon(Icons.switch_account),
                   tooltip: 'Ganti Role',
-                  onSelected: (role) => _onRoleSelected(
-                    context,
-                    ref,
-                    currentBranch,
-                    role,
-                    onSwitched,
-                  ),
+                  onSelected: (role) {
+                    _onRoleSelected(
+                      context,
+                      ref,
+                      currentBranch,
+                      role,
+                      onSwitched,
+                    );
+                  },
                   itemBuilder: (context) => rolesInBranch
                       .map(
                         (role) => PopupMenuItem<String>(
@@ -97,14 +102,13 @@ class SwitchBranchRoleWidget extends ConsumerWidget {
   }
 }
 
-void _onBranchSelected(
+Future<void> _onBranchSelected(
   BuildContext context,
   WidgetRef ref,
   List<Map<String, dynamic>> branchList,
   String branchId,
   void Function(String branchId, String role)? onSwitched,
-) {
-  ref.read(userStateProvider.notifier).setBranch(branchId);
+) async {
   final bObj = branchList.firstWhere(
     (b) => b['branch_id'].toString() == branchId,
     orElse: () => <String, dynamic>{},
@@ -112,14 +116,51 @@ void _onBranchSelected(
   final roles = (bObj['roles'] is List)
       ? List<String>.from(bObj['roles'])
       : <String>[];
-  var newRole = '';
-  if (roles.isNotEmpty) {
-    newRole = roles[0];
-    ref.read(userStateProvider.notifier).setRole(newRole);
-    navigateToMainModule(context, getMainModuleForRole(newRole));
-  } else {
+  if (roles.isEmpty) {
+    ref.read(userStateProvider.notifier).setBranch(branchId);
     ref.read(userStateProvider.notifier).setRole('');
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Cabang ${bObj['name'] ?? branchId} tidak punya peran — hubungi admin.',
+          ),
+        ),
+      );
+    }
+    return;
   }
+  final newRole = roles[0].trim().toLowerCase();
+  final s = ref.read(userStateProvider);
+  if (s.userId == null) return;
+  try {
+    final data = await ApiService.switchSessionContext(
+      branchId: branchId,
+      role: newRole,
+    );
+    final newToken = data['token']?.toString() ?? '';
+    if (newToken.isEmpty) {
+      throw Exception('Token kosong dari server');
+    }
+    ref.read(userStateProvider.notifier).setUserData(
+          userId: s.userId,
+          username: s.username,
+          branch: branchId,
+          role: newRole,
+          authToken: newToken,
+          roles: s.roles,
+          branches: s.branches,
+        );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal ganti cabang: $e')),
+      );
+    }
+    return;
+  }
+  if (!context.mounted) return;
+  navigateToMainModule(context, getMainModuleForRole(newRole));
   onSwitched?.call(branchId, newRole);
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -130,15 +171,43 @@ void _onBranchSelected(
   );
 }
 
-void _onRoleSelected(
+Future<void> _onRoleSelected(
   BuildContext context,
   WidgetRef ref,
   String currentBranch,
   String role,
   void Function(String branchId, String role)? onSwitched,
-) {
+) async {
   final normalizedRole = role.trim().toLowerCase();
-  ref.read(userStateProvider.notifier).setRole(normalizedRole);
+  final s = ref.read(userStateProvider);
+  if (s.userId == null) return;
+  try {
+    final data = await ApiService.switchSessionContext(
+      branchId: currentBranch,
+      role: normalizedRole,
+    );
+    final newToken = data['token']?.toString() ?? '';
+    if (newToken.isEmpty) {
+      throw Exception('Token kosong dari server');
+    }
+    ref.read(userStateProvider.notifier).setUserData(
+          userId: s.userId,
+          username: s.username,
+          branch: currentBranch,
+          role: normalizedRole,
+          authToken: newToken,
+          roles: s.roles,
+          branches: s.branches,
+        );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal ganti peran: $e')),
+      );
+    }
+    return;
+  }
+  if (!context.mounted) return;
   navigateToMainModule(context, getMainModuleForRole(normalizedRole));
   onSwitched?.call(currentBranch, normalizedRole);
   ScaffoldMessenger.of(context).showSnackBar(

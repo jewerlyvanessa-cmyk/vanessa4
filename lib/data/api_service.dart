@@ -15,6 +15,33 @@ class UnauthorizedApiException implements Exception {
   String toString() => message;
 }
 
+class ForbiddenApiException implements Exception {
+  final String message;
+  ForbiddenApiException([this.message = 'Akses ditolak.']);
+
+  @override
+  String toString() => message;
+}
+
+String _responseErrorSummary(http.Response response) {
+  final body = response.body.trim();
+  if (body.isEmpty) return 'HTTP ${response.statusCode}';
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map) {
+      final error = decoded['error']?.toString().trim();
+      final details = decoded['details']?.toString().trim();
+      final parts = <String>[];
+      if (error != null && error.isNotEmpty) parts.add(error);
+      if (details != null && details.isNotEmpty) parts.add(details);
+      if (parts.isNotEmpty) return parts.join(' — ');
+    }
+  } catch (_) {
+    // fall through
+  }
+  return body;
+}
+
 class ApiService {
   static String get baseUrl => NetworkConfig.baseUrl;
 
@@ -33,11 +60,19 @@ class ApiService {
     for (int attempt = 0; attempt <= retries; attempt++) {
       try {
         final response = await request().timeout(timeout);
-        if (response.statusCode == 401 || response.statusCode == 403) {
+        if (response.statusCode == 401) {
           NetworkConfig.setAuthToken(null);
+          NetworkConfig.notifyUnauthorized();
           throw UnauthorizedApiException();
         }
+        if (response.statusCode == 403) {
+          throw ForbiddenApiException(_responseErrorSummary(response));
+        }
         return response;
+      } on UnauthorizedApiException {
+        rethrow;
+      } on ForbiddenApiException {
+        rethrow;
       } on TimeoutException {
         if (attempt == retries) {
           throw Exception('Request timeout after ${timeout.inSeconds} seconds');
@@ -124,6 +159,38 @@ class ApiService {
     }
   }
 
+  /// Minta JWT baru untuk cabang + peran yang dipilih (harus ada di user_branch_roles).
+  static Future<Map<String, dynamic>> switchSessionContext({
+    required String branchId,
+    required String role,
+  }) async {
+    final url = Uri.parse('$baseUrl/api/auth/switch-context');
+    final response = await _makeRequest(
+      () => http.post(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode({
+          'branch_id': branchId,
+          'role': role.trim().toLowerCase(),
+        }),
+      ),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(
+        'switch-context failed: ${response.statusCode} ${_responseErrorSummary(response)}',
+      );
+    }
+    final data = jsonDecode(response.body);
+    if (data is! Map<String, dynamic>) {
+      throw Exception('switch-context: invalid response');
+    }
+    final token = data['token']?.toString();
+    if (token != null && token.isNotEmpty) {
+      NetworkConfig.setAuthToken(token);
+    }
+    return data;
+  }
+
   /// Fetch all customers
   static Future<List<Map<String, dynamic>>> getCustomers() async {
     final url = Uri.parse('$baseUrl/api/customers');
@@ -206,14 +273,19 @@ class ApiService {
     }
   }
 
-  /// Get work queue for technician
+  /// Antrian kerja workshop di cabang. [assignedTechnicianId] hanya untuk filter
+  /// pekerjaan milik teknisi (user_id / metadata assignment) — dipakai halaman Update Progress.
   static Future<List<Map<String, dynamic>>> getWorkQueue(
-    String technicianId,
-    String branchId,
-  ) async {
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/work-queue?technician_id=$technicianId&branch_id=$branchId',
-    );
+    String branchId, {
+    String? assignedTechnicianId,
+  }) async {
+    final qp = <String, String>{'branch_id': branchId};
+    final aid = assignedTechnicianId?.trim() ?? '';
+    if (aid.isNotEmpty) {
+      qp['technician_id'] = aid;
+    }
+    final url =
+        Uri.parse('$baseUrl/api/workshop/work-queue').replace(queryParameters: qp);
 
     try {
       final response = await _makeRequest(

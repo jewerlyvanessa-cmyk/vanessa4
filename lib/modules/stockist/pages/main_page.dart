@@ -17,6 +17,7 @@ import 'package:vanessa3/modules/manajer/pages/global_stock_page.dart';
 import 'dari_toko_page.dart';
 import 'kirim_ke_toko_page.dart';
 import 'reports_page.dart';
+import 'service_incoming_page.dart';
 
 class StockistMainPage extends ConsumerStatefulWidget {
   const StockistMainPage({super.key});
@@ -194,6 +195,17 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const DariTokoPage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.build_circle_outlined,
+                    label: 'SERVICE MASUK',
+                    iconColor: Colors.deepPurple,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ServiceIncomingPage(),
                       ),
                     ),
                   ),

@@ -312,25 +312,23 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
       }
 
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
-      // Hanya pembayaran yang divalidasi oleh user login (payments.validated_by = user_id dari JWT).
+      // Backend (role kasir): default hanya transaksi dengan payments.validated_by = user login,
+      // tanggal pakai zona bisnis (Asia/Jakarta / BUSINESS_TIMEZONE). Opsional: validated_by_only=0.
       final response = await ApiClient.get(
         '/payments/daily-summary',
         query: {
           'branch_id': userState.branch,
           'date': dateStr,
-          'validated_by_only': '1',
         },
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          // Kasir fokus pada transaksi yang sudah selesai (completed) hari ini.
           final tx = (data['transactions'] as List?) ?? [];
           _dailyPayments = tx
               .whereType<Map>()
               .map((e) => Map<String, dynamic>.from(e))
-              .where((e) => (e['status'] ?? '').toString() == 'completed')
               .toList();
           _summary = data['summary'] ?? {};
           // Ringkasan metode pembayaran: pakai rule yang sama seperti total.

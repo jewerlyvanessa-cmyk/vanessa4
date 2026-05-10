@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'payment_page.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
@@ -62,24 +61,10 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
 
   Future<void> _scanAndFillSearch() async {
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Scan QR')),
-          body: MobileScanner(
-            onDetect: (capture) {
-              final barcodes = capture.barcodes;
-              if (barcodes.isEmpty) return;
-              final value = barcodes.first.rawValue ?? '';
-              if (value.trim().isEmpty) return;
-              Navigator.of(context).pop();
-              _searchController.text = value.trim();
-              if (mounted) setState(() {});
-            },
-          ),
-        ),
-      ),
-    );
+    final value = await pushQrScanPage(context, title: 'Scan QR');
+    if (!mounted || value == null || value.isEmpty) return;
+    _searchController.text = value;
+    setState(() {});
   }
 
   @override

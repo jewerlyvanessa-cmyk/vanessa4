@@ -57,10 +57,7 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
       }
 
       final results = await Future.wait([
-        ApiService.getWorkQueue(
-          userState.userId!.toString(),
-          userState.branch,
-        ),
+        ApiService.getWorkQueue(userState.branch),
         ApiService.getMaterialStock(userState.branch),
       ]);
 
@@ -69,7 +66,14 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
         _materialStock = results[1];
         _isLoading = false;
       });
+    } on UnauthorizedApiException {
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -130,6 +134,8 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
           const SnackBar(content: Text('Penggunaan material berhasil dicatat')),
         );
       }
+    } on UnauthorizedApiException {
+      // Sesi dibersihkan oleh ApiService.
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(

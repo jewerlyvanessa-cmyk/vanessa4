@@ -40,16 +40,17 @@ class _WorkQueuePageState extends ConsumerState<WorkQueuePage> {
         });
         return;
       }
-      final workQueue = await ApiService.getWorkQueue(
-        userState.userId!.toString(),
-        userState.branch,
-      );
+      final workQueue = await ApiService.getWorkQueue(userState.branch);
 
       setState(() {
         _workQueue = workQueue;
         _isLoading = false;
       });
+    } on UnauthorizedApiException {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
     } catch (error) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Gagal memuat antrian kerja: $error';
         _isLoading = false;

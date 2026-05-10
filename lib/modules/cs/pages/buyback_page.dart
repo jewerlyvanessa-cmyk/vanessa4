@@ -20,8 +20,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class BuybackPage extends ConsumerStatefulWidget {
@@ -709,22 +708,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   }
 
   Future<void> _scanAndFill(TextEditingController controller) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Scan QR Code')),
-          body: MobileScanner(
-            onDetect: (capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                controller.text = barcodes.first.rawValue ?? '';
-                Navigator.of(context).pop();
-              }
-            },
-          ),
-        ),
-      ),
-    );
+    final v = await pushQrScanPage(context);
+    if (!mounted || v == null) return;
+    controller.text = v;
   }
 
   Future<void> _submitBuyback() async {

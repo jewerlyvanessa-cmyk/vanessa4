@@ -13,8 +13,7 @@ import 'faktur_page.dart';
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
@@ -59,6 +58,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   final TextEditingController _uangMukaController = TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
+  /// Referensi ke controller teks yang dipakai [Autocomplete] customer (bukan [_customerController]).
+  TextEditingController? _customerAutocompleteController;
   XFile? _fotoXFile;
   Uint8List? _fotoBytes;
   String? _fotoName;
@@ -114,6 +115,31 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
   }
 
+  /// Pastikan ada customer_id untuk POST /orders (backend menolak null).
+  /// Cocokkan nama ke [customersProvider] bila user mengetik tanpa memilih opsi / nota tanpa ID.
+  int? _resolveCustomerIdForSubmit() {
+    final fromMap = toInt(_selectedCustomer?['customer_id']);
+    if (fromMap != null && fromMap > 0) return fromMap;
+
+    final name = _customerController.text.trim().isNotEmpty
+        ? _customerController.text.trim()
+        : (_selectedCustomer?['name'] ?? _selectedCustomer?['nama'] ?? '')
+              .toString()
+              .trim();
+    if (name.isEmpty) return null;
+
+    final lower = name.toLowerCase();
+    for (final c in ref.read(customersProvider).customers) {
+      final cn =
+          (c['name'] ?? c['nama'] ?? '').toString().trim().toLowerCase();
+      if (cn == lower) {
+        final id = toInt(c['customer_id']);
+        if (id != null && id > 0) return id;
+      }
+    }
+    return null;
+  }
+
   Future<void> _pickFoto() async {
     if (kIsWeb) {
       final picked = await FilePicker.platform.pickFiles(
@@ -164,22 +190,16 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   }
 
   Future<void> _scanAndFill(TextEditingController controller) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Scan QR Code')),
-          body: MobileScanner(
-            onDetect: (capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                controller.text = barcodes.first.rawValue ?? '';
-                Navigator.of(context).pop();
-              }
-            },
-          ),
-        ),
-      ),
-    );
+    final v = await pushQrScanPage(context);
+    if (!mounted || v == null) return;
+    controller.text = v;
+  }
+
+  /// Scan QR nomor nota lama lalu langsung cari order jual (isi customer + item).
+  Future<void> _scanAndLookupNotaLama(TextEditingController controller) async {
+    await _scanAndFill(controller);
+    if (!mounted || controller.text.trim().isEmpty) return;
+    await _lookupNotaLamaForService(controller);
   }
 
   Future<void> _showAddCustomerDialog(String initialName) async {
@@ -285,15 +305,31 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       return;
     }
 
-    if (_selectedCustomer == null) {
+    final userState = ref.read(userStateProvider);
+    final branchId = int.tryParse(userState.branch);
+    if (branchId == null || branchId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih customer terlebih dahulu!')),
+        const SnackBar(
+          content: Text(
+            'Cabang tidak valid. Pilih cabang aktif lewat menu profil/cabang.',
+          ),
+        ),
       );
       return;
     }
 
-    final userState = ref.read(userStateProvider);
-    final branchId = int.tryParse(userState.branch);
+    final customerId = _resolveCustomerIdForSubmit();
+    if (customerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Customer belum valid. Pilih nama dari daftar saran atau tambah customer baru.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final userId = userState.userId;
 
     if (userId == null) {
@@ -318,9 +354,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     final weightVal = double.tryParse(_beratController.text.trim()) ?? 0;
     final totalBiayaVal = _parseMoney(_totalBiayaController.text);
     final uangMukaVal = _parseMoney(_uangMukaController.text);
-    final initialServiceStatus = (totalBiayaVal > 0 && uangMukaVal > 0)
-        ? 'pending'
-        : 'sent-to-workshop';
+    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → gudang → workshop.
+    final initialServiceStatus = 'pending';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
         : 'SERV-${DateTime.now().millisecondsSinceEpoch}';
@@ -334,7 +369,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       'branch_id': branchId,
       'user_id': userId,
       'mode': _modeToko.toLowerCase(),
-      'customer_id': _selectedCustomer!['customer_id'],
+      'customer_id': customerId,
       'service_estimated_total': totalBiayaVal,
       'service_dp_amount': uangMukaVal,
       'diskon': 0,
@@ -366,9 +401,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       'customer_phone': _customerPhoneController.text,
       'customer_address': _customerAddressController.text,
     };
-    if (branchId != null &&
-        _pickupBranchId != null &&
-        _pickupBranchId != branchId) {
+    if (_pickupBranchId != null && _pickupBranchId != branchId) {
       orderData['pickup_branch_id'] = _pickupBranchId;
     }
 
@@ -382,8 +415,41 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Respons order tidak valid')),
+            );
+          }
+          return;
+        }
+        final data = Map<String, dynamic>.from(decoded);
         final createdOrderId = data['order_id'] ?? data['orderId'];
+
+        // Gabungkan field form ke payload faktur (respons API tidak selalu mengembalikan root payload).
+        final itemsReq = orderData['order_items'];
+        if (itemsReq is List && itemsReq.isNotEmpty && itemsReq.first is Map) {
+          final first = Map<String, dynamic>.from(itemsReq.first as Map);
+          final tipe = first['tipe']?.toString().trim();
+          if (tipe != null && tipe.isNotEmpty) {
+            data['jenis_service'] = tipe;
+          }
+        }
+        for (final e in [
+          ['kelengkapan', orderData['kelengkapan']],
+          ['keterangan', orderData['keterangan']],
+          ['estimasi_selesai', orderData['estimasi_selesai']],
+          ['service_estimated_total', orderData['service_estimated_total']],
+        ]) {
+          final v = e[1];
+          if (v != null && v.toString().trim().isNotEmpty) {
+            data[e[0] as String] = v;
+          }
+        }
+        if (uangMukaVal > 0) {
+          data['service_dp_amount'] = uangMukaVal;
+        }
 
         // Record DP as a pending payment (uang muka) if provided.
         if (uangMukaVal > 0 && createdOrderId != null) {
@@ -490,18 +556,34 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         return;
       }
 
+      String pickStr(dynamic a, dynamic b) {
+        final s = a?.toString().trim() ?? '';
+        if (s.isNotEmpty) return s;
+        return b?.toString().trim() ?? '';
+      }
+
+      final custName = pickStr(orderData['customer_name'], orderData['name']);
+      final custPhone = pickStr(orderData['customer_phone'], orderData['phone']);
+      final custAddr =
+          pickStr(orderData['customer_address'], orderData['address']);
+
       setState(() {
         _selectedCustomer = {
           'customer_id': orderData['customer_id'],
-          'name': orderData['customer_name'],
-          'phone': orderData['customer_phone'],
-          'address': orderData['customer_address'],
+          'name': custName,
+          'nama': custName,
+          'phone': custPhone,
+          'no_hp': custPhone,
+          'address': custAddr,
+          'alamat': custAddr,
         };
-        _customerController.text = orderData['customer_name']?.toString() ?? '';
-        _customerPhoneController.text =
-            orderData['customer_phone']?.toString() ?? '';
-        _customerAddressController.text =
-            orderData['customer_address']?.toString() ?? '';
+        _customerController.text = custName;
+        _customerPhoneController.text = custPhone;
+        _customerAddressController.text = custAddr;
+        _customerAutocompleteController?.text = custName;
+        _customerAutocompleteController?.selection = TextSelection.collapsed(
+          offset: custName.length,
+        );
       });
 
       final validItems = orderData['items'] as List<dynamic>? ?? [];
@@ -859,6 +941,14 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                               customer['alamat'] ??
                                               '';
                                           _selectedCustomer = customer;
+                                          final dn =
+                                              customer['name'] ??
+                                              customer['nama'] ??
+                                              '';
+                                          final nameStr = dn.toString();
+                                          _customerController.text = nameStr;
+                                          _customerAutocompleteController
+                                              ?.text = nameStr;
                                         });
                                       },
                                       fieldViewBuilder:
@@ -868,7 +958,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                             focusNode,
                                             onFieldSubmitted,
                                           ) {
-                                            // Use the provided controller directly, no need to sync with _customerController
+                                            _customerAutocompleteController =
+                                                controller;
                                             return Column(
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
@@ -888,8 +979,12 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                                                 horizontal: 12,
                                                               ),
                                                         ),
-                                                        onChanged: (_) =>
-                                                            setState(() {}),
+                                                        onChanged: (_) {
+                                                          _customerController
+                                                                  .text =
+                                                              controller.text;
+                                                          setState(() {});
+                                                        },
                                                         onFieldSubmitted:
                                                             (value) =>
                                                                 onFieldSubmitted(),
@@ -1067,7 +1162,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                             Icons.qr_code_scanner,
                                           ),
                                           onPressed: () =>
-                                              _scanAndFill(controller),
+                                              _scanAndLookupNotaLama(controller),
                                           tooltip: 'Scan QR nota lama',
                                         ),
                                       ],
@@ -1440,9 +1535,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
               ),
               const SizedBox(height: 24),
 
-              // Bagian 4: Keterangan Service
+              // Bagian 4: Catatan service (opsional)
               const Text(
-                'Catatan',
+                'Catatan (opsional)',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 12),
@@ -1452,14 +1547,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                 decoration: const InputDecoration(
                   labelText: 'Keluhan / Keterangan Perbaikan',
                   border: OutlineInputBorder(),
-                  hintText: 'Contoh: Rusak, Bengkok, Gemuk, dll',
+                  hintText: 'Contoh: Rusak, Bengkok, Gemuk, dll (boleh dikosongkan)',
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Keterangan service wajib diisi';
-                  }
-                  return null;
-                },
               ),
               const SizedBox(height: 12),
               Row(

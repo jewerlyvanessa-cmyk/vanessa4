@@ -1,7 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:vanessa3/utils/faktur_print.dart';
+import 'package:vanessa3/utils/faktur_print.dart'
+    show
+        printFakturOrder,
+        resolveFakturDpAmount,
+        fakturDpFromPayloadSync,
+        fakturServiceCustomFieldRows;
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
@@ -16,6 +21,7 @@ class FakturPage extends StatefulWidget {
 
 class _FakturPageState extends State<FakturPage> {
   late final Future<String> _branchTitleFuture;
+  late final Future<double> _serviceCustomDpFuture;
 
   String _normalizeOrderType(dynamic raw) {
     return (raw ?? '').toString().trim().toLowerCase();
@@ -71,6 +77,7 @@ class _FakturPageState extends State<FakturPage> {
   void initState() {
     super.initState();
     _branchTitleFuture = _resolveBranchTitle();
+    _serviceCustomDpFuture = resolveFakturDpAmount(widget.orderData);
   }
 
   String _branchTitleFromOrderData() {
@@ -130,6 +137,15 @@ class _FakturPageState extends State<FakturPage> {
         );
   }
 
+  double _totalOrderRounded(Map<String, dynamic> od) {
+    final rawJumlah = od['jumlah'];
+    final rawTotal = od['total'];
+    final j = double.tryParse(rawJumlah?.toString() ?? '');
+    if (j != null) return (j / 5000).ceil() * 5000;
+    final t = double.tryParse(rawTotal?.toString() ?? '') ?? 0;
+    return (t / 5000).ceil() * 5000;
+  }
+
   String? _photoUrl(dynamic raw) {
     final s = raw?.toString().trim();
     if (s == null || s.isEmpty) return null;
@@ -164,6 +180,10 @@ class _FakturPageState extends State<FakturPage> {
         orderData['address'] ??
         orderData['alamat'];
     final orderNumber = (orderData['order_number'] ?? '').toString().trim();
+    // QR = bukti order: isi nomor nota (scan di CS/kasir). Fallback order_id jika nota belum ada.
+    final qrPayload = orderNumber.isNotEmpty
+        ? orderNumber
+        : (orderData['order_id'] ?? '').toString().trim();
     final orderType = orderData['order_type'];
     final fakturHeading = _fakturHeading(orderType);
     final orderTypeLabel = _orderTypeDisplayLabel(orderType);
@@ -231,20 +251,20 @@ class _FakturPageState extends State<FakturPage> {
                   children: [
                     Text('Order ID: ${orderData['order_id'] ?? '-'}'),
                     Text('Order Number: ${orderData['order_number'] ?? '-'}'),
-                    if (orderNumber.isNotEmpty) ...[
+                    if (qrPayload.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Center(
                         child: Column(
                           children: [
                             QrImageView(
-                              data: orderNumber,
+                              data: qrPayload,
                               version: QrVersions.auto,
                               size: 160,
                               gapless: false,
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              orderNumber,
+                              orderNumber.isNotEmpty ? orderNumber : qrPayload,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                               ),
@@ -365,6 +385,62 @@ class _FakturPageState extends State<FakturPage> {
                 ),
               ),
 
+            if (_normalizeOrderType(orderType) == 'service' ||
+                _normalizeOrderType(orderType) == 'custom') ...[
+              const SizedBox(height: 24),
+              Text(
+                'Detail servis',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Builder(
+                    builder: (context) {
+                      final f = fakturServiceCustomFieldRows(orderData);
+                      if (f.isEmpty) return const SizedBox.shrink();
+                      Widget row(String key, String label) {
+                        final v = f[key] ?? '-';
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 132,
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Expanded(child: Text(v)),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          row('jenis_service', 'Jenis service'),
+                          row('kelengkapan', 'Kelengkapan'),
+                          row('catatan', 'Catatan'),
+                          row('estimasi_biaya', 'Estimasi biaya'),
+                          row('estimasi_selesai', 'Estimasi selesai'),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+
             const SizedBox(height: 24),
 
             // Order Summary
@@ -403,6 +479,53 @@ class _FakturPageState extends State<FakturPage> {
                             style: const TextStyle(color: Colors.red),
                           ),
                         ],
+                      ),
+                    if (_normalizeOrderType(orderType) == 'service' ||
+                        _normalizeOrderType(orderType) == 'custom')
+                      FutureBuilder<double>(
+                        future: _serviceCustomDpFuture,
+                        builder: (context, snap) {
+                          final dp = snap.hasData
+                              ? snap.data!
+                              : fakturDpFromPayloadSync(orderData);
+                          if (dp <= 0) return const SizedBox.shrink();
+                          final total = _totalOrderRounded(orderData);
+                          final sisa = total > dp ? total - dp : 0.0;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Uang Muka (DP):'),
+                                  Text(
+                                    'Rp ${_fmtMoney(dp)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Sisa estimasi:'),
+                                  Text(
+                                    'Rp ${_fmtMoney(sisa)}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.orange[900],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,

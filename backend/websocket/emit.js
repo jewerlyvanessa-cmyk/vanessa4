@@ -24,8 +24,11 @@ function emitNotification(wss, message, options = {}) {
 
   const wire = JSON.stringify(frame);
   wss.clients.forEach((client) => {
-    if (client.readyState === 1 /* WebSocket.OPEN */) {
+    if (client.readyState !== 1 /* WebSocket.OPEN */) return;
+    try {
       client.send(wire);
+    } catch (e) {
+      console.error('WebSocket client.send failed:', e?.message || e);
     }
   });
 }

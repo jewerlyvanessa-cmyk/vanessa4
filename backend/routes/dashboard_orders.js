@@ -103,11 +103,11 @@ router.get('/dashboard/order-today', async (req, res) => {
         ? dateFromClient
         : !useRange
           ? new Intl.DateTimeFormat('en-CA', {
-              timeZone: ORDER_CALENDAR_TIMEZONE,
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit',
-            }).format(new Date())
+            timeZone: ORDER_CALENDAR_TIMEZONE,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date())
           : null;
 
     // Sama dengan /api/orders/daily: order dihitung per hari kalender bisnis (created_at)
@@ -436,25 +436,15 @@ router.post('/orders', async (req, res) => {
     }
 
     // Determine status based on order type
-    const wfEst = parseFloat(
-      req.body?.service_estimated_total ?? req.body?.custom_estimated_total ?? 0
-    );
-    const wfDp = parseFloat(
-      req.body?.service_dp_amount ?? req.body?.custom_dp_amount ?? 0
-    );
-    const hasWfCost =
-      Number.isFinite(wfEst) && wfEst > 0 &&
-      Number.isFinite(wfDp) && wfDp > 0;
     let status;
     switch (order_type) {
       case 'service':
-        status = hasWfCost ? 'pending' : 'sent-to-workshop';
+      case 'custom':
+        // Sama seperti POST /orders utama: cabang toko dulu (pending), workshop setelah gudang.
+        status = 'pending';
         break;
       case 'buyback':
         status = 'buyback';
-        break;
-      case 'custom':
-        status = hasWfCost ? 'pending' : 'sent-to-workshop';
         break;
       case 'jual':
         status = req.body.status || 'pending'; // Use status from request or default to 'pending'

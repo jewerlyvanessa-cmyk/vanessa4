@@ -68,15 +68,22 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
         return;
       }
       final workQueue = await ApiService.getWorkQueue(
-        userState.userId!.toString(),
         userState.branch,
+        assignedTechnicianId: userState.userId!.toString(),
       );
 
       setState(() {
         _workQueue = workQueue;
         _isLoading = false;
       });
+    } on UnauthorizedApiException {
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -124,6 +131,8 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
           const SnackBar(content: Text('Progress berhasil diperbarui')),
         );
       }
+    } on UnauthorizedApiException {
+      // Sesi dibersihkan oleh ApiService; hindari snackbar mengambang.
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(

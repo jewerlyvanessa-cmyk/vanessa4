@@ -50,7 +50,14 @@ class _WorkHistoryPageState extends ConsumerState<WorkHistoryPage> {
         _workHistory = history;
         _isLoading = false;
       });
+    } on UnauthorizedApiException {
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;

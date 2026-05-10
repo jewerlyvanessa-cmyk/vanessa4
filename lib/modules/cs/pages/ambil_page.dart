@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -96,16 +96,17 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   }
 
   Future<void> _scanQRCode() async {
-    final result = await Navigator.push<String>(
+    final result = await pushQrScanPage(
       context,
-      MaterialPageRoute(builder: (context) => const QRScannerPage()),
+      title: 'Scan QR Code',
+      showTorchActions: true,
+      appBarBackgroundColor: Colors.blue,
     );
 
-    if (result != null && result.isNotEmpty) {
-      setState(() {
-        _orderNumberController.text = result;
-      });
-    }
+    if (!mounted || result == null || result.isEmpty) return;
+    setState(() {
+      _orderNumberController.text = result;
+    });
   }
 
   Future<String?> _uploadFoto(File? foto) async {
@@ -655,54 +656,5 @@ dataRowMinHeight: 44,
         ),
       ),
     );
-  }
-}
-
-class QRScannerPage extends StatefulWidget {
-  const QRScannerPage({super.key});
-
-  @override
-  State<QRScannerPage> createState() => _QRScannerPageState();
-}
-
-class _QRScannerPageState extends State<QRScannerPage> {
-  MobileScannerController cameraController = MobileScannerController();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan QR Code'),
-        backgroundColor: Colors.blue,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () => cameraController.toggleTorch(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.cameraswitch),
-            onPressed: () => cameraController.switchCamera(),
-          ),
-        ],
-      ),
-      body: MobileScanner(
-        controller: cameraController,
-        onDetect: (capture) {
-          final List<Barcode> barcodes = capture.barcodes;
-          for (final barcode in barcodes) {
-            if (barcode.rawValue != null) {
-              Navigator.pop(context, barcode.rawValue);
-              break;
-            }
-          }
-        },
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    cameraController.dispose();
-    super.dispose();
   }
 }

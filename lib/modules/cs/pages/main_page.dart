@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
@@ -243,24 +242,9 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
       _itemFieldStr(item, const ['material', 'item_material']);
 
   Future<void> _scanAndFillSearch() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Scan QR Order')),
-          body: MobileScanner(
-            onDetect: (capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                final value = barcodes.first.rawValue ?? '';
-                _csOrderSearchQuery = value;
-                Navigator.of(context).pop();
-                setState(() {});
-              }
-            },
-          ),
-        ),
-      ),
-    );
+    final value = await pushQrScanPage(context, title: 'Scan QR Order');
+    if (!mounted || value == null || value.isEmpty) return;
+    setState(() => _csOrderSearchQuery = value);
   }
 
   String _itemKadarLine(Map<String, dynamic>? item) =>
@@ -282,9 +266,15 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
   bool _csOrderMatchesSearch(Map<String, dynamic> order, String q) {
     if (q.isEmpty) return true;
     if ('${order['order_id']}'.toLowerCase().contains(q)) return true;
+    final nota = (order['order_number'] ?? '').toString().trim().toLowerCase();
+    if (nota.isNotEmpty && nota.contains(q)) return true;
     if ((order['customer_name'] ?? '').toString().toLowerCase().contains(q)) {
       return true;
     }
+    final phone = (order['customer_phone'] ?? order['phone'] ?? '')
+        .toString()
+        .toLowerCase();
+    if (phone.isNotEmpty && phone.contains(q)) return true;
     for (final it in _orderLineItemRows(order)) {
       if (it is! Map) continue;
       final m = Map<String, dynamic>.from(it);

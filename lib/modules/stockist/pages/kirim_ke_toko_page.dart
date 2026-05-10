@@ -4,8 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../../../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/surat_jalan_print.dart';
@@ -40,28 +39,8 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
     _loadData();
   }
 
-  Future<String?> _scanQrCode(BuildContext context) async {
-    return Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (context) {
-          var didPop = false;
-          return Scaffold(
-            appBar: AppBar(title: const Text('Scan QR Code')),
-            body: MobileScanner(
-              onDetect: (capture) {
-                if (didPop) return;
-                final barcodes = capture.barcodes;
-                final raw = barcodes.isNotEmpty ? barcodes.first.rawValue : null;
-                final value = (raw ?? '').trim();
-                if (value.isEmpty) return;
-                didPop = true;
-                Navigator.of(context).pop(value);
-              },
-            ),
-          );
-        },
-      ),
-    );
+  Future<String?> _scanQrCode(BuildContext context) {
+    return pushQrScanPage(context);
   }
 
   List<dynamic> _decodeJsonList(http.Response resp) {

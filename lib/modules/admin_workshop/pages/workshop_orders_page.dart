@@ -21,6 +21,8 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
   bool _isLoading = true;
   String _error = '';
   String _selectedStatus = 'all';
+  /// `all` = antrian kerja tukang (default); `cross_branch` / `local` = sempitkan by cabang asal.
+  String _scope = 'all';
 
   @override
   void initState() {
@@ -43,24 +45,60 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
     try {
       final userState = ref.read(userStateProvider);
       final baseUrl = NetworkConfig.baseUrl;
+      final branch = userState.branch.trim();
+      if (branch.isEmpty) {
+        setState(() {
+          _error = 'Cabang belum dipilih. Buka profil / pilih cabang lalu coba lagi.';
+          _isLoading = false;
+        });
+        return;
+      }
 
       final qStatus = _selectedStatus == 'all'
           ? ''
           : '&status=${Uri.encodeQueryComponent(_selectedStatus)}';
+      final qScope = '&scope=${Uri.encodeQueryComponent(_scope)}';
       final response = await http.get(
-        Uri.parse('$baseUrl/workshop-orders?branch_id=${userState.branch}$qStatus'),
+        Uri.parse(
+          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus',
+        ),
         headers: NetworkConfig.defaultHeaders,
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        if (data is! List) {
+          setState(() {
+            _error = 'Format respons server tidak valid (bukan daftar order).';
+            _isLoading = false;
+          });
+          return;
+        }
         setState(() {
           _workshopOrders = data;
           _isLoading = false;
         });
       } else {
+        String detail = '';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            detail = (decoded['error'] ?? decoded['details'] ?? decoded['message'])
+                    ?.toString() ??
+                '';
+          } else {
+            detail = response.body;
+          }
+        } catch (_) {
+          detail = response.body;
+        }
+        if (detail.length > 200) {
+          detail = '${detail.substring(0, 200)}…';
+        }
         setState(() {
-          _error = 'Gagal memuat data order workshop';
+          _error =
+              'Gagal memuat order workshop (HTTP ${response.statusCode})'
+              '${detail.isNotEmpty ? ': $detail' : ''}';
           _isLoading = false;
         });
       }
@@ -165,9 +203,24 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
       });
     });
 
+    final appBarFg = Theme.of(context).appBarTheme.foregroundColor ??
+        Theme.of(context).colorScheme.onSurface;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Order Workshop'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Order Workshop'),
+            Text(
+              _scopeSubtitle(),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: appBarFg.withValues(alpha: 0.85),
+                    fontWeight: FontWeight.w400,
+                  ),
+            ),
+          ],
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) {
@@ -176,7 +229,10 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
             },
             itemBuilder: (context) => [
               const PopupMenuItem(value: 'all', child: Text('Semua')),
-              const PopupMenuItem(value: 'pending', child: Text('Pending')),
+              const PopupMenuItem(
+                value: 'pending',
+                child: Text('Baru masuk workshop'),
+              ),
               const PopupMenuItem(
                 value: 'in_progress',
                 child: Text('Dalam Proses'),
@@ -200,24 +256,57 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error.isNotEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(_error, style: const TextStyle(color: Colors.red)),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _loadWorkshopOrders,
-                    child: const Text('Coba Lagi'),
-                  ),
-                ],
-              ),
-            )
-          : Column(
-              children: [
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment<String>(
+                  value: 'all',
+                  label: Text('Antrian'),
+                  icon: Icon(Icons.playlist_play_outlined, size: 18),
+                ),
+                ButtonSegment<String>(
+                  value: 'cross_branch',
+                  label: Text('Cabang lain'),
+                  icon: Icon(Icons.swap_horiz, size: 18),
+                ),
+                ButtonSegment<String>(
+                  value: 'local',
+                  label: Text('Cabang ini'),
+                  icon: Icon(Icons.home_work_outlined, size: 18),
+                ),
+              ],
+              selected: {_scope},
+              onSelectionChanged: (Set<String> next) {
+                if (next.isEmpty) return;
+                setState(() => _scope = next.first);
+                _loadWorkshopOrders();
+              },
+            ),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error.isNotEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(_error, style: const TextStyle(color: Colors.red)),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _loadWorkshopOrders,
+                          child: const Text('Coba Lagi'),
+                        ),
+                      ],
+                    ),
+                  )
+                : Column(
+                    children: [
                 // Summary Cards
                 Padding(
                   padding: const EdgeInsets.all(16),
@@ -252,7 +341,7 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
                     child: _filteredOrders.isEmpty
                         ? Center(
                             child: Text(
-                              'Tidak ada order workshop ${_selectedStatus == 'all' ? '' : 'dengan status ${_getStatusLabel(_selectedStatus)}'}',
+                              _emptyListMessage(),
                             ),
                           )
                         : LayoutBuilder(
@@ -483,7 +572,34 @@ dataRowMinHeight: narrow ? 52 : 48,
                 ),
               ],
             ),
+          ),
+        ],
+      ),
     );
+  }
+
+  String _scopeSubtitle() {
+    switch (_scope) {
+      case 'local':
+        return 'Hanya order dibuat di cabang ini (sama antrian, disaring)';
+      case 'cross_branch':
+        return 'Hanya kiriman dari cabang lain (sama antrian, disaring)';
+      default:
+        return 'Sama dengan antrian kerja tukang (belum selesai bengkel)';
+    }
+  }
+
+  String _emptyListMessage() {
+    final filt = _selectedStatus == 'all'
+        ? ''
+        : ' (filter: ${_getStatusLabel(_selectedStatus)})';
+    if (_scope == 'local') {
+      return 'Tidak ada order antrian cabang ini$filt';
+    }
+    if (_scope == 'cross_branch') {
+      return 'Tidak ada kiriman cabang lain di antrian$filt';
+    }
+    return 'Tidak ada order di antrian kerja$filt';
   }
 
   Widget _buildSummaryCard(
@@ -535,6 +651,8 @@ dataRowMinHeight: narrow ? 52 : 48,
     switch (status) {
       case 'all':
         return 'Semua Status';
+      case 'pending':
+        return 'Baru masuk';
       case 'in_progress':
         return 'Dalam Proses';
       case 'repairing':

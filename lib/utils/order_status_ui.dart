@@ -11,6 +11,10 @@ class OrderStatusUi {
         return 'Draft';
       case 'pending':
         return 'Pending';
+      case 'confirmed':
+        return 'Konfirmasi toko';
+      case 'awaiting_warehouse':
+        return 'Menunggu gudang';
       case 'reserved':
         return 'Reserved';
       case 'sold':
@@ -46,6 +50,10 @@ class OrderStatusUi {
         return Colors.grey;
       case 'pending':
         return Colors.orange;
+      case 'confirmed':
+        return Colors.amber.shade800;
+      case 'awaiting_warehouse':
+        return Colors.deepOrange;
       case 'reserved':
         return Colors.blue;
       case 'sold':

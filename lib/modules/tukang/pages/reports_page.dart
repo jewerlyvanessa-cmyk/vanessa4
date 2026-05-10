@@ -48,7 +48,14 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         _reportsData = reports;
         _isLoading = false;
       });
+    } on UnauthorizedApiException {
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _isLoading = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;

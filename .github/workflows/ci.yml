@@ -25,6 +25,7 @@ jobs:
       - name: Test
         run: flutter test
 
+  # Logika langkah backend ada di backend/scripts/ci.sh (workflow harus tetap di .github/workflows/).
   backend:
     name: Backend sanity checks
     runs-on: ubuntu-latest
@@ -36,23 +37,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install node deps (root)
-        run: npm ci
-
-      - name: ESLint (backend)
-        run: npm run lint
-
-      - name: Ensure OpenAPI exists
-        run: test -f backend/docs/openapi.yaml
-
-      - name: Node syntax check
-        run: |
-          node -c backend/server.js
-          node -c backend/app.js
-          node -c backend/middleware/auth.js
-          node -c backend/websocket/emit.js
-          node -c backend/websocket/presence_registry.js
-          node -c backend/websocket/attach.js
-          node -c backend/storage/local.storage.js
-          node -c backend/storage/storage.service.js
+      - name: Backend CI (script di repo)
+        run: bash backend/scripts/ci.sh
 

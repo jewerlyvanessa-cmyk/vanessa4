@@ -92,7 +92,6 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
         queryParameters: {
           'branch_id': userState.branch,
           'date': dateStr,
-          'validated_by_only': '1',
         },
       );
 

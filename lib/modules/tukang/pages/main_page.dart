@@ -35,8 +35,7 @@ class TukangMainPage extends ConsumerWidget {
       }
     });
 
-    // Initialize technician dashboard provider
-    ref.read(technicianDashboardProvider.notifier).listenToUserStateChanges();
+    // Technician dashboard memakai userStateProvider.listen di provider (tanpa panggilan per-frame).
 
     // Listen to real-time order updates for technician notifications
     ref.listen(realTimeOrderUpdatesProvider, (previous, next) {

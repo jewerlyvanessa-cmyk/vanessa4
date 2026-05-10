@@ -13,7 +13,7 @@ import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 int? toInt(dynamic value) {
   if (value is int) return value;
@@ -131,22 +131,9 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   }
 
   Future<void> _scanAndFill(TextEditingController controller) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text('Scan QR Code')),
-          body: MobileScanner(
-            onDetect: (capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                controller.text = barcodes.first.rawValue ?? '';
-                Navigator.of(context).pop();
-              }
-            },
-          ),
-        ),
-      ),
-    );
+    final v = await pushQrScanPage(context);
+    if (!mounted || v == null) return;
+    controller.text = v;
   }
 
   Future<void> _showAddCustomerDialog(
@@ -327,10 +314,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     final weightVal = double.tryParse(_beratTargetController.text.trim()) ?? 0;
     final totalBiayaVal = _parseMoney(_totalBiayaController.text);
     final uangMukaVal = _parseMoney(_uangMukaController.text);
-    final initialCustomStatus =
-        (totalBiayaVal > 0 && uangMukaVal > 0)
-            ? 'pending'
-            : 'sent-to-workshop';
+    final initialCustomStatus = 'pending';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
         : 'CUST-${DateTime.now().millisecondsSinceEpoch}';
@@ -388,8 +372,39 @@ class _CustomPageState extends ConsumerState<CustomPage> {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Respons order tidak valid')),
+            );
+          }
+          return;
+        }
+        final data = Map<String, dynamic>.from(decoded);
         final createdOrderId = data['order_id'] ?? data['orderId'];
+
+        final itemsReq = orderData['order_items'];
+        if (itemsReq is List && itemsReq.isNotEmpty && itemsReq.first is Map) {
+          final first = Map<String, dynamic>.from(itemsReq.first as Map);
+          final tipe = first['tipe']?.toString().trim();
+          if (tipe != null && tipe.isNotEmpty) {
+            data['jenis_service'] = tipe;
+          }
+        }
+        for (final e in [
+          ['spesifikasi', orderData['spesifikasi']],
+          ['estimasi_waktu', orderData['estimasi_waktu']],
+          ['service_estimated_total', orderData['service_estimated_total']],
+        ]) {
+          final v = e[1];
+          if (v != null && v.toString().trim().isNotEmpty) {
+            data[e[0] as String] = v;
+          }
+        }
+        if (uangMukaVal > 0) {
+          data['service_dp_amount'] = uangMukaVal;
+        }
 
         if (uangMukaVal > 0 && createdOrderId != null) {
           try {
