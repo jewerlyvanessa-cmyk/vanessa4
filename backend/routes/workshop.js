@@ -118,6 +118,14 @@ app.get('/api/workshop/service-incoming', async (req, res) => {
     }
     const hasPickupSi = await ordersHasPickupBranchColumn(db);
     const brScopeSi = sqlOrdersVisibleAtWorkshopBranch('o', 1, hasPickupSi);
+    const unassignedIncoming =
+      hasPickupSi
+        ? `(
+            o.pickup_branch_id IS NULL
+            OR o.pickup_branch_id = o.branch_id
+          )
+          AND o.branch_id IS DISTINCT FROM $1::bigint`
+        : 'FALSE';
     const result = await db.query(
       `
         SELECT DISTINCT ON (o.order_id)
@@ -138,7 +146,10 @@ app.get('/api/workshop/service-incoming', async (req, res) => {
         LEFT JOIN items i ON oi.item_id = i.item_id
         WHERE o.order_type::text IN ('service', 'custom')
           AND o.status::text = 'awaiting_warehouse'
-          AND ${brScopeSi}
+          AND (
+            ${brScopeSi}
+            OR (${unassignedIncoming})
+          )
         ORDER BY o.order_id, o.created_at ASC, oi.order_item_id ASC NULLS LAST
       `,
       [branchId]
@@ -1368,14 +1379,23 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
       return res.status(404).json({ error: 'Order tidak ditemukan' });
     }
     const order = curRes.rows[0];
-    if (!orderVisibleAtWorkshopBranchId(order, branchId, hasPickupPut)) {
+    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
+    const receivingFromWarehouse =
+      currentStatus === 'awaiting_warehouse' &&
+      nextStatusRaw === 'sent-to-workshop' &&
+      new Set(['stockist', 'admin_workshop', 'superadmin', 'manajer']).has(role);
+    // Order dari toko sering hanya punya branch_id = cabang toko & pickup_branch_id NULL —
+    // gudang/bengkel (cabang lain) wajib bisa menerima tanpa 403, lalu pickup diikat ke cabang penerima.
+    if (
+      !orderVisibleAtWorkshopBranchId(order, branchId, hasPickupPut) &&
+      !receivingFromWarehouse
+    ) {
       return res.status(403).json({ error: 'Order tidak untuk cabang workshop ini' });
     }
     const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
     if (orderType !== 'service' && orderType !== 'custom') {
       return res.status(400).json({ error: 'Hanya order service/custom untuk workflow workshop' });
     }
-    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
 
     const allowedByRole = {
       admin_toko: new Set(['awaiting_warehouse', 'ready_for_pickup']),
@@ -1457,14 +1477,36 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
       });
     }
 
-    await db.query(
-      `
-        UPDATE orders
-        SET status = $1, updated_at = NOW()
-        WHERE order_id = $2
-      `,
-      [nextStatusRaw, orderId]
-    );
+    const bindPickupOnReceive =
+      hasPickupPut &&
+      currentStatus === 'awaiting_warehouse' &&
+      nextStatusRaw === 'sent-to-workshop';
+    if (bindPickupOnReceive) {
+      await db.query(
+        `
+          UPDATE orders
+          SET
+            status = $1,
+            updated_at = NOW(),
+            pickup_branch_id = CASE
+              WHEN pickup_branch_id IS NULL OR pickup_branch_id = branch_id
+                THEN $3::bigint
+              ELSE pickup_branch_id
+            END
+          WHERE order_id = $2
+        `,
+        [nextStatusRaw, orderId, branchId]
+      );
+    } else {
+      await db.query(
+        `
+          UPDATE orders
+          SET status = $1, updated_at = NOW()
+          WHERE order_id = $2
+        `,
+        [nextStatusRaw, orderId]
+      );
+    }
     return res.status(200).json({
       success: true,
       order_id: String(orderId),
