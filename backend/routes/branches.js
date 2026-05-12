@@ -1,6 +1,10 @@
 const express = require('express');
 const pool = require('../db');
 const { handleBranchLogoGet } = require('../lib/branch_logo_http_lazy');
+const {
+  normalizeBranchType,
+  ensureBranchesBranchTypeColumn,
+} = require('../lib/branches_schema');
 
 const router = express.Router();
 
@@ -10,6 +14,7 @@ router.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, poo
 // GET /api/branches - Get all branches
 router.get('/branches', async (req, res) => {
   try {
+    await ensureBranchesBranchTypeColumn(pool);
     const result = await pool.query(`
       SELECT
         branch_id,
@@ -20,6 +25,7 @@ router.get('/branches', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         created_at,
         updated_at
       FROM branches
@@ -34,6 +40,7 @@ router.get('/branches', async (req, res) => {
       address: row.address,
       phone_number: row.phone_number,
       status: row.status,
+      branch_type: normalizeBranchType(row.branch_type),
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
@@ -47,6 +54,7 @@ router.get('/branches', async (req, res) => {
 // GET /api/branches/:id - Get branch by ID (sertakan logo_url agar sama dengan GET /branches/:id — dipakai faktur PDF / klien)
 router.get('/branches/:id', async (req, res) => {
   try {
+    await ensureBranchesBranchTypeColumn(pool);
     const { id } = req.params;
     const qWithLogo = `
       SELECT
@@ -58,6 +66,7 @@ router.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         logo_url,
         created_at,
         updated_at
@@ -74,6 +83,7 @@ router.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         NULL::text AS logo_url,
         created_at,
         updated_at
@@ -95,7 +105,11 @@ router.get('/branches/:id', async (req, res) => {
       return res.status(404).json({ error: 'Branch not found' });
     }
 
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json({
+      ...row,
+      branch_type: normalizeBranchType(row.branch_type),
+    });
   } catch (err) {
     console.error('Error fetching branch:', err.message);
     res.status(500).json({ error: 'Server Error' });
@@ -112,6 +126,9 @@ router.post('/branches', async (req, res) => {
       return res.status(400).json({ error: 'Name and code are required' });
     }
 
+    await ensureBranchesBranchTypeColumn(pool);
+    const branchType = normalizeBranchType(req.body.branch_type);
+
     // Check if code already exists
     const existingBranch = await pool.query(
       'SELECT branch_id FROM branches WHERE code = $1',
@@ -123,10 +140,10 @@ router.post('/branches', async (req, res) => {
     }
 
     const result = await pool.query(`
-      INSERT INTO branches (name, code, alias, initials, address, phone_number, status)
-      VALUES ($1, $2, $3, $4, $5, $6, 'active')
+      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, branch_type)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
       RETURNING *
-    `, [name, code, alias, initials, address, phone_number]);
+    `, [name, code, alias, initials, address, phone_number, branchType]);
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -146,15 +163,23 @@ router.put('/branches/:id', async (req, res) => {
       return res.status(400).json({ error: 'Name and code are required' });
     }
 
+    await ensureBranchesBranchTypeColumn(pool);
+
     // Check if branch exists
     const existingBranch = await pool.query(
-      'SELECT branch_id FROM branches WHERE branch_id = $1',
+      'SELECT branch_id, branch_type FROM branches WHERE branch_id = $1',
       [id]
     );
 
     if (existingBranch.rows.length === 0) {
       return res.status(404).json({ error: 'Branch not found' });
     }
+
+    const prevType = normalizeBranchType(existingBranch.rows[0].branch_type);
+    const branchType =
+      req.body.branch_type !== undefined && req.body.branch_type !== null
+        ? normalizeBranchType(req.body.branch_type)
+        : prevType;
 
     // Check if code already exists for another branch
     const codeCheck = await pool.query(
@@ -168,10 +193,11 @@ router.put('/branches/:id', async (req, res) => {
 
     const result = await pool.query(`
       UPDATE branches
-      SET name = $1, code = $2, alias = $3, initials = $4, address = $5, phone_number = $6, status = $7, updated_at = CURRENT_TIMESTAMP
-      WHERE branch_id = $8
+      SET name = $1, code = $2, alias = $3, initials = $4, address = $5, phone_number = $6, status = $7,
+          branch_type = $8, updated_at = CURRENT_TIMESTAMP
+      WHERE branch_id = $9
       RETURNING *
-    `, [name, code, alias, initials, address, phone_number, status || 'active', id]);
+    `, [name, code, alias, initials, address, phone_number, status || 'active', branchType, id]);
 
     res.json(result.rows[0]);
   } catch (err) {

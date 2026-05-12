@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS branches (
     initials TEXT,
     address TEXT,
     phone_number TEXT,
+    branch_type TEXT NOT NULL DEFAULT 'toko' CHECK (branch_type IN ('toko','warehouse','workshop','pusat')),
     logo_url TEXT,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now()

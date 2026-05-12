@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 
 /// Admin toko: buat transfer pending gudang → toko ini (ditandai di `notes` untuk stockist).
 class RequestStockWarehousePage extends ConsumerStatefulWidget {
@@ -77,7 +78,10 @@ class _RequestStockWarehousePageState
           .whereType<Map>()
           .where((b) {
             final id = b['branch_id']?.toString();
-            return id != null && id != user.branch.toString();
+            if (id == null || id == user.branch.toString()) return false;
+            return branchTypeCanSupplyStockForTransfer(
+              b['branch_type']?.toString(),
+            );
           })
           .toList();
       if (!mounted) return;
@@ -252,6 +256,13 @@ class _RequestStockWarehousePageState
                     'Toko Anda: cabang ${user.branch}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Hanya cabang bertipe Gudang atau Pusat (HQ) yang tampil — atur di Superadmin → Manajemen cabang.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
                     initialValue: _warehouseBranchId,
@@ -284,6 +295,18 @@ class _RequestStockWarehousePageState
                       if (v != null) _loadItemsForWarehouse(v);
                     },
                   ),
+                  if (_branches.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Tidak ada cabang tipe Gudang atau Pusat selain toko ini. '
+                        'Jalankan migrasi cabang (branch_type) dan set tipe di Superadmin.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context).colorScheme.tertiary,
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   if (_warehouseBranchId != null) ...[
                     if (_loadingItems)

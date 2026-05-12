@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'branch_api_service.dart';
 import '../../../utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 
 class BranchManagementPage extends ConsumerStatefulWidget {
   const BranchManagementPage({super.key});
@@ -24,6 +25,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
   String _error = '';
   String _searchQuery = '';
   String? _statusFilter;
+  String? _typeFilter;
 
   Future<void> _confirmDeleteBranch(Map<String, dynamic> branch) async {
     final branchId = branch['branch_id']?.toString() ?? '';
@@ -117,6 +119,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
     String address = branch?['address']?.toString() ?? '';
     String phoneNumber = branch?['phone_number']?.toString() ?? '';
     String status = branch?['status']?.toString() ?? 'active';
+    String branchType = normalizeBranchTypeKey(branch?['branch_type']?.toString());
 
     await showDialog(
       context: context,
@@ -165,6 +168,22 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                         keyboardType: TextInputType.phone,
                         onChanged: (v) => phoneNumber = v.trim(),
                       ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: branchType,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipe cabang',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          for (final k in kBranchTypeKeys)
+                            DropdownMenuItem<String>(
+                              value: k,
+                              child: Text(kBranchTypeLabels[k] ?? k),
+                            ),
+                        ],
+                        onChanged: (v) => setDialogState(() => branchType = v ?? 'toko'),
+                      ),
                       if (isEdit)
                         DropdownButtonFormField<String>(
                           initialValue: status,
@@ -207,6 +226,7 @@ class _BranchManagementPageState extends ConsumerState<BranchManagementPage> {
                               'initials': initials.isEmpty ? null : initials,
                               'address': address.isEmpty ? null : address,
                               'phone_number': phoneNumber.isEmpty ? null : phoneNumber,
+                              'branch_type': branchType,
                               if (isEdit) 'status': status,
                             };
 
@@ -478,7 +498,10 @@ dataRowMinHeight: 40,
 
       final matchesStatus = _statusFilter == null || branch['status'] == _statusFilter;
 
-      return matchesSearch && matchesStatus;
+      final bt = normalizeBranchTypeKey(branch['branch_type']?.toString());
+      final matchesType = _typeFilter == null || bt == _typeFilter;
+
+      return matchesSearch && matchesStatus && matchesType;
     }).toList();
   }
 
@@ -574,7 +597,7 @@ dataRowMinHeight: 40,
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 600;
-        final minTableW = narrow ? constraints.maxWidth : 980.0;
+        final minTableW = narrow ? constraints.maxWidth : 1060.0;
         final mobileDataStyle = _mobileTableDataStyle(context);
 
         final columns = narrow
@@ -590,6 +613,7 @@ dataRowMinHeight: 40,
                 DataColumn(label: dataTableColumnLabel('Kode')),
                 DataColumn(label: dataTableColumnLabel('Alias')),
                 DataColumn(label: dataTableColumnLabel('Inisial')),
+                DataColumn(label: dataTableColumnLabel('Tipe')),
                 DataColumn(label: dataTableColumnLabel('Status')),
                 DataColumn(label: dataTableColumnLabel('Alamat')),
                 DataColumn(label: dataTableColumnLabel('Telepon')),
@@ -609,11 +633,27 @@ dataRowMinHeight: 40,
                   DataCell(
                     Tooltip(
                       message: name,
-                      child: Text(
-                        (branch['code'] ?? '-').toString(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: mobileDataStyle,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            (branch['code'] ?? '-').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: mobileDataStyle,
+                          ),
+                          Text(
+                            branchTypeLabel(branch['branch_type']?.toString()),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              height: 1.2,
+                              color: cs.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -678,6 +718,14 @@ dataRowMinHeight: 40,
                       (branch['initials'] ?? '—').toString(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      branchTypeLabel(branch['branch_type']?.toString()),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                     ),
                   ),
                   DataCell(
@@ -805,6 +853,33 @@ dataRowMinHeight: narrow ? 40 : 52,
                         onChanged: (value) {
                           setState(() {
                             _statusFilter = value;
+                            _applyFilters();
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: 'Tipe cabang',
+                          border: OutlineInputBorder(),
+                        ),
+                        initialValue: _typeFilter,
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: null,
+                            child: Text('Semua tipe'),
+                          ),
+                          for (final k in kBranchTypeKeys)
+                            DropdownMenuItem<String>(
+                              value: k,
+                              child: Text(kBranchTypeLabels[k] ?? k),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _typeFilter = value;
                             _applyFilters();
                           });
                         },

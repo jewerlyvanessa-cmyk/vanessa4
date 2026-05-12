@@ -39,6 +39,10 @@ const {
   orderVisibleAtWorkshopBranchSql,
 } = require('./lib/orders_workshop_helpers');
 const { handleBranchLogoGet } = require('./lib/branch_logo_http_lazy');
+const {
+  normalizeBranchType,
+  ensureBranchesBranchTypeColumn,
+} = require('./lib/branches_schema');
 function roundUpToNearest5000(amount) {
   const n = typeof amount === 'number' ? amount : parseFloat(amount);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -2536,6 +2540,7 @@ app.get('/item-conditions', async (req, res) => {
 // Get all branches (logo_url opsional: fallback jika kolom belum ada)
 app.get('/branches', async (req, res) => {
   try {
+    await ensureBranchesBranchTypeColumn(db);
     const qWithLogo = `
       SELECT
         branch_id,
@@ -2546,6 +2551,7 @@ app.get('/branches', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         logo_url
       FROM branches
       ORDER BY name
@@ -2560,6 +2566,7 @@ app.get('/branches', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         NULL::text AS logo_url
       FROM branches
       ORDER BY name
@@ -2584,6 +2591,7 @@ app.get('/branches', async (req, res) => {
       address: row.address,
       phone_number: row.phone_number,
       status: row.status,
+      branch_type: normalizeBranchType(row.branch_type),
       logo_url: row.logo_url || null,
     }));
 
@@ -2602,13 +2610,24 @@ app.post('/branches', requireRoles('superadmin'), async (req, res) => {
       return res.status(400).json({ error: 'name and code are required' });
     }
 
+    await ensureBranchesBranchTypeColumn(db);
+    const branchType = normalizeBranchType(req.body.branch_type);
     const { logo_url } = req.body || {};
     const insertQuery = `
-      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, logo_url, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, NOW(), NOW())
-      RETURNING branch_id, name, code, alias, initials, address, phone_number, status, logo_url, created_at, updated_at
+      INSERT INTO branches (name, code, alias, initials, address, phone_number, status, branch_type, logo_url, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, NOW(), NOW())
+      RETURNING branch_id, name, code, alias, initials, address, phone_number, status, branch_type, logo_url, created_at, updated_at
     `;
-    const result = await db.query(insertQuery, [name, code, alias, initials, address, phone_number, logo_url || null]);
+    const result = await db.query(insertQuery, [
+      name,
+      code,
+      alias,
+      initials,
+      address,
+      phone_number,
+      branchType,
+      logo_url || null,
+    ]);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -3690,6 +3709,7 @@ app.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, db));
 
 app.get('/branches/:id', async (req, res) => {
   try {
+    await ensureBranchesBranchTypeColumn(db);
     const id = parseInt(req.params.id);
     const qWithLogo = `
       SELECT
@@ -3701,6 +3721,7 @@ app.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         logo_url,
         created_at,
         updated_at
@@ -3717,6 +3738,7 @@ app.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        branch_type,
         NULL::text AS logo_url,
         created_at,
         updated_at
@@ -3738,7 +3760,11 @@ app.get('/branches/:id', async (req, res) => {
       return res.status(404).json({ error: 'Branch not found' });
     }
 
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json({
+      ...row,
+      branch_type: normalizeBranchType(row.branch_type),
+    });
   } catch (error) {
     console.error('Error fetching branch:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -3754,13 +3780,36 @@ app.put('/branches/:id', requireRoles('superadmin'), async (req, res) => {
       return res.status(400).json({ error: 'name and code are required' });
     }
 
+    await ensureBranchesBranchTypeColumn(db);
+    const prevTypeRes = await db.query(
+      'SELECT branch_type FROM branches WHERE branch_id = $1',
+      [id],
+    );
+    const prevType =
+      prevTypeRes.rows[0]?.branch_type != null
+        ? normalizeBranchType(prevTypeRes.rows[0].branch_type)
+        : 'toko';
+    const branchType =
+      req.body.branch_type !== undefined && req.body.branch_type !== null
+        ? normalizeBranchType(req.body.branch_type)
+        : prevType;
     const query = `
       UPDATE branches
-      SET name = $1, code = $2, alias = $3, initials = $4, address = $5, phone_number = $6, updated_at = now()
-      WHERE branch_id = $7
+      SET name = $1, code = $2, alias = $3, initials = $4, address = $5, phone_number = $6,
+          branch_type = $7, updated_at = now()
+      WHERE branch_id = $8
     `;
 
-    const result = await db.query(query, [name, code, alias, initials, address, phone_number, id]);
+    const result = await db.query(query, [
+      name,
+      code,
+      alias,
+      initials,
+      address,
+      phone_number,
+      branchType,
+      id,
+    ]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Branch not found' });

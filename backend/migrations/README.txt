@@ -17,6 +17,9 @@ MIGRASI DATABASE — vanessa3 backend
      pindah penuh ke JS (saat ini tidak).
 
 4) Indeks performa (urutan disarankan)
+   - 20260511_branches_branch_type.sql — kolom `branches.branch_type`
+     (toko | warehouse | workshop | pusat); jalankan sebelum mengandalkan filter
+     tipe cabang di app (mis. permintaan stok dari admin toko).
    - 20260514_orders_daily_performance_indexes.sql — GET /api/orders/daily,
      dashboard order-today, snapshot.
    - 20260515_reporting_workshop_indexes.sql — laporan manajer
