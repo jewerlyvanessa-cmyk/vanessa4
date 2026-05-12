@@ -18,6 +18,8 @@ import 'dari_toko_page.dart';
 import 'kirim_ke_toko_page.dart';
 import 'reports_page.dart';
 import 'service_incoming_page.dart';
+import 'permintaan_stok_toko_page.dart';
+import 'package:vanessa3/utils/stock_request_transfer.dart';
 
 class StockistMainPage extends ConsumerStatefulWidget {
   const StockistMainPage({super.key});
@@ -83,11 +85,17 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
     final isServerHealthy = ref.watch(healthCheckProvider);
     final branchId = ref.watch(userStateProvider).branch.toString();
 
-    final pendingOutgoing = _pendingTransfers.where((t) {
+    final pendingOutgoingAll = _pendingTransfers.where((t) {
       return (t['from_branch_id']?.toString() ?? '') == branchId;
     }).toList();
     final pendingIncoming = _pendingTransfers.where((t) {
       return (t['to_branch_id']?.toString() ?? '') == branchId;
+    }).toList();
+    final stockRequestOutgoing = pendingOutgoingAll.where((t) {
+      return transferNotesIsStockRequest((t['notes'] ?? '').toString());
+    }).toList();
+    final pendingOutgoing = pendingOutgoingAll.where((t) {
+      return !transferNotesIsStockRequest((t['notes'] ?? '').toString());
     }).toList();
 
     return Scaffold(
@@ -221,6 +229,17 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                     ),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.move_to_inbox,
+                    label: 'PERMINTAAN STOK TOKO',
+                    iconColor: Colors.deepOrange,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PermintaanStokTokoPage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
                     icon: DashboardMenuIcons.laporan,
                     label: 'LAPORAN',
                     iconColor: Colors.indigo,
@@ -254,6 +273,24 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const KirimKeTokoPage(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _PendingSection(
+                title: 'Permintaan stok dari toko',
+                icon: Icons.move_to_inbox,
+                iconColor: Colors.deepOrange,
+                loading: _loadingPending,
+                error: _pendingError,
+                transfers: stockRequestOutgoing,
+                onSeeAll: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const PermintaanStokTokoPage(),
                   ),
                 ),
               ),

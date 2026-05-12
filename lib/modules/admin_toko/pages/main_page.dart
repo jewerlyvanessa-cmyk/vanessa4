@@ -7,6 +7,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'daily_orders_payments_page.dart';
 import 'goods_transfer_page.dart';
+import 'request_stock_warehouse_page.dart';
 import 'stock_mutation_page.dart';
 import 'stock_page.dart';
 import 'employee_management_page.dart';
@@ -219,6 +220,17 @@ class AdminTokoMainPage extends ConsumerWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const GoodsTransferPage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.warehouse_outlined,
+                    label: 'Pesan stok ke gudang',
+                    iconColor: Colors.deepOrange,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const RequestStockWarehousePage(),
                       ),
                     ),
                   ),

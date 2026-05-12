@@ -12,7 +12,7 @@ function registerTransfersRoutes(app, deps) {
 
 app.get('/transfers', async (req, res) => {
   try {
-    const { branch_id, status, type } = req.query;
+    const { branch_id, status, type, purpose } = req.query;
 
     // Backward-compatible: columns may not exist yet.
     async function hasTransfersColumn(columnName) {
@@ -92,6 +92,13 @@ app.get('/transfers', async (req, res) => {
         params.push(branch_id);
         paramIndex++;
       }
+    }
+
+    // Store-initiated "request stock from warehouse" rows use this marker in `notes`.
+    if (String(purpose || '').trim().toLowerCase() === 'stock_request') {
+      query += ` AND COALESCE(t.notes, '') ILIKE $${paramIndex}`;
+      params.push('%[PERMINTAAN_STOK]%');
+      paramIndex++;
     }
 
     query += ` ORDER BY t.created_at DESC`;

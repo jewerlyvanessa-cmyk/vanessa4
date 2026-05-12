@@ -113,36 +113,38 @@ function mergeOrdersAndItemsFlat(orderRows, itemRows) {
  * Performa: default dua query (order + item) agar tidak mem-bloat hash join. Fallback satu query:
  *   ?legacy_join=1
  */
-async function getOrdersDaily(req, res) {
-  try {
-    const { branch_id, date } = req.query;
+/**
+ * @returns {Promise<{ ok: true, rows: any[] } | { ok: false, status: number, body: object }>}
+ */
+async function fetchOrdersDailyPayload(req) {
+  const { branch_id, date } = req.query;
 
-    if (!branch_id) {
-      return res.status(400).json({ error: 'branch_id is required' });
-    }
+  if (!branch_id) {
+    return { ok: false, status: 400, body: { error: 'branch_id is required' } };
+  }
 
-    const scope = await assertUserCanAccessBranchForOrders(req, branch_id);
-    if (!scope.ok) {
-      return res.status(scope.status).json(scope.body);
-    }
-    const bid = scope.branchId;
+  const scope = await assertUserCanAccessBranchForOrders(req, branch_id);
+  if (!scope.ok) {
+    return { ok: false, status: scope.status, body: scope.body };
+  }
+  const bid = scope.branchId;
 
-    const targetDate =
-      date && String(date).trim().length > 0 ? String(date).trim() : null;
+  const targetDate =
+    date && String(date).trim().length > 0 ? String(date).trim() : null;
 
-    const filterUid = dailyOrdersUserFilterFromJwt(req);
-    const params = [bid];
+  const filterUid = dailyOrdersUserFilterFromJwt(req);
+  const params = [bid];
 
-    const lineSql = orderItemLineAmountSql('oi');
+  const lineSql = orderItemLineAmountSql('oi');
 
-    const createdDateMatch = (paramRef) => `
+  const createdDateMatch = (paramRef) => `
         (
           o.created_at::date = ${paramRef}::date
           OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
         )
       `;
 
-    const paymentDateMatch = (alias, paramRef) => `
+  const paymentDateMatch = (alias, paramRef) => `
         (
           (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at))::date = ${paramRef}::date
           OR (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
@@ -150,13 +152,13 @@ async function getOrdersDaily(req, res) {
         )
       `;
 
-    const hasRevBranch = await paymentsHasRevenueBranchColumn();
-    const nowDateRef = `(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`;
+  const hasRevBranch = await paymentsHasRevenueBranchColumn();
+  const nowDateRef = `(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`;
 
-    let branchActivityWhere;
-    if (targetDate) {
-      const dateRef = filterUid != null ? '$3' : '$2';
-      const activitySql = `(
+  let branchActivityWhere;
+  if (targetDate) {
+    const dateRef = filterUid != null ? '$3' : '$2';
+    const activitySql = `(
           ${createdDateMatch(dateRef)}
           OR EXISTS (
             SELECT 1
@@ -166,8 +168,8 @@ async function getOrdersDaily(req, res) {
               AND ${paymentDateMatch('p', dateRef)}
           )
         )`;
-      const crossBranchSql = hasRevBranch
-        ? `EXISTS (
+    const crossBranchSql = hasRevBranch
+      ? `EXISTS (
             SELECT 1
             FROM payments p_rev
             WHERE p_rev.order_id = o.order_id
@@ -175,10 +177,10 @@ async function getOrdersDaily(req, res) {
               AND ${paymentDateMatch('p_rev', dateRef)}
               AND COALESCE(p_rev.revenue_branch_id, o.branch_id) = $1
           )`
-        : 'FALSE';
-      branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
-    } else {
-      const activitySql = `(
+      : 'FALSE';
+    branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
+  } else {
+    const activitySql = `(
           ${createdDateMatch(nowDateRef)}
           OR EXISTS (
             SELECT 1
@@ -188,8 +190,8 @@ async function getOrdersDaily(req, res) {
               AND ${paymentDateMatch('p', nowDateRef)}
           )
         )`;
-      const crossBranchSql = hasRevBranch
-        ? `EXISTS (
+    const crossBranchSql = hasRevBranch
+      ? `EXISTS (
             SELECT 1
             FROM payments p_rev
             WHERE p_rev.order_id = o.order_id
@@ -197,20 +199,20 @@ async function getOrdersDaily(req, res) {
               AND ${paymentDateMatch('p_rev', nowDateRef)}
               AND COALESCE(p_rev.revenue_branch_id, o.branch_id) = $1
           )`
-        : 'FALSE';
-      branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
-    }
+      : 'FALSE';
+    branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
+  }
 
-    const useLegacyJoin =
-      String(req.query.legacy_join || '')
-        .trim()
-        .toLowerCase() === '1' ||
-      String(req.query.legacy_join || '')
-        .trim()
-        .toLowerCase() === 'true';
+  const useLegacyJoin =
+    String(req.query.legacy_join || '')
+      .trim()
+      .toLowerCase() === '1' ||
+    String(req.query.legacy_join || '')
+      .trim()
+      .toLowerCase() === 'true';
 
-    if (useLegacyJoin) {
-      let query = `
+  if (useLegacyJoin) {
+    let query = `
         SELECT
           o.*,
           c.name as customer_name,
@@ -242,21 +244,20 @@ async function getOrdersDaily(req, res) {
         LEFT JOIN items i ON oi.item_id = i.item_id
         WHERE ${branchActivityWhere}
       `;
-      const legacyParams = [...params];
-      if (filterUid != null) {
-        query += ` AND o.user_id = $2`;
-        legacyParams.push(filterUid);
-      }
-      if (targetDate) {
-        legacyParams.push(targetDate);
-      }
-      query += ' ORDER BY o.created_at DESC';
-      const result = await db.query(query, legacyParams);
-      return res.status(200).json(result.rows);
+    const legacyParams = [...params];
+    if (filterUid != null) {
+      query += ` AND o.user_id = $2`;
+      legacyParams.push(filterUid);
     }
+    if (targetDate) {
+      legacyParams.push(targetDate);
+    }
+    query += ' ORDER BY o.created_at DESC';
+    const result = await db.query(query, legacyParams);
+    return { ok: true, rows: result.rows };
+  }
 
-    /** --- Dua query: orders dulu, lalu order_items (bentuk respons flat sama) --- */
-    let ordersSql = `
+  let ordersSql = `
         SELECT
           o.*,
           c.name as customer_name,
@@ -266,29 +267,33 @@ async function getOrdersDaily(req, res) {
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         WHERE ${branchActivityWhere}
       `;
-    const ordersParams = [...params];
-    if (filterUid != null) {
-      ordersSql += ` AND o.user_id = $2`;
-      ordersParams.push(filterUid);
-    }
-    if (targetDate) {
-      ordersParams.push(targetDate);
-    }
-    ordersSql += ' ORDER BY o.created_at DESC';
+  const ordersParams = [...params];
+  if (filterUid != null) {
+    ordersSql += ` AND o.user_id = $2`;
+    ordersParams.push(filterUid);
+  }
+  if (targetDate) {
+    ordersParams.push(targetDate);
+  }
+  ordersSql += ' ORDER BY o.created_at DESC';
 
-    const ordersRes = await db.query(ordersSql, ordersParams);
-    const orderRows = ordersRes.rows;
-    if (orderRows.length === 0) {
-      return res.status(200).json([]);
-    }
+  const ordersRes = await db.query(ordersSql, ordersParams);
+  const orderRows = ordersRes.rows;
+  if (orderRows.length === 0) {
+    return { ok: true, rows: [] };
+  }
 
-    const orderIds = orderRows.map((r) => r.order_id).filter((id) => id != null);
-    const pk = await getOrderItemsPkColumn();
-    if (!/^(order_item_id|id)$/.test(String(pk))) {
-      return res.status(500).json({ error: 'Invalid order_items PK column' });
-    }
+  const orderIds = orderRows.map((r) => r.order_id).filter((id) => id != null);
+  const pk = await getOrderItemsPkColumn();
+  if (!/^(order_item_id|id)$/.test(String(pk))) {
+    return {
+      ok: false,
+      status: 500,
+      body: { error: 'Invalid order_items PK column' },
+    };
+  }
 
-    const itemsSql = `
+  const itemsSql = `
         SELECT
           oi.order_id,
           oi.${pk} AS order_item_id,
@@ -318,9 +323,18 @@ async function getOrdersDaily(req, res) {
         WHERE oi.order_id = ANY($1::bigint[])
         ORDER BY oi.order_id, oi.${pk}
       `;
-    const itemsRes = await db.query(itemsSql, [orderIds]);
-    const flat = mergeOrdersAndItemsFlat(orderRows, itemsRes.rows);
-    return res.status(200).json(flat);
+  const itemsRes = await db.query(itemsSql, [orderIds]);
+  const flat = mergeOrdersAndItemsFlat(orderRows, itemsRes.rows);
+  return { ok: true, rows: flat };
+}
+
+async function getOrdersDaily(req, res) {
+  try {
+    const r = await fetchOrdersDailyPayload(req);
+    if (!r.ok) {
+      return res.status(r.status).json(r.body);
+    }
+    return res.status(200).json(r.rows);
   } catch (error) {
     console.error('Error fetching daily orders:', error);
     res.status(500).json({
@@ -329,5 +343,7 @@ async function getOrdersDaily(req, res) {
     });
   }
 }
+
+getOrdersDaily.fetchOrdersDailyPayload = fetchOrdersDailyPayload;
 
 module.exports = getOrdersDaily;

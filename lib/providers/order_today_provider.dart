@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
@@ -92,6 +92,108 @@ int? activeBranchIdFromUserState(UserState s) {
   final v = int.tryParse(s.branch.trim());
   if (v == null || v <= 0) return null;
   return v;
+}
+
+/// Digunakan snapshot + [TodayOrdersNotifier._groupOrdersWithItems].
+List<Map<String, dynamic>> groupOrdersWithItemsForOrderToday(
+  List<Map<String, dynamic>> rawData,
+) {
+  final Map<String, Map<String, dynamic>> ordersMap = {};
+
+  for (final row in rawData) {
+    final orderId = row['order_id'].toString();
+
+    if (!ordersMap.containsKey(orderId)) {
+      final rawJumlah = row['jumlah'];
+      final rawTotal = row['total'];
+      num? fallbackJumlah;
+      if (rawJumlah == null && rawTotal != null) {
+        final t = double.tryParse(rawTotal.toString());
+        if (t != null) {
+          fallbackJumlah = ((t / 5000).ceil() * 5000);
+        }
+      }
+
+      ordersMap[orderId] = {
+        'order_id': row['order_id'],
+        'order_number': row['order_number'],
+        'order_type': row['order_type'],
+        'customer_id': row['customer_id'],
+        'customer_name': row['customer_name'],
+        'customer_phone': row['customer_phone'],
+        'customer_address': row['customer_address'],
+        'branch_id': row['branch_id'],
+        'user_id': row['user_id'],
+        'status': row['status'],
+        'total': row['total'],
+        'jumlah': rawJumlah ?? fallbackJumlah,
+        'diskon': row['diskon'],
+        'mode': row['mode'],
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at'],
+        'items': <Map<String, dynamic>>[],
+      };
+    }
+
+    if (row['nama_item'] != null) {
+      final item = {
+        'order_item_id': row['order_item_id'],
+        'nama_item': row['nama_item'],
+        'kode_produk': row['kode_produk'] ?? row['item_kode'],
+        'weight': row['weight'] ?? row['item_weight'],
+        'qty': row['qty'],
+        'harga_per_gram': row['harga_per_gram'],
+        'total': row['item_total'] ?? row['total'],
+        'material': row['material'] ?? row['item_material'],
+        'purity': row['purity'] ?? row['item_purity'],
+        'kategori': row['kategori'] ?? row['item_kategori'],
+        'jenis': row['jenis'] ?? row['item_jenis'],
+        'tipe': row['tipe'] ?? row['item_tipe'],
+        'item_id': row['item_id'],
+        'photo_produk': row['photo_produk'],
+      };
+
+      (ordersMap[orderId]!['items'] as List<Map<String, dynamic>>).add(item);
+    }
+  }
+
+  return ordersMap.values.toList();
+}
+
+Future<List<Map<String, dynamic>>> fetchOrderItemsForOrdersAttached(
+  List<Map<String, dynamic>> orders,
+  String baseUrl,
+  Map<String, String> queryParams,
+) async {
+  try {
+    final orderItemsUri = Uri.parse(
+      '$baseUrl/order-items',
+    ).replace(queryParameters: queryParams);
+    final orderItemsResponse =
+        await ApiClient.get(orderItemsUri.toString());
+
+    if (orderItemsResponse.statusCode == 200) {
+      final List<dynamic> orderItemsData = jsonDecode(
+        orderItemsResponse.body,
+      );
+
+      final Map<String, List<Map<String, dynamic>>> itemsByOrderId = {};
+      for (final item in orderItemsData) {
+        final orderId = item['order_id'].toString();
+        itemsByOrderId.putIfAbsent(orderId, () => []);
+        itemsByOrderId[orderId]!.add(Map<String, dynamic>.from(item as Map));
+      }
+
+      return orders.map((order) {
+        final orderId = order['order_id'].toString();
+        final orderItems = itemsByOrderId[orderId] ?? [];
+        return {...order, 'items': orderItems};
+      }).toList();
+    }
+    return orders.map((order) => {...order, 'items': []}).toList();
+  } catch (_) {
+    return orders.map((order) => {...order, 'items': []}).toList();
+  }
 }
 
 // Model untuk Order Today
@@ -190,7 +292,7 @@ class OrderTodayStatsNotifier
       return;
     }
     if (userState.branch.isNotEmpty) {
-      fetchOrderTodayStats();
+      OrderTodayBundleSync.run(_ref);
     } else {
       state = const AsyncValue.loading();
     }
@@ -212,6 +314,11 @@ class OrderTodayStatsNotifier
   }
 
   Future<void> fetchOrderTodayStats() async {
+    await OrderTodayBundleSync.run(_ref);
+  }
+
+  /// Multi-cabang / fallback: request stats per cabang (bukan snapshot).
+  Future<void> fetchOrderTodayStatsViaEndpointsOnly() async {
     state = _statsLoadingFrom(state);
 
     try {
@@ -304,95 +411,88 @@ class OrderTodayStatsNotifier
         'date': DateTime.now().toIso8601String(),
       };
 
-      final client = http.Client();
-      try {
-        for (final bid in branchIds) {
-          final queryParams = <String, String>{
-            'branch_id': bid.toString(),
-            'date': dateKey,
-          };
-          if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
-            queryParams['user_id'] = userId.toString();
-          }
+      for (final bid in branchIds) {
+        final queryParams = <String, String>{
+          'branch_id': bid.toString(),
+          'date': dateKey,
+        };
+        if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
+          queryParams['user_id'] = userId.toString();
+        }
 
-          final uri = Uri.parse(
-            '$baseUrl/api/dashboard/order-today',
-          ).replace(queryParameters: queryParams);
+        final uri = Uri.parse(
+          '$baseUrl/api/dashboard/order-today',
+        ).replace(queryParameters: queryParams);
 
-          final response = await client
-              .get(uri, headers: NetworkConfig.defaultHeaders)
-              .timeout(NetworkConfig.connectionTimeout);
+        final response = await ApiClient.get(uri.toString());
 
-          if (response.statusCode != 200) {
-            throw Exception(
-              'Failed to load order stats: ${response.statusCode}',
-            );
-          }
+        if (response.statusCode != 200) {
+          throw Exception(
+            'Failed to load order stats: ${response.statusCode}',
+          );
+        }
 
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
 
-          mergedJson['total_orders'] =
-              (mergedJson['total_orders'] as int) +
-              ((data['total_orders'] ?? 0) as int);
-          mergedJson['completed_orders'] =
-              (mergedJson['completed_orders'] as int) +
-              ((data['completed_orders'] ?? 0) as int);
-          mergedJson['pending_orders'] =
-              (mergedJson['pending_orders'] as int) +
-              ((data['pending_orders'] ?? 0) as int);
-          mergedJson['total_revenue'] =
-              (mergedJson['total_revenue'] as double) +
-              ((data['total_revenue'] ?? 0) as num).toDouble();
-          mergedJson['revenue_jual_completed'] =
-              (mergedJson['revenue_jual_completed'] as double) +
-              ((data['revenue_jual_completed'] ?? 0) as num).toDouble();
-          mergedJson['expense_buyback_completed'] =
-              (mergedJson['expense_buyback_completed'] as double) +
-              ((data['expense_buyback_completed'] ?? 0) as num).toDouble();
+        mergedJson['total_orders'] =
+            (mergedJson['total_orders'] as int) +
+            ((data['total_orders'] ?? 0) as int);
+        mergedJson['completed_orders'] =
+            (mergedJson['completed_orders'] as int) +
+            ((data['completed_orders'] ?? 0) as int);
+        mergedJson['pending_orders'] =
+            (mergedJson['pending_orders'] as int) +
+            ((data['pending_orders'] ?? 0) as int);
+        mergedJson['total_revenue'] =
+            (mergedJson['total_revenue'] as double) +
+            ((data['total_revenue'] ?? 0) as num).toDouble();
+        mergedJson['revenue_jual_completed'] =
+            (mergedJson['revenue_jual_completed'] as double) +
+            ((data['revenue_jual_completed'] ?? 0) as num).toDouble();
+        mergedJson['expense_buyback_completed'] =
+            (mergedJson['expense_buyback_completed'] as double) +
+            ((data['expense_buyback_completed'] ?? 0) as num).toDouble();
 
-          final obt = data['orders_by_type'];
-          if (obt is Map) {
-            final tgt = mergedJson['orders_by_type'] as Map<String, int>;
-            for (final e in obt.entries) {
-              final k = e.key.toString();
-              final v = e.value;
-              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-            }
-          }
-          final obm = data['orders_by_mode'];
-          if (obm is Map) {
-            final tgt = mergedJson['orders_by_mode'] as Map<String, int>;
-            for (final e in obm.entries) {
-              final k = e.key.toString().toLowerCase();
-              final v = e.value;
-              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-            }
-          }
-          final obs = data['orders_by_status'];
-          if (obs is Map) {
-            final tgt = mergedJson['orders_by_status'] as Map<String, int>;
-            for (final e in obs.entries) {
-              final k = e.key.toString();
-              final v = e.value;
-              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-            }
-          }
-          final rbt = data['revenue_by_type_completed'];
-          if (rbt is Map) {
-            final tgt =
-                mergedJson['revenue_by_type_completed'] as Map<String, double>;
-            for (final e in rbt.entries) {
-              final k = e.key.toString();
-              final v = e.value;
-              final d = v is num
-                  ? v.toDouble()
-                  : double.tryParse(v.toString()) ?? 0.0;
-              tgt[k] = (tgt[k] ?? 0.0) + d;
-            }
+        final obt = data['orders_by_type'];
+        if (obt is Map) {
+          final tgt = mergedJson['orders_by_type'] as Map<String, int>;
+          for (final e in obt.entries) {
+            final k = e.key.toString();
+            final v = e.value;
+            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
           }
         }
-      } finally {
-        client.close();
+        final obm = data['orders_by_mode'];
+        if (obm is Map) {
+          final tgt = mergedJson['orders_by_mode'] as Map<String, int>;
+          for (final e in obm.entries) {
+            final k = e.key.toString().toLowerCase();
+            final v = e.value;
+            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+          }
+        }
+        final obs = data['orders_by_status'];
+        if (obs is Map) {
+          final tgt = mergedJson['orders_by_status'] as Map<String, int>;
+          for (final e in obs.entries) {
+            final k = e.key.toString();
+            final v = e.value;
+            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+          }
+        }
+        final rbt = data['revenue_by_type_completed'];
+        if (rbt is Map) {
+          final tgt =
+              mergedJson['revenue_by_type_completed'] as Map<String, double>;
+          for (final e in rbt.entries) {
+            final k = e.key.toString();
+            final v = e.value;
+            final d = v is num
+                ? v.toDouble()
+                : double.tryParse(v.toString()) ?? 0.0;
+            tgt[k] = (tgt[k] ?? 0.0) + d;
+          }
+        }
       }
 
       _otNdjson(
@@ -456,6 +556,30 @@ class OrderTodayStatsNotifier
   void updateStats(OrderTodayStats newStats) {
     state = AsyncValue.data(newStats);
   }
+
+  void bundleBeginRefresh() {
+    state = _statsLoadingFrom(state);
+  }
+
+  void bundleSetLoadingOnly() {
+    state = const AsyncValue.loading();
+  }
+
+  void bundleSetBranchError(Object error, StackTrace stackTrace) {
+    state = AsyncValue.error(error, stackTrace);
+  }
+
+  Future<void> bundleApplyStatsFromSnapshot({
+    required Map<String, dynamic> statsMap,
+    required String statsCacheKey,
+  }) async {
+    await OfflineCache.instance.setJson(
+      statsCacheKey,
+      statsMap,
+      ttl: const Duration(minutes: 5),
+    );
+    state = AsyncValue.data(OrderTodayStats.fromJson(statsMap));
+  }
 }
 
 // Provider untuk list order hari ini
@@ -487,7 +611,7 @@ class TodayOrdersNotifier
       return;
     }
     if (userState.branch.isNotEmpty) {
-      fetchTodayOrders();
+      OrderTodayBundleSync.run(_ref);
     } else {
       state = const AsyncValue.loading();
     }
@@ -509,6 +633,11 @@ class TodayOrdersNotifier
   }
 
   Future<void> fetchTodayOrders() async {
+    await OrderTodayBundleSync.run(_ref);
+  }
+
+  /// Multi-cabang / fallback: request orders/daily per cabang.
+  Future<void> fetchTodayOrdersViaEndpointsOnly() async {
     state = _todayOrdersLoadingFrom(state);
 
     try {
@@ -591,39 +720,32 @@ class TodayOrdersNotifier
 
       final mergedOrders = <Map<String, dynamic>>[];
       var mergedRawCount = 0;
-      final dailyClient = http.Client();
-      try {
-        for (final bid in branchIds) {
-          // Build query parameters
-          final queryParams = <String, String>{
-            'branch_id': bid.toString(),
-            'date': todayKey, // ensure server uses the same "today" boundary
-          };
+      for (final bid in branchIds) {
+        // Build query parameters
+        final queryParams = <String, String>{
+          'branch_id': bid.toString(),
+          'date': todayKey, // ensure server uses the same "today" boundary
+        };
 
-          if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
-            queryParams['user_id'] = userId.toString();
-          }
+        if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
+          queryParams['user_id'] = userId.toString();
+        }
 
-          http.Response response;
-          var usedPath = '/api/orders/daily';
-          var uri = Uri.parse(
-            '$baseUrl/api/orders/daily',
+        var usedPath = '/api/orders/daily';
+        var uri = Uri.parse(
+          '$baseUrl/api/orders/daily',
+        ).replace(queryParameters: queryParams);
+        var response = await ApiClient.get(uri.toString());
+        // Backend lama / proxy: coba path tanpa prefix /api.
+        if (response.statusCode == 404) {
+          usedPath = '/orders/daily';
+          uri = Uri.parse(
+            '$baseUrl/orders/daily',
           ).replace(queryParameters: queryParams);
-          response = await dailyClient
-              .get(uri, headers: NetworkConfig.defaultHeaders)
-              .timeout(NetworkConfig.connectionTimeout);
-          // Backend lama / proxy: coba path tanpa prefix /api.
-          if (response.statusCode == 404) {
-            usedPath = '/orders/daily';
-            uri = Uri.parse(
-              '$baseUrl/orders/daily',
-            ).replace(queryParameters: queryParams);
-            response = await dailyClient
-                .get(uri, headers: NetworkConfig.defaultHeaders)
-                .timeout(NetworkConfig.connectionTimeout);
-          }
+          response = await ApiClient.get(uri.toString());
+        }
 
-          if (response.statusCode != 200) {
+        if (response.statusCode != 200) {
             _otNdjson(
               hypothesisId: 'OT1',
               location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
@@ -676,9 +798,6 @@ class TodayOrdersNotifier
             );
             mergedOrders.addAll(ordersWithItems);
           }
-        }
-      } finally {
-        dailyClient.close();
       }
 
       _otNdjson(
@@ -742,119 +861,154 @@ class TodayOrdersNotifier
     String baseUrl,
     Map<String, String> queryParams,
   ) async {
-    try {
-      // Fetch all order items
-      final orderItemsUri = Uri.parse(
-        '$baseUrl/order-items',
-      ).replace(queryParameters: queryParams);
-      final client = http.Client();
-      final orderItemsResponse = await client
-          .get(orderItemsUri, headers: NetworkConfig.defaultHeaders)
-          .timeout(NetworkConfig.connectionTimeout);
-      client.close();
-
-      if (orderItemsResponse.statusCode == 200) {
-        final List<dynamic> orderItemsData = jsonDecode(
-          orderItemsResponse.body,
-        );
-
-        // Group order items by order_id
-        final Map<String, List<Map<String, dynamic>>> itemsByOrderId = {};
-        for (var item in orderItemsData) {
-          final orderId = item['order_id'].toString();
-          if (!itemsByOrderId.containsKey(orderId)) {
-            itemsByOrderId[orderId] = [];
-          }
-          itemsByOrderId[orderId]!.add(Map<String, dynamic>.from(item));
-        }
-
-        // Attach items to each order
-        return orders.map((order) {
-          final orderId = order['order_id'].toString();
-          final orderItems = itemsByOrderId[orderId] ?? [];
-          return {...order, 'items': orderItems};
-        }).toList();
-      } else {
-        // If order-items endpoint fails, return orders without items
-        return orders.map((order) => {...order, 'items': []}).toList();
-      }
-    } catch (error) {
-      // If fetching order items fails, return orders without items
-      return orders.map((order) => {...order, 'items': []}).toList();
-    }
+    return fetchOrderItemsForOrdersAttached(orders, baseUrl, queryParams);
   }
 
   List<Map<String, dynamic>> _groupOrdersWithItems(
     List<Map<String, dynamic>> rawData,
   ) {
-    // Group data by order_id since JOIN causes duplication
-    final Map<String, Map<String, dynamic>> ordersMap = {};
-
-    for (var row in rawData) {
-      final orderId = row['order_id'].toString();
-
-      if (!ordersMap.containsKey(orderId)) {
-        // Prefer `orders.jumlah` (rounded, after discount). Fallback to rounding `orders.total`.
-        final rawJumlah = row['jumlah'];
-        final rawTotal = row['total'];
-        num? fallbackJumlah;
-        if (rawJumlah == null && rawTotal != null) {
-          final t = double.tryParse(rawTotal.toString());
-          if (t != null) {
-            fallbackJumlah = ((t / 5000).ceil() * 5000);
-          }
-        }
-
-        // Create order entry (exclude item-specific fields)
-        ordersMap[orderId] = {
-          'order_id': row['order_id'],
-          'order_number': row['order_number'],
-          'order_type': row['order_type'],
-          'customer_id': row['customer_id'],
-          'customer_name': row['customer_name'],
-          'customer_phone': row['customer_phone'],
-          'customer_address': row['customer_address'],
-          'branch_id': row['branch_id'],
-          'user_id': row['user_id'],
-          'status': row['status'],
-          'total': row['total'],
-          'jumlah': rawJumlah ?? fallbackJumlah,
-          'diskon': row['diskon'],
-          'mode': row['mode'],
-          'created_at': row['created_at'],
-          'updated_at': row['updated_at'],
-          'items': [],
-        };
-      }
-
-      // Add item if it exists (check if nama_item is not null)
-      if (row['nama_item'] != null) {
-        final item = {
-          'order_item_id': row['order_item_id'],
-          'nama_item': row['nama_item'],
-          'kode_produk': row['kode_produk'] ?? row['item_kode'],
-          'weight': row['weight'] ?? row['item_weight'],
-          'qty': row['qty'],
-          'harga_per_gram': row['harga_per_gram'],
-          // Source-of-truth from backend (order_items.total)
-          'total': row['item_total'] ?? row['total'],
-          'material': row['material'] ?? row['item_material'],
-          'purity': row['purity'] ?? row['item_purity'],
-          'kategori': row['kategori'] ?? row['item_kategori'],
-          'jenis': row['jenis'] ?? row['item_jenis'],
-          'tipe': row['tipe'] ?? row['item_tipe'],
-          'item_id': row['item_id'],
-          'photo_produk': row['photo_produk'],
-        };
-
-        ordersMap[orderId]!['items'].add(item);
-      }
-    }
-
-    return ordersMap.values.toList();
+    return groupOrdersWithItemsForOrderToday(rawData);
   }
 
   Future<void> refresh() async {
     await fetchTodayOrders();
+  }
+
+  void bundleBeginRefresh() {
+    state = _todayOrdersLoadingFrom(state);
+  }
+
+  void bundleSetLoadingOnly() {
+    state = const AsyncValue.loading();
+  }
+
+  void bundleSetBranchError(Object error, StackTrace stackTrace) {
+    state = AsyncValue.error(error, stackTrace);
+  }
+
+  Future<void> bundleApplyOrdersFromSnapshot({
+    required List<Map<String, dynamic>> mergedOrders,
+    required String ordersCacheKey,
+  }) async {
+    await OfflineCache.instance.setJson(
+      ordersCacheKey,
+      mergedOrders,
+      ttl: const Duration(minutes: 5),
+    );
+    state = AsyncValue.data(mergedOrders);
+  }
+}
+
+/// Satu round-trip ke `/api/dashboard/order-today-snapshot` (satu cabang + online).
+/// Multi-cabang atau gagal snapshot → paralel endpoint lama.
+class OrderTodayBundleSync {
+  OrderTodayBundleSync._();
+
+  static Future<void>? _lock;
+
+  static Future<void> run(Ref ref) {
+    _lock ??= _runBody(ref).whenComplete(() => _lock = null);
+    return _lock!;
+  }
+
+  static Future<void> _runBody(Ref ref) async {
+    final statsN = ref.read(orderTodayStatsProvider.notifier);
+    final ordersN = ref.read(todayOrdersProvider.notifier);
+    final userState = ref.read(userStateProvider);
+    final networkState = ref.read(networkStatusProvider);
+
+    if (userState.authToken.trim().isEmpty) {
+      statsN.bundleSetLoadingOnly();
+      ordersN.bundleSetLoadingOnly();
+      return;
+    }
+
+    final branchIds = _orderTodayBranchIds(userState);
+    if (branchIds.isEmpty) {
+      final err = Exception(
+        'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
+      );
+      final st = StackTrace.current;
+      statsN.bundleSetBranchError(err, st);
+      ordersN.bundleSetBranchError(err, st);
+      return;
+    }
+
+    statsN.bundleBeginRefresh();
+    ordersN.bundleBeginRefresh();
+
+    final trySnapshot = branchIds.length == 1 &&
+        networkState.isOnline &&
+        networkState.isBackendReachable;
+
+    if (trySnapshot) {
+      try {
+        final dateKey = _localCalendarDateKey();
+        final bid = branchIds.first;
+        final qp = <String, String>{
+          'branch_id': bid.toString(),
+          'date': dateKey,
+        };
+        if (_orderTodayOwnUserOnlyScope(userState) && userState.userId != null) {
+          qp['user_id'] = userState.userId.toString();
+        }
+        final uri = Uri.parse(
+          '${NetworkConfig.baseUrl}/api/dashboard/order-today-snapshot',
+        ).replace(queryParameters: qp);
+        final response = await ApiClient.get(uri.toString());
+        if (response.statusCode == 200) {
+          final map = jsonDecode(response.body) as Map<String, dynamic>;
+          final statsMap = Map<String, dynamic>.from(map['stats'] as Map);
+          final ordersRaw = map['orders'] as List<dynamic>;
+
+          final scopeSeg = _orderTodayScopeCacheSegment(userState);
+          final statsCacheKey =
+              'orderTodayStats/v2?branch_id=$bid&scope=$scopeSeg&date=$dateKey';
+          final ordersCacheKey =
+              'todayOrders/v5?branch_id=$bid&scope=$scopeSeg&date=$dateKey';
+
+          await statsN.bundleApplyStatsFromSnapshot(
+            statsMap: statsMap,
+            statsCacheKey: statsCacheKey,
+          );
+
+          final rawList = ordersRaw
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          final hasItemDetails = rawList.isNotEmpty &&
+              rawList.first.containsKey('nama_item');
+          final mergedOrders = hasItemDetails
+              ? groupOrdersWithItemsForOrderToday(rawList)
+              : await fetchOrderItemsForOrdersAttached(
+                  rawList,
+                  NetworkConfig.baseUrl,
+                  qp,
+                );
+
+          await ordersN.bundleApplyOrdersFromSnapshot(
+            mergedOrders: mergedOrders,
+            ordersCacheKey: ordersCacheKey,
+          );
+
+          _otNdjson(
+            hypothesisId: 'OT2',
+            location: 'order_today_provider.dart:OrderTodayBundleSync:snapshot_ok',
+            message: 'order-today-snapshot 200',
+            data: <String, Object?>{
+              'branchId': bid,
+              'ordersLen': mergedOrders.length,
+            },
+          );
+          return;
+        }
+      } catch (_) {
+        // fallback ke endpoint terpisah
+      }
+    }
+
+    await Future.wait([
+      statsN.fetchOrderTodayStatsViaEndpointsOnly(),
+      ordersN.fetchTodayOrdersViaEndpointsOnly(),
+    ]);
   }
 }
