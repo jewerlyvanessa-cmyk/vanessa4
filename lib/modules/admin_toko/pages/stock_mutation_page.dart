@@ -8,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 class StockMutationPage extends ConsumerStatefulWidget {
@@ -148,6 +149,9 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
       return;
     }
 
+    final bid = ref.read(userStateProvider).branch.trim();
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(bid);
+
     final doc = pw.Document();
     final df = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
     final periodLabel = _dateRangeLabel();
@@ -167,16 +171,18 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(32),
+        margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'LAPORAN MUTASI STOK',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine('Periode: $periodLabel'),
+            PdfLaporanHeaderSubtitleLine(
+              'Filter tipe: ${_getTypeLabel(_selectedType)}',
+            ),
+          ],
+        ),
         build: (ctx) => [
-          pw.Text(
-            'LAPORAN MUTASI STOK',
-            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 4),
-          pw.Text('Periode: $periodLabel'),
-          pw.Text('Filter tipe: ${_getTypeLabel(_selectedType)}'),
-          pw.SizedBox(height: 10),
           pw.TableHelper.fromTextArray(
             headers: const ['No', 'Waktu', 'Item', 'Tipe', 'Qty', 'Catatan'],
             data: [

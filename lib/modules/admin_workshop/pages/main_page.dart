@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'workshop_orders_page.dart';
+import '../../stockist/pages/service_incoming_page.dart';
 import 'technician_management_page.dart';
 import 'material_stock_page.dart';
 import 'workshop_reports_page.dart';
 import 'workshop_settings_page.dart';
 import '../../admin_toko/pages/goods_transfer_page.dart';
+import 'return_to_store_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
@@ -59,6 +61,18 @@ class AdminWorkshopMainPage extends ConsumerWidget {
           child: Image.asset('assets/logo_bulat.png', fit: BoxFit.contain),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.inventory_2_outlined),
+            tooltip: 'Service dari toko',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (context) => const ServiceIncomingPage(),
+                ),
+              );
+            },
+          ),
           // Real-time connection indicator
           Container(
             margin: const EdgeInsets.only(right: 8),
@@ -111,12 +125,34 @@ class AdminWorkshopMainPage extends ConsumerWidget {
                   entries: [
                     ModuleMenuEntry(
                       icon: Icons.build,
-                      label: 'ORDER WORKSHOP',
+                      label: 'Antrian pekerjaan',
                       iconColor: Colors.blue,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const WorkshopOrdersPage(),
+                        ),
+                      ),
+                    ),
+                    ModuleMenuEntry(
+                      icon: Icons.local_shipping_outlined,
+                      label: 'KIRIM KE TOKO',
+                      iconColor: Colors.indigo,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ReturnToStorePage(),
+                        ),
+                      ),
+                    ),
+                    ModuleMenuEntry(
+                      icon: Icons.inventory_2_outlined,
+                      label: 'Service dari toko',
+                      iconColor: Colors.deepOrange,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ServiceIncomingPage(),
                         ),
                       ),
                     ),

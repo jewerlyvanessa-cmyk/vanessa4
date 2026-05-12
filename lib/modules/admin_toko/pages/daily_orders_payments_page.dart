@@ -11,10 +11,26 @@ import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 /// Filter daftar order (ringkasan di strip atas).
-enum _AdminOrderFilter { all, toko, online, completed, pending }
+enum _AdminOrderFilter {
+  all,
+  toko,
+  online,
+  completed,
+  pending,
+  /// Order service + custom (satu pintu, beda kolom tipe).
+  serviceCustom,
+  /// Hanya yang perlu aksi admin toko: pending/confirmed → bengkel.
+  kirimBengkel,
+}
 
 class DailyOrdersPaymentsPage extends ConsumerStatefulWidget {
-  const DailyOrdersPaymentsPage({super.key});
+  const DailyOrdersPaymentsPage({
+    super.key,
+    this.serviceCustomMode = false,
+  });
+
+  /// Dari menu khusus admin toko: daftar difilter service/custom, aksi kirim ke bengkel tetap sama.
+  final bool serviceCustomMode;
 
   @override
   ConsumerState<DailyOrdersPaymentsPage> createState() =>
@@ -38,6 +54,9 @@ class _DailyOrdersPaymentsPageState
   @override
   void initState() {
     super.initState();
+    if (widget.serviceCustomMode) {
+      _orderFilter = _AdminOrderFilter.serviceCustom;
+    }
     _loadDailyData();
   }
 
@@ -247,6 +266,10 @@ class _DailyOrdersPaymentsPageState
             'completed';
       case _AdminOrderFilter.pending:
         return (o['status'] ?? '').toString().trim().toLowerCase() == 'pending';
+      case _AdminOrderFilter.serviceCustom:
+        return _isServiceCustomOrder(o);
+      case _AdminOrderFilter.kirimBengkel:
+        return _nextAdminTokoWorkshopStatus(o) == 'awaiting_warehouse';
     }
   }
 
@@ -305,7 +328,7 @@ class _DailyOrdersPaymentsPageState
   String _adminTokoActionLabel(String nextStatus) {
     switch (nextStatus) {
       case 'awaiting_warehouse':
-        return 'Kirim Gudang';
+        return 'Kirim ke bengkel';
       case 'ready_for_pickup':
         return 'Terima';
       default:
@@ -375,6 +398,10 @@ class _DailyOrdersPaymentsPageState
         .where(
           (o) => (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
         )
+        .length;
+    final svcCustom = orders.where(_isServiceCustomOrder).length;
+    final kirimBengkelCount = orders
+        .where((o) => _nextAdminTokoWorkshopStatus(o) == 'awaiting_warehouse')
         .length;
     final lineCount = kIsWeb ? _rawOrderLineRows(ordersRaw).length : 0;
 
@@ -455,6 +482,28 @@ class _DailyOrdersPaymentsPageState
               ),
               iconColor: Colors.orange.shade800,
             ),
+            if (svcCustom > 0)
+              _summaryFilterChip(
+                context,
+                label: 'Service/Custom $svcCustom',
+                icon: Icons.build_circle_outlined,
+                selected: _orderFilter == _AdminOrderFilter.serviceCustom,
+                onSelected: (sel) => _setOrderFilter(
+                  sel ? _AdminOrderFilter.serviceCustom : _AdminOrderFilter.all,
+                ),
+                iconColor: Colors.deepOrange.shade800,
+              ),
+            if (kirimBengkelCount > 0)
+              _summaryFilterChip(
+                context,
+                label: 'Kirim bengkel $kirimBengkelCount',
+                icon: Icons.local_shipping_outlined,
+                selected: _orderFilter == _AdminOrderFilter.kirimBengkel,
+                onSelected: (sel) => _setOrderFilter(
+                  sel ? _AdminOrderFilter.kirimBengkel : _AdminOrderFilter.all,
+                ),
+                iconColor: Colors.brown.shade700,
+              ),
             _miniChip(
               context,
               _fmtMoney(payTotal),
@@ -647,7 +696,14 @@ class _DailyOrdersPaymentsPageState
                         onTap: openRow,
                       ),
                       DataCell(
-                        Text((o['status'] ?? '-').toString()),
+                        Text(
+                          _getStatusLabel(o['status']?.toString()),
+                          style: TextStyle(
+                            color: _getStatusColor(o['status']?.toString()),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
                         onTap: openRow,
                       ),
                       DataCell(
@@ -706,13 +762,18 @@ class _DailyOrdersPaymentsPageState
       String text, {
       int maxLines = 2,
       TextAlign align = TextAlign.start,
+      Color? color,
+      FontWeight? weight,
     }) {
       return Text(
         text,
         maxLines: maxLines,
         overflow: TextOverflow.ellipsis,
         textAlign: align,
-        style: Theme.of(context).textTheme.bodyMedium,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: color,
+              fontWeight: weight,
+            ),
       );
     }
 
@@ -733,6 +794,17 @@ class _DailyOrdersPaymentsPageState
           cells: [
             DataCell(cell('#$oid', maxLines: 1)),
             DataCell(cell(_fmtShortTime(row['created_at']), maxLines: 1)),
+            DataCell(
+              cell((row['order_type'] ?? '—').toString(), maxLines: 1),
+            ),
+            DataCell(
+              cell(
+                _getStatusLabel(row['status']?.toString()),
+                maxLines: 1,
+                color: _getStatusColor(row['status']?.toString()),
+                weight: FontWeight.w600,
+              ),
+            ),
             DataCell(cell(_lineItemName(row))),
             DataCell(
               Padding(
@@ -792,6 +864,8 @@ class _DailyOrdersPaymentsPageState
                   columns: [
                     DataColumn(label: dataTableColumnLabel('Order')),
                     DataColumn(label: dataTableColumnLabel('Waktu')),
+                    DataColumn(label: dataTableColumnLabel('Tipe order')),
+                    DataColumn(label: dataTableColumnLabel('Status')),
                     DataColumn(label: dataTableColumnLabel('Nama item')),
                     DataColumn(
                       label: dataTableColumnLabel('Berat'),
@@ -1109,7 +1183,9 @@ class _DailyOrdersPaymentsPageState
   @override
   Widget build(BuildContext context) {
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
-    final orderCount = _dedupeOrdersById(ordersRaw).length;
+    final dedupedOrders = _dedupeOrdersById(ordersRaw);
+    final orderCount = dedupedOrders.length;
+    final svcCustomCount = dedupedOrders.where(_isServiceCustomOrder).length;
     final payTx =
         ((_dailyData['payments'] as Map?)?['transactions'] as List?)?.length ??
         0;
@@ -1122,12 +1198,22 @@ class _DailyOrdersPaymentsPageState
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Order & Pembayaran'),
               Text(
-                DateFormat('EEEE, d MMM yyyy', 'id_ID').format(_selectedDate),
+                widget.serviceCustomMode
+                    ? 'Service / Custom'
+                    : 'Order & Pembayaran',
+              ),
+              Text(
+                widget.serviceCustomMode
+                    ? '${DateFormat('EEEE, d MMM yyyy', 'id_ID').format(_selectedDate)} · kirim ke bengkel dari toko'
+                    : DateFormat('EEEE, d MMM yyyy', 'id_ID').format(
+                        _selectedDate,
+                      ),
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: Colors.white),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -1150,7 +1236,11 @@ class _DailyOrdersPaymentsPageState
                   unselectedLabelColor: Colors.white70,
                   indicatorColor: Colors.white,
                   tabs: [
-                    Tab(text: 'Order ($orderCount)'),
+                    Tab(
+                      text: widget.serviceCustomMode
+                          ? 'Service/custom ($svcCustomCount)'
+                          : 'Order ($orderCount)',
+                    ),
                     Tab(text: 'Pembayaran ($payTx)'),
                   ],
                 ),

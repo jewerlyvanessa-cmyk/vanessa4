@@ -159,6 +159,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     await printStoreOperationalPdf(
       context,
       branchLabel: _branchLabel(),
+      branchIdForLogo: ref.read(userStateProvider).branch.trim(),
       periodStart: _rangeStart,
       periodEnd: _rangeEnd,
       entries: _entries,
@@ -355,6 +356,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                   await printStoreOperationalReceiptPdf(
                     context,
                     branchLabel: _branchLabel(),
+                    branchIdForLogo: ref.read(userStateProvider).branch.trim(),
                     entry: e,
                   );
                 },

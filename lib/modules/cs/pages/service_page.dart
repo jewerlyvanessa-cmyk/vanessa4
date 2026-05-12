@@ -354,7 +354,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     final weightVal = double.tryParse(_beratController.text.trim()) ?? 0;
     final totalBiayaVal = _parseMoney(_totalBiayaController.text);
     final uangMukaVal = _parseMoney(_uangMukaController.text);
-    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → gudang → workshop.
+    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → bengkel → workshop.
     final initialServiceStatus = 'pending';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()

@@ -14,7 +14,7 @@ class OrderStatusUi {
       case 'confirmed':
         return 'Konfirmasi toko';
       case 'awaiting_warehouse':
-        return 'Menunggu gudang';
+        return 'Menunggu bengkel';
       case 'reserved':
         return 'Reserved';
       case 'sold':

@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 
 String _moneyPdf(num v) =>
     NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0)
@@ -36,37 +39,29 @@ Future<void> printManagerBranchPerformancePdf(
   required String periodTitle,
   required String periodSubtitle,
   required List<Map<String, dynamic>> rows,
+  required String branchIdForLogo,
 }) async {
   if (!context.mounted) return;
   try {
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
-        build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'PERFORMA CABANG',
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Center(
-            child: pw.Text(periodTitle, style: const pw.TextStyle(fontSize: 12)),
-          ),
-          pw.Center(
-            child: pw.Text(
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'PERFORMA CABANG',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(periodTitle),
+            PdfLaporanHeaderSubtitleLine(
               periodSubtitle,
-              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+              fontSize: 10,
+              color: PdfColors.grey700,
             ),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
+          ],
+        ),
+        build: (ctx) => [
           if (rows.isEmpty)
             pw.Text('Tidak ada data cabang.')
           else
@@ -127,10 +122,12 @@ Future<void> printManagerPaymentSummaryPdf(
   required String periodSubtitle,
   required List<Map<String, dynamic>> rows,
   required String fileSlugPrefix,
+  required String branchIdForLogo,
   bool includeMethodNominals = false,
 }) async {
   if (!context.mounted) return;
   try {
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final totalAll = rows.fold<num>(0, (p, r) {
       final v = num.tryParse(r['total_amount']?.toString() ?? '') ?? 0;
       return p + v;
@@ -141,45 +138,37 @@ Future<void> printManagerPaymentSummaryPdf(
           return p + (num.tryParse(r[key]?.toString() ?? '') ?? 0);
         });
 
+    final paymentSummarySubtitles = <PdfLaporanHeaderSubtitleLine>[
+      PdfLaporanHeaderSubtitleLine(periodTitle),
+      PdfLaporanHeaderSubtitleLine(
+        '$periodSubtitle • Total gabungan: ${_moneyPdf(totalAll)}',
+        fontSize: 10,
+        color: PdfColors.grey700,
+      ),
+    ];
+    if (includeMethodNominals && rows.isNotEmpty) {
+      paymentSummarySubtitles.add(
+        PdfLaporanHeaderSubtitleLine(
+          'Gabungan per metode · Cash ${_moneyPdf(sumField('cash_amount'))} · '
+          'TRF ${_moneyPdf(sumField('transfer_amount'))} · '
+          'QRIS ${_moneyPdf(sumField('qris_amount'))}',
+          fontSize: 9,
+          color: PdfColors.grey700,
+        ),
+      );
+    }
+
     final doc = pw.Document();
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: reportTitle.toUpperCase(),
+          leftLogoBytes: logoBytes,
+          subtitles: paymentSummarySubtitles,
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              reportTitle.toUpperCase(),
-              style: pw.TextStyle(
-                fontSize: 16,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Center(
-            child: pw.Text(periodTitle, style: const pw.TextStyle(fontSize: 12)),
-          ),
-          pw.Center(
-            child: pw.Text(
-              '$periodSubtitle • Total gabungan: ${_moneyPdf(totalAll)}',
-              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-            ),
-          ),
-          if (includeMethodNominals && rows.isNotEmpty) ...[
-            pw.SizedBox(height: 6),
-            pw.Center(
-              child: pw.Text(
-                'Gabungan per metode · Cash ${_moneyPdf(sumField('cash_amount'))} · '
-                'TRF ${_moneyPdf(sumField('transfer_amount'))} · '
-                'QRIS ${_moneyPdf(sumField('qris_amount'))}',
-                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
-              ),
-            ),
-          ],
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
           if (rows.isEmpty)
             pw.Text('Tidak ada data.')
           else
@@ -253,12 +242,15 @@ Future<void> printManagerPaymentSummaryPdf(
 class StockReportBranchPdfSection {
   StockReportBranchPdfSection({
     required this.name,
+    this.branchId,
     this.error,
     required this.rowsStok,
     required this.rowsBuyback,
   });
 
   final String name;
+  /// Cabang untuk logo di badan laporan (mode per cabang).
+  final String? branchId;
   final String? error;
   final List<Map<String, dynamic>> rowsStok;
   final List<Map<String, dynamic>> rowsBuyback;
@@ -274,9 +266,21 @@ Future<void> printManagerStockReportPdf(
   required List<Map<String, dynamic>> rowsStokByJenis,
   required List<Map<String, dynamic>> rowsBuybackByJenis,
   required List<StockReportBranchPdfSection>? branchSections,
+  required String branchIdForLogo,
 }) async {
   if (!context.mounted) return;
   try {
+    final headerLogoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
+    final Map<String, Uint8List> sectionLogos = {};
+    if (!gabunganMode && branchSections != null) {
+      for (final s in branchSections) {
+        final bid = s.branchId?.trim() ?? '';
+        if (bid.isEmpty) continue;
+        final b = await loadBranchLogoRasterBytesForPdf(bid);
+        if (b != null && b.isNotEmpty) sectionLogos[bid] = b;
+      }
+    }
+
     final doc = pw.Document();
 
     List<pw.Widget> jenisTable(
@@ -320,37 +324,25 @@ Future<void> printManagerStockReportPdf(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
-        build: (ctx) {
-          final out = <pw.Widget>[
-            pw.Center(
-              child: pw.Text(
-                'LAPORAN STOK',
-                style: pw.TextStyle(
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'LAPORAN STOK',
+          leftLogoBytes: headerLogoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(periodTitle),
+            PdfLaporanHeaderSubtitleLine(
+              '$periodSubtitle • ${gabunganMode ? 'Gabungan' : 'Per cabang'}',
+              fontSize: 10,
+              color: PdfColors.grey700,
             ),
-            pw.SizedBox(height: 6),
-            pw.Center(
-              child:
-                  pw.Text(periodTitle, style: const pw.TextStyle(fontSize: 12)),
-            ),
-            pw.Center(
-              child: pw.Text(
-                '$periodSubtitle • ${gabunganMode ? 'Gabungan' : 'Per cabang'}',
-                style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-              ),
-            ),
-            pw.SizedBox(height: 8),
-            pw.Text(
+            PdfLaporanHeaderSubtitleLine(
               'Catatan: angka stok adalah snapshot inventori saat ini; periode hanya label laporan.',
-              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+              fontSize: 9,
+              color: PdfColors.grey700,
             ),
-            pw.SizedBox(height: 12),
-            pw.Divider(thickness: 1),
-            pw.SizedBox(height: 12),
-          ];
+          ],
+        ),
+        build: (ctx) {
+          final out = <pw.Widget>[];
 
           if (gabunganMode) {
             out.addAll(
@@ -409,6 +401,10 @@ Future<void> printManagerStockReportPdf(
               out.add(pw.SizedBox(height: 16));
 
               for (final b in sections) {
+                final bid = b.branchId?.trim() ?? '';
+                final secLogo =
+                    bid.isNotEmpty ? sectionLogos[bid] : null;
+                out.addAll(pdfInlineLogoWidgets(secLogo));
                 out.add(
                   pw.Text(
                     b.name,

@@ -40,15 +40,30 @@ class _WorkQueuePageState extends ConsumerState<WorkQueuePage> {
         });
         return;
       }
-      final workQueue = await ApiService.getWorkQueue(userState.branch);
+      // ANTRIAN KERJA: hanya order yang belum diambil teknisi mana pun.
+      final workQueue = await ApiService.getWorkQueue(
+        userState.branch,
+        unassignedOnly: true,
+      );
 
       setState(() {
         _workQueue = workQueue;
         _isLoading = false;
       });
-    } on UnauthorizedApiException {
+    } on UnauthorizedApiException catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _workQueue = [];
+        _errorMessage = e.message;
+        _isLoading = false;
+      });
+    } on ForbiddenApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _workQueue = [];
+        _errorMessage = e.message;
+        _isLoading = false;
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -90,260 +105,271 @@ class _WorkQueuePageState extends ConsumerState<WorkQueuePage> {
                     ),
                   )
                 : _workQueue.isEmpty
-                    ? const Center(
-                        child: Text('Tidak ada order dalam antrian kerja'),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final narrow = constraints.maxWidth < 560;
-                            final cs = Theme.of(context).colorScheme;
-const desktopW = 900.0;
-                            final w = constraints.maxWidth;
-                            final BoxConstraints box;
-                            if (narrow) {
-                              box = BoxConstraints.tightFor(width: w);
-                            } else if (w >= desktopW) {
-                              box = BoxConstraints.tightFor(width: desktopW);
-                            } else {
-                              box = const BoxConstraints(minWidth: desktopW);
-                            }
+                ? const Center(
+                    child: Text('Tidak ada order dalam antrian kerja'),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final narrow = constraints.maxWidth < 560;
+                        final cs = Theme.of(context).colorScheme;
+                        const desktopW = 900.0;
+                        final w = constraints.maxWidth;
+                        final BoxConstraints box;
+                        if (narrow) {
+                          box = BoxConstraints.tightFor(width: w);
+                        } else if (w >= desktopW) {
+                          box = BoxConstraints.tightFor(width: desktopW);
+                        } else {
+                          box = const BoxConstraints(minWidth: desktopW);
+                        }
 
-                            final rows = <DataRow>[];
-                            for (var i = 0; i < _workQueue.length; i++) {
-                              final order = _workQueue[i];
-                              final oid =
-                                  (order['order_id'] ?? '—').toString();
-                              final item =
-                                  (order['item_name'] ?? 'N/A').toString();
-                              final cust =
-                                  (order['customer_name'] ?? 'N/A')
-                                      .toString();
-                              final type = _getOrderTypeText(
-                                order['order_type']?.toString() ?? '',
-                              );
-                              final pri =
-                                  _getPriorityText(order['priority']?.toString() ?? '');
-                              final est =
-                                  (order['estimated_time'] ?? '—').toString();
-                              final idxColor =
-                                  _getStatusColor(order['status']?.toString() ?? '');
+                        final rows = <DataRow>[];
+                        for (var i = 0; i < _workQueue.length; i++) {
+                          final order = _workQueue[i];
+                          final oid = (order['order_id'] ?? '—').toString();
+                          final item = (order['item_name'] ?? 'N/A').toString();
+                          final cust = (order['customer_name'] ?? 'N/A')
+                              .toString();
+                          final type = _getOrderTypeText(
+                            order['order_type']?.toString() ?? '',
+                          );
+                          final pri = _getPriorityText(
+                            order['priority']?.toString() ?? '',
+                          );
+                          final est = (order['estimated_time'] ?? '—')
+                              .toString();
+                          final idxColor = _getStatusColor(
+                            order['status']?.toString() ?? '',
+                          );
 
-                              final startCell = DataCell(
-                                FilledButton.tonal(
-                                  onPressed: () => _startWork(order),
-                                  child: const Text('Mulai'),
-                                ),
-                              );
+                          final startCell = DataCell(
+                            FilledButton.tonal(
+                              onPressed: () => _startWork(order),
+                              child: const Text('Mulai'),
+                            ),
+                          );
 
-                              final detailCell = DataCell(
-                                IconButton(
-                                  tooltip: 'Detail',
-                                  icon: const Icon(Icons.info_outline),
-                                  onPressed: () =>
-                                      _showWorkDetails(context, order),
-                                ),
-                              );
+                          final detailCell = DataCell(
+                            IconButton(
+                              tooltip: 'Detail',
+                              icon: const Icon(Icons.info_outline),
+                              onPressed: () => _showWorkDetails(context, order),
+                            ),
+                          );
 
-                              rows.add(
-                                DataRow(
-                                  color: WidgetStateProperty.resolveWith(
-                                    (states) {
-                                      if (states.contains(
-                                        WidgetState.hovered,
-                                      )) {
-                                        return cs.primary
-                                            .withValues(alpha: 0.06);
-                                      }
-                                      return i.isOdd
-                                          ? cs.surfaceContainerHighest
-                                              .withValues(alpha: 0.45)
-                                          : null;
-                                    },
-                                  ),
-                                  cells: narrow
-                                      ? [
-                                          DataCell(
-                                            Row(
-                                              children: [
-                                                CircleAvatar(
-                                                  radius: 14,
-                                                  backgroundColor: idxColor,
-                                                  child: Text(
-                                                    '${i + 1}',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Text(
-                                                        '#$oid · $type',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: const TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                          fontSize: 12,
-                                                        ),
-                                                      ),
-                                                      Text(
-                                                        '$item · $cust',
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                          fontSize: 11,
-                                                          color: cs
-                                                              .onSurfaceVariant,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          startCell,
-                                          detailCell,
-                                        ]
-                                      : [
-                                          DataCell(
+                          rows.add(
+                            DataRow(
+                              color: WidgetStateProperty.resolveWith((states) {
+                                if (states.contains(WidgetState.hovered)) {
+                                  return cs.primary.withValues(alpha: 0.06);
+                                }
+                                return i.isOdd
+                                    ? cs.surfaceContainerHighest.withValues(
+                                        alpha: 0.45,
+                                      )
+                                    : null;
+                              }),
+                              cells: narrow
+                                  ? [
+                                      DataCell(
+                                        Row(
+                                          children: [
                                             CircleAvatar(
+                                              radius: 14,
                                               backgroundColor: idxColor,
                                               child: Text(
                                                 '${i + 1}',
                                                 style: const TextStyle(
                                                   color: Colors.white,
+                                                  fontSize: 12,
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                          DataCell(Text('#$oid')),
-                                          DataCell(Text(type)),
-                                          DataCell(
-                                            Text(
-                                              item,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              cust,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          DataCell(Text(pri)),
-                                          DataCell(
-                                            Text(
-                                              est,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          startCell,
-                                          detailCell,
-                                        ],
-                                ),
-                              );
-                            }
-
-                            return Material(
-                              elevation: 0,
-                              color: cs.surfaceContainerLow
-                                  .withValues(alpha: 0.65),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                  color: cs.outlineVariant
-                                      .withValues(alpha: 0.45),
-                                ),
-                              ),
-                              clipBehavior: Clip.antiAlias,
-                              child: Scrollbar(
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.vertical,
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: Align(
-                                      alignment: Alignment.topLeft,
-                                      child: ConstrainedBox(
-                                        constraints: box,
-                                        child: DataTable(
-                                          headingRowColor:
-                                              WidgetStateProperty.all(
-                                            cs.surfaceContainerHigh,
-                                          ),
-dataRowMinHeight: narrow ? 52 : 48,
-                                          dataRowMaxHeight: narrow ? 64 : 52,
-                                          columnSpacing: narrow ? 6 : 10,
-                                          horizontalMargin: narrow ? 6 : 10,
-                                          showCheckboxColumn: false,
-                                          dividerThickness: 0.5,
-                                          columns: narrow
-                                              ? [
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Antrian'),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  Text(
+                                                    '#$oid · $type',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      fontSize: 12,
+                                                    ),
                                                   ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Aksi'),
-                                                  ),
-                                                  const DataColumn(
-                                                    label: SizedBox(width: 40),
-                                                  ),
-                                                ]
-                                              : [
-                                                  DataColumn(label: dataTableColumnLabel('#')),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Order'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Jenis'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Item'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Pelanggan'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Prioritas'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Estimasi'),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel('Mulai'),
-                                                  ),
-                                                  const DataColumn(
-                                                    label: SizedBox(width: 44),
+                                                  Text(
+                                                    '$item · $cust',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color:
+                                                          cs.onSurfaceVariant,
+                                                    ),
                                                   ),
                                                 ],
-                                          rows: rows,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
+                                      startCell,
+                                      detailCell,
+                                    ]
+                                  : [
+                                      DataCell(
+                                        CircleAvatar(
+                                          backgroundColor: idxColor,
+                                          child: Text(
+                                            '${i + 1}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      DataCell(Text('#$oid')),
+                                      DataCell(Text(type)),
+                                      DataCell(
+                                        Text(
+                                          item,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DataCell(
+                                        Text(
+                                          cust,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      DataCell(Text(pri)),
+                                      DataCell(
+                                        Text(
+                                          est,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      startCell,
+                                      detailCell,
+                                    ],
+                            ),
+                          );
+                        }
+
+                        return Material(
+                          elevation: 0,
+                          color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(
+                              color: cs.outlineVariant.withValues(alpha: 0.45),
+                            ),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Scrollbar(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.vertical,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: ConstrainedBox(
+                                    constraints: box,
+                                    child: DataTable(
+                                      headingRowColor: WidgetStateProperty.all(
+                                        cs.surfaceContainerHigh,
+                                      ),
+                                      dataRowMinHeight: narrow ? 52 : 48,
+                                      dataRowMaxHeight: narrow ? 64 : 52,
+                                      columnSpacing: narrow ? 6 : 10,
+                                      horizontalMargin: narrow ? 6 : 10,
+                                      showCheckboxColumn: false,
+                                      dividerThickness: 0.5,
+                                      columns: narrow
+                                          ? [
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Antrian',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Aksi',
+                                                ),
+                                              ),
+                                              const DataColumn(
+                                                label: SizedBox(width: 40),
+                                              ),
+                                            ]
+                                          : [
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  '#',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Order',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Jenis',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Item',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Pelanggan',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Prioritas',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Estimasi',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Mulai',
+                                                ),
+                                              ),
+                                              const DataColumn(
+                                                label: SizedBox(width: 44),
+                                              ),
+                                            ],
+                                      rows: rows,
                                     ),
                                   ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
@@ -391,24 +417,30 @@ dataRowMinHeight: narrow ? 52 : 48,
       final block = userState.workshopSessionBlockReason;
       if (block != null) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(block)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(block)));
         }
         return;
       }
       final oid = int.tryParse(order['order_id']?.toString() ?? '');
       if (oid == null) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('ID order tidak valid')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('ID order tidak valid')));
         }
         return;
       }
+      final orderType = (order['order_type'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final startStatus = orderType == 'custom' ? 'custom_work' : 'repairing';
+
       await ApiService.updateWorkProgress(
         oid,
-        'repairing',
+        startStatus,
         userState.userId!.toString(),
         notes: 'Work started by technician',
         branchId: userState.branch,

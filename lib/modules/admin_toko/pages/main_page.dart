@@ -190,6 +190,19 @@ class AdminTokoMainPage extends ConsumerWidget {
                     ),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.build_circle_outlined,
+                    label: 'Service / Custom',
+                    iconColor: Colors.deepOrange,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const DailyOrdersPaymentsPage(
+                          serviceCustomMode: true,
+                        ),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
                     icon: Icons.inventory_2,
                     label: 'Stok',
                     iconColor: Colors.teal,
@@ -200,7 +213,7 @@ class AdminTokoMainPage extends ConsumerWidget {
                   ),
                   ModuleMenuEntry(
                     icon: Icons.local_shipping,
-                    label: 'Transfer',
+                    label: 'Kirim / terima',
                     iconColor: Colors.orange,
                     onTap: () => Navigator.push(
                       context,

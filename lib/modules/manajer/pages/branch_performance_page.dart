@@ -51,6 +51,7 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
       periodSubtitle:
           managerReportPeriodShortSubtitle(_periodStart, _periodEnd),
       rows: List<Map<String, dynamic>>.from(_rows),
+      branchIdForLogo: ref.read(userStateProvider).branch.trim(),
     );
   }
 

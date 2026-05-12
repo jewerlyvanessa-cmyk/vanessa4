@@ -307,8 +307,10 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
     if (_refreshingCsToday) return;
     setState(() => _refreshingCsToday = true);
     try {
-      await ref.read(orderTodayStatsProvider.notifier).refresh();
-      await ref.read(todayOrdersProvider.notifier).refresh();
+      await Future.wait([
+        ref.read(orderTodayStatsProvider.notifier).refresh(),
+        ref.read(todayOrdersProvider.notifier).refresh(),
+      ]);
     } finally {
       if (mounted) setState(() => _refreshingCsToday = false);
     }
@@ -669,9 +671,10 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
             if (update['type'] == 'order_update' ||
                 update['type'] == 'notification' ||
                 update['type'] == 'mock_update') {
-              // Refresh order statistics and orders list when real-time update received
-              ref.read(orderTodayStatsProvider.notifier).refresh();
-              ref.read(todayOrdersProvider.notifier).refresh();
+              Future.wait([
+                ref.read(orderTodayStatsProvider.notifier).refresh(),
+                ref.read(todayOrdersProvider.notifier).refresh(),
+              ]);
             }
           });
         });

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 
 String _paymentMethodLabel(String method) {
   switch (method.trim().toLowerCase()) {
@@ -36,6 +37,7 @@ Future<void> printKasirDailyReport(
   required String reportDateLabel,
   required String reportDateSlug,
   required String branchLabel,
+  required String branchIdForLogo,
   required String cashierLabel,
   required int orderCount,
   required double totalOrderAmount,
@@ -47,6 +49,7 @@ Future<void> printKasirDailyReport(
   final money = NumberFormat('#,###', 'id_ID');
 
   try {
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
 
     final tableRows =
@@ -67,26 +70,14 @@ Future<void> printKasirDailyReport(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'LAPORAN KASIR',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(reportDateLabel),
+          ],
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'LAPORAN KASIR',
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Center(
-            child: pw.Text(
-              reportDateLabel,
-              style: const pw.TextStyle(fontSize: 12),
-            ),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
           pw.Text('Cabang: $branchLabel'),
           pw.Text('Kasir: $cashierLabel'),
           pw.SizedBox(height: 16),
@@ -183,6 +174,7 @@ Future<void> printKasirDailyPaymentsReport(
   required String reportDateLabel,
   required String reportDateSlug,
   required String branchLabel,
+  required String branchIdForLogo,
   required String cashierLabel,
   required int paymentTransactionCount,
   required double incomeAmount,
@@ -195,6 +187,7 @@ Future<void> printKasirDailyPaymentsReport(
   final money = NumberFormat('#,###', 'id_ID');
 
   try {
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     final tableRows =
         paymentRows.length > 120 ? paymentRows.sublist(0, 120) : paymentRows;
@@ -232,26 +225,14 @@ Future<void> printKasirDailyPaymentsReport(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'LAPORAN PEMBAYARAN HARIAN KASIR',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(reportDateLabel),
+          ],
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'LAPORAN PEMBAYARAN HARIAN KASIR',
-              style: pw.TextStyle(
-                fontSize: 17,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Center(
-            child: pw.Text(
-              reportDateLabel,
-              style: const pw.TextStyle(fontSize: 12),
-            ),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
           pw.Text('Cabang: $branchLabel'),
           pw.Text('Kasir: $cashierLabel'),
           pw.SizedBox(height: 16),

@@ -1,7 +1,11 @@
 const express = require('express');
 const pool = require('../db');
+const { handleBranchLogoGet } = require('../lib/branch_logo_http_lazy');
 
 const router = express.Router();
+
+// GET /api/branches/:id/logo — sama dengan GET /branches/:id/logo di server.js (faktur PDF / Flutter web)
+router.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, pool));
 
 // GET /api/branches - Get all branches
 router.get('/branches', async (req, res) => {
@@ -40,11 +44,11 @@ router.get('/branches', async (req, res) => {
   }
 });
 
-// GET /api/branches/:id - Get branch by ID
+// GET /api/branches/:id - Get branch by ID (sertakan logo_url agar sama dengan GET /branches/:id — dipakai faktur PDF / klien)
 router.get('/branches/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query(`
+    const qWithLogo = `
       SELECT
         branch_id,
         name,
@@ -54,11 +58,38 @@ router.get('/branches/:id', async (req, res) => {
         address,
         phone_number,
         status,
+        logo_url,
         created_at,
         updated_at
       FROM branches
       WHERE branch_id = $1
-    `, [id]);
+    `;
+    const qNoLogo = `
+      SELECT
+        branch_id,
+        name,
+        code,
+        alias,
+        initials,
+        address,
+        phone_number,
+        status,
+        NULL::text AS logo_url,
+        created_at,
+        updated_at
+      FROM branches
+      WHERE branch_id = $1
+    `;
+    let result;
+    try {
+      result = await pool.query(qWithLogo, [id]);
+    } catch (e) {
+      if (String(e.message || '').includes('logo_url')) {
+        result = await pool.query(qNoLogo, [id]);
+      } else {
+        throw e;
+      }
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Branch not found' });

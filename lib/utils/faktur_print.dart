@@ -11,6 +11,57 @@ import 'package:vanessa3/utils/terbilang.dart';
 
 final Map<String, Uint8List> _imageByteCache = <String, Uint8List>{};
 
+bool _bytesLookLikeRasterImage(Uint8List b) {
+  if (b.length < 6) return false;
+  if (b[0] == 0xff && b[1] == 0xd8) return true;
+  if (b.length >= 8 &&
+      b[0] == 0x89 &&
+      b[1] == 0x50 &&
+      b[2] == 0x4e &&
+      b[3] == 0x47 &&
+      b[4] == 0x0d &&
+      b[5] == 0x0a &&
+      b[6] == 0x1a &&
+      b[7] == 0x0a) {
+    return true;
+  }
+  if (b.length >= 12 &&
+      b[0] == 0x52 &&
+      b[1] == 0x49 &&
+      b[2] == 0x46 &&
+      b[3] == 0x46 &&
+      b[8] == 0x57 &&
+      b[9] == 0x45 &&
+      b[10] == 0x42 &&
+      b[11] == 0x50) {
+    return true;
+  }
+  if (b.length >= 6) {
+    final g = String.fromCharCodes(b.sublist(0, 6));
+    if (g == 'GIF87a' || g == 'GIF89a') return true;
+  }
+  return false;
+}
+
+bool _bytesDecodableAsPdfImage(Uint8List b) {
+  try {
+    pw.MemoryImage(b);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Respons API error sering 200 dengan body JSON — jangan cache sebagai gambar.
+bool _bytesLookLikeJsonObject(Uint8List b) {
+  for (var i = 0; i < b.length && i < 64; i++) {
+    final c = b[i];
+    if (c == 0x20 || c == 0x09 || c == 0x0a || c == 0x0d) continue;
+    return c == 0x7b;
+  }
+  return false;
+}
+
 Map<String, dynamic> _fakturMetadataMap(Map<String, dynamic> orderData) {
   final raw = orderData['metadata'];
   if (raw is Map) return Map<String, dynamic>.from(raw);
@@ -23,6 +74,25 @@ Map<String, dynamic> _fakturMetadataMap(Map<String, dynamic> orderData) {
     } catch (_) {}
   }
   return const {};
+}
+
+/// Total biaya untuk faktur ambil: biaya aktual dari tukang (`order_cost_breakdown` → metadata & `orders.total`).
+/// Tidak mengutamakan `orders.jumlah` bila sudah ada revisi biaya bengkel (`cost_revision`).
+double pickupTotalBiayaFromWorkshopInput(Map<String, dynamic> orderData) {
+  final meta = _fakturMetadataMap(orderData);
+  final rev = int.tryParse(meta['cost_revision']?.toString() ?? '');
+  final otd =
+      double.tryParse(meta['order_total_after_discount']?.toString() ?? '');
+  if (rev != null && rev > 0) {
+    if (otd != null && otd > 0) return otd;
+    final t = double.tryParse(orderData['total']?.toString() ?? '');
+    if (t != null && t > 0) return t;
+  }
+  final tot = double.tryParse(orderData['total']?.toString() ?? '') ?? 0;
+  if (tot > 0) return (tot / 5000).ceil() * 5000;
+  final jum = double.tryParse(orderData['jumlah']?.toString() ?? '');
+  if (jum != null && jum > 0) return (jum / 5000).ceil() * 5000;
+  return 0;
 }
 
 /// DP / uang muka dari payload + metadata (tanpa jaringan).
@@ -85,6 +155,62 @@ Future<double> resolveFakturDpAmount(Map<String, dynamic> orderData) async {
   } catch (_) {}
 
   return fromPayload();
+}
+
+/// Faktur PDF: transaksi order awal vs bukti pengambilan (judul & footer berbeda).
+enum FakturPrintKind {
+  /// ORDER SERVICE / ORDER CUSTOM (saat order dibuat).
+  orderTransaction,
+
+  /// AMBIL SERVICE / AMBIL CUSTOM — faktur terpisah; faktur order tetap referensi.
+  pickup,
+}
+
+/// Ringkasan pembayaran untuk faktur ambil (sisa = total − terbayar).
+/// Cetak PDF AMBIL SERVICE / AMBIL CUSTOM (faktur terpisah dari ORDER SERVICE/CUSTOM).
+Future<void> printPickupServiceCustomFaktur(
+  BuildContext context,
+  Map<String, dynamic> orderData,
+) async {
+  final data = Map<String, dynamic>.from(orderData);
+  data['pickup_faktur_date'] = DateTime.now().toUtc().toIso8601String();
+  final snap = await fetchPaymentSummaryForPickupFaktur(
+    data['order_id']?.toString() ?? '',
+  );
+  if (snap != null) {
+    data['paid_amount'] = snap['paid'];
+    data['remaining_amount'] = snap['remaining'];
+  }
+  if (!context.mounted) return;
+  await printFakturOrder(context, data, kind: FakturPrintKind.pickup);
+}
+
+Future<Map<String, double>?> fetchPaymentSummaryForPickupFaktur(
+  String orderId,
+) async {
+  final id = orderId.trim();
+  if (id.isEmpty) return null;
+  try {
+    final uri = Uri.parse(
+      '${NetworkConfig.baseUrl}/orders/payment-summary?order_id=${Uri.encodeQueryComponent(id)}',
+    );
+    final resp = await http
+        .get(uri, headers: NetworkConfig.defaultHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (resp.statusCode != 200) return null;
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! Map) return null;
+    final m = Map<String, dynamic>.from(decoded);
+    double p(String k) => double.tryParse(m[k]?.toString() ?? '') ?? 0;
+    return {
+      'total': p('total'),
+      'paid': p('paid_amount'),
+      'remaining': p('remaining_amount'),
+      'dp': p('dp_amount'),
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Field servis/custom untuk faktur layar & PDF (sinkron dengan sumber data backend + metadata).
@@ -222,23 +348,34 @@ Map<String, String> fakturServiceCustomFieldRows(
     orderConditionMap['catatan_service'],
     orderConditionMap['catatan'],
   ]);
-  final estNum = pickFirstPositiveNumber([
-    orderData['estimate_amount'],
-    orderData['service_estimated_total'],
-    orderData['custom_estimated_total'],
-    orderData['estimasi_biaya'],
-    orderData['estimate_cost'],
-    metadata['estimate_amount'],
-    metadata['service_estimated_total'],
-    metadata['estimasi_biaya'],
-    metadata['estimate_cost'],
-    orderConditionMap['estimasi_biaya'],
-    src['manual_total'],
-    src['total'],
-    src['subtotal'],
-    orderData['total'],
-    orderData['jumlah'],
-  ]);
+  final rev = int.tryParse(metadata['cost_revision']?.toString() ?? '');
+  final hasFinalWorkshopCost =
+      rev != null && rev > 0; // biaya aktual tersimpan dari bengkel (bukan estimasi)
+
+  final estNum = hasFinalWorkshopCost
+      ? pickFirstPositiveNumber([
+          orderData['total'],
+          metadata['order_total_after_discount'],
+          metadata['invoice_pre_discount_rounded'],
+          metadata['actual_total_cost'],
+        ])
+      : pickFirstPositiveNumber([
+          orderData['estimate_amount'],
+          orderData['service_estimated_total'],
+          orderData['custom_estimated_total'],
+          orderData['estimasi_biaya'],
+          orderData['estimate_cost'],
+          metadata['estimate_amount'],
+          metadata['service_estimated_total'],
+          metadata['estimasi_biaya'],
+          metadata['estimate_cost'],
+          orderConditionMap['estimasi_biaya'],
+          src['manual_total'],
+          src['total'],
+          src['subtotal'],
+          orderData['total'],
+          orderData['jumlah'],
+        ]);
   final estimasiBiaya =
       estNum != null ? fmtMoneyOrDashEst(estNum) : '-';
 
@@ -265,42 +402,87 @@ Map<String, String> fakturServiceCustomFieldRows(
     'catatan': catatan,
     'estimasi_biaya': estimasiBiaya,
     'estimasi_selesai': estimasiSelesai,
+    'service_biaya_row_label':
+        hasFinalWorkshopCost ? 'Total biaya (final)' : 'Estimasi biaya',
+    'sisa_setelah_dp_row_label': hasFinalWorkshopCost
+        ? 'Kurang bayar (setelah DP)'
+        : 'Sisa estimasi',
   };
 }
 
 /// Builds a simple invoice PDF and opens the system print / share UI.
 Future<void> printFakturOrder(
   BuildContext context,
-  Map<String, dynamic> orderData,
-) async {
+  Map<String, dynamic> orderData, {
+  FakturPrintKind kind = FakturPrintKind.orderTransaction,
+}) async {
   try {
     final items = orderData['items'] as List<dynamic>? ?? [];
     final doc = pw.Document();
 
     String? photoUrl(dynamic raw) {
-      final s = raw?.toString().trim();
-      if (s == null || s.isEmpty) return null;
-      if (s.startsWith('http://') || s.startsWith('https://')) return s;
+      final s0 = raw?.toString().trim();
+      if (s0 == null || s0.isEmpty) return null;
+      if (s0.startsWith('http://') || s0.startsWith('https://')) return s0;
+      final s = s0.replaceAll('\\', '/');
       if (s.startsWith('/')) return '${NetworkConfig.baseUrl}$s';
+      // DB sering simpan "uploads/namafile" tanpa slash depan — jangan jadi .../uploads/uploads/...
+      if (RegExp(r'^uploads/', caseSensitive: false).hasMatch(s)) {
+        return '${NetworkConfig.baseUrl}/$s';
+      }
       return '${NetworkConfig.baseUrl}/uploads/$s';
+    }
+
+    bool isSameApiOrigin(String url) {
+      try {
+        final base = Uri.parse(NetworkConfig.baseUrl);
+        final u = Uri.parse(url);
+        return base.scheme == u.scheme &&
+            base.host.toLowerCase() == u.host.toLowerCase() &&
+            base.port == u.port;
+      } catch (_) {
+        return false;
+      }
     }
 
     Future<Uint8List?> fetchBytes(
       String? url, {
       Duration timeout = const Duration(seconds: 3),
+      bool imageBinary = false,
+      bool validatePdfRaster = false,
     }) async {
       if (url == null) return null;
       final cached = _imageByteCache[url];
       if (cached != null) return cached;
       try {
-        final resp = await http.get(Uri.parse(url)).timeout(timeout);
+        final Map<String, String>? headers = () {
+          if (!isSameApiOrigin(url)) return null;
+          final t = NetworkConfig.authToken;
+          if (t == null || t.trim().isEmpty) return null;
+          // Jangan kirim Accept/Content-Type JSON ke endpoint gambar — beberapa stack memperlakukan respons salah.
+          if (imageBinary) {
+            return {'Authorization': 'Bearer $t'};
+          }
+          return NetworkConfig.defaultHeaders;
+        }();
+        final resp = await http
+            .get(Uri.parse(url), headers: headers)
+            .timeout(timeout);
         if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
+          final body = resp.bodyBytes;
+          if (imageBinary && _bytesLookLikeJsonObject(body)) {
+            return null;
+          }
+          if (validatePdfRaster &&
+              (!_bytesLookLikeRasterImage(body) || !_bytesDecodableAsPdfImage(body))) {
+            return null;
+          }
           // Keep cache lightweight and avoid unbounded growth.
           if (_imageByteCache.length > 40) {
             _imageByteCache.remove(_imageByteCache.keys.first);
           }
-          _imageByteCache[url] = resp.bodyBytes;
-          return resp.bodyBytes;
+          _imageByteCache[url] = body;
+          return body;
         }
       } catch (_) {}
       return null;
@@ -331,31 +513,118 @@ Future<void> printFakturOrder(
     }
 
     String branchIdFromOrderData(Map<String, dynamic> data) {
-      final raw = data['branch_id'] ?? data['branchId'] ?? data['branch'];
-      final s = raw?.toString().trim();
-      return s ?? '';
+      for (final key in ['branch_id', 'branchId']) {
+        final raw = data[key];
+        if (raw == null) continue;
+        final s = raw.toString().trim();
+        if (s.isNotEmpty && s != 'null') return s;
+      }
+      final branchRaw = data['branch'];
+      if (branchRaw is Map) {
+        final branch = Map<String, dynamic>.from(branchRaw);
+        for (final key in ['branch_id', 'branchId', 'id']) {
+          final raw = branch[key];
+          if (raw == null) continue;
+          final s = raw.toString().trim();
+          if (s.isNotEmpty && s != 'null') return s;
+        }
+      }
+      return '';
+    }
+
+    /// Cabang untuk logo: faktur ambil service/custom → cabang pengambilan bila ada.
+    String branchIdForFakturLogo() {
+      final t = (orderData['order_type'] ?? '').toString().toLowerCase();
+      final usePickupBranch =
+          kind == FakturPrintKind.pickup && (t == 'service' || t == 'custom');
+      if (usePickupBranch) {
+        for (final key in ['pickup_branch_id', 'pickupBranchId']) {
+          final raw = orderData[key];
+          if (raw == null) continue;
+          final s = raw.toString().trim();
+          if (s.isNotEmpty && s != 'null') return s;
+        }
+        final metaRaw = orderData['metadata'];
+        if (metaRaw != null) {
+          Map<String, dynamic>? m;
+          if (metaRaw is Map) {
+            m = Map<String, dynamic>.from(metaRaw);
+          } else if (metaRaw is String && metaRaw.trim().isNotEmpty) {
+            try {
+              final d = jsonDecode(metaRaw);
+              if (d is Map) m = Map<String, dynamic>.from(d);
+            } catch (_) {}
+          }
+          if (m != null) {
+            for (final key in ['pickup_branch_id', 'pickupBranchId']) {
+              final raw = m[key];
+              if (raw == null) continue;
+              final s = raw.toString().trim();
+              if (s.isNotEmpty && s != 'null') return s;
+            }
+          }
+        }
+      }
+      return branchIdFromOrderData(orderData);
+    }
+
+    /// Urutan cabang untuk logo: cabang ambil (jika ada) lalu cabang order — jika cabang ambil tanpa file logo, tetap bisa pakai logo cabang order.
+    List<String> orderedBranchIdsForLogo() {
+      final ids = <String>[];
+      final a = branchIdForFakturLogo();
+      if (a.isNotEmpty) ids.add(a);
+      final b = branchIdFromOrderData(orderData);
+      if (b.isNotEmpty && b != a) ids.add(b);
+      return ids;
     }
 
     Future<String?> fetchBranchLogoUrl() async {
-      final branchId = branchIdFromOrderData(orderData);
-      if (branchId.isEmpty) return null;
-      for (final p in ['/branches/$branchId', '/api/branches/$branchId']) {
-        try {
-          final resp = await http
-              .get(
-                Uri.parse('${NetworkConfig.baseUrl}$p'),
-                headers: NetworkConfig.defaultHeaders,
-              )
-              .timeout(const Duration(seconds: 3));
-          if (resp.statusCode != 200) continue;
-          final decoded = jsonDecode(resp.body);
-          if (decoded is Map && decoded['logo_url'] != null) {
-            final url = photoUrl(decoded['logo_url']);
-            if (url != null && url.isNotEmpty) return url;
-          }
-        } catch (_) {}
+      for (final branchId in orderedBranchIdsForLogo()) {
+        for (final p in ['/branches/$branchId', '/api/branches/$branchId']) {
+          try {
+            final resp = await http
+                .get(
+                  Uri.parse('${NetworkConfig.baseUrl}$p'),
+                  headers: NetworkConfig.defaultHeaders,
+                )
+                .timeout(const Duration(seconds: 3));
+            if (resp.statusCode != 200) continue;
+            final decoded = jsonDecode(resp.body);
+            if (decoded is Map && decoded['logo_url'] != null) {
+              final url = photoUrl(decoded['logo_url']);
+              if (url != null && url.isNotEmpty) return url;
+            }
+          } catch (_) {}
+        }
       }
       return null;
+    }
+
+    /// Sumber logo sama dengan layar Manajemen Cabang (`branches.logo_url` via GET /branches/:id).
+    /// Jika `GET /orders?...` tidak menyisipkan logo (join gagal / payload lama), isi dari API cabang.
+    Future<void> hydrateBranchLogoFromBranchesApiIfMissing() async {
+      if (branchLogoUrlFromOrderData(orderData) != null) return;
+      for (final bid in orderedBranchIdsForLogo()) {
+        if (bid.isEmpty) continue;
+        for (final p in ['/branches/$bid', '/api/branches/$bid']) {
+          try {
+            final resp = await http
+                .get(
+                  Uri.parse('${NetworkConfig.baseUrl}$p'),
+                  headers: NetworkConfig.defaultHeaders,
+                )
+                .timeout(const Duration(seconds: 3));
+            if (resp.statusCode != 200) continue;
+            final decoded = jsonDecode(resp.body);
+            if (decoded is! Map) continue;
+            final s = decoded['logo_url']?.toString().trim();
+            if (s == null || s.isEmpty) continue;
+            orderData['logo_url'] = s;
+            orderData['branch_logo_url'] = s;
+            return;
+          } catch (_) {}
+        }
+      }
     }
 
     Map<String, dynamic> toMap(dynamic raw) {
@@ -554,6 +823,14 @@ Future<void> printFakturOrder(
     final isServiceOrder = orderType == 'service';
     final isCustomOrder = orderType == 'custom';
     final isServiceOrCustom = isServiceOrder || isCustomOrder;
+    final isPickupFaktur =
+        kind == FakturPrintKind.pickup && isServiceOrCustom;
+    Map<String, double>? pickupPaymentSnapshot;
+    if (isPickupFaktur) {
+      pickupPaymentSnapshot = await fetchPaymentSummaryForPickupFaktur(
+        orderData['order_id']?.toString() ?? '',
+      );
+    }
     final isSaleOrder = orderType == 'jual';
     final metadata = toMap(orderData['metadata']);
     final orderConditionMap = toMap(orderData['kondisi_barang']);
@@ -631,15 +908,37 @@ Future<void> printFakturOrder(
       }
       return null;
     })();
+    await hydrateBranchLogoFromBranchesApiIfMissing();
     final branchLogoUrlFast = branchLogoUrlFromOrderData(orderData);
     final fetchedBytes = await Future.wait<Uint8List?>([
       (() async {
-        final direct = await fetchBytes(branchLogoUrlFast);
+        // 1) Proxy dulu: same-origin + JWT; server bisa stream file lokal atau tarik logo_url HTTPS lain (hindari CORS web ke domain lain).
+        for (final bid in orderedBranchIdsForLogo()) {
+          for (final logoPath in ['/branches/$bid/logo', '/api/branches/$bid/logo']) {
+            final proxy = '${NetworkConfig.baseUrl}$logoPath';
+            final viaProxy = await fetchBytes(
+              proxy,
+              timeout: const Duration(seconds: 25),
+              imageBinary: true,
+              // Sama seperti foto item: jangan pakai validatePdfRaster di sini.
+              // Pre-check MemoryImage terlalu ketat — beberapa JPEG/WebP valid ditolak
+              // sehingga logo hilang khususnya di faktur AMBIL (multi-cabang / proxy).
+            );
+            if (viaProxy != null) return viaProxy;
+          }
+        }
+        final direct = await fetchBytes(
+          branchLogoUrlFast,
+          imageBinary: true,
+        );
         if (direct != null) return direct;
         final fallbackUrl = await fetchBranchLogoUrl();
-        return fetchBytes(fallbackUrl);
+        return fetchBytes(
+          fallbackUrl,
+          imageBinary: true,
+        );
       })(),
-      fetchBytes(primaryPhotoUrl),
+      fetchBytes(primaryPhotoUrl, imageBinary: true),
     ]);
     final branchLogoBytes = fetchedBytes[0];
     final primaryPhotoBytes = fetchedBytes[1];
@@ -692,6 +991,51 @@ Future<void> printFakturOrder(
       final t = double.tryParse(rawTotal?.toString() ?? '') ?? 0;
       return (t / 5000).ceil() * 5000;
     })();
+
+    final pickupTotalBiayaPdf = isPickupFaktur
+        ? pickupTotalBiayaFromWorkshopInput(orderData)
+        : totalFinal;
+
+    final serviceDpAmount = isServiceOrCustom
+        ? await resolveFakturDpAmount(orderData)
+        : 0.0;
+    final pickupDpLinePdf = isPickupFaktur
+        ? (((pickupPaymentSnapshot?['dp'] ?? 0) > 0)
+              ? pickupPaymentSnapshot!['dp']!
+              : serviceDpAmount)
+        : 0.0;
+    final pickupSaldoVersusDp = isPickupFaktur
+        ? (pickupTotalBiayaPdf - pickupDpLinePdf)
+        : 0.0;
+    final pickupDpDisplay =
+        pickupDpLinePdf > 0 ? 'Rp. ${fmtMoney(pickupDpLinePdf)}' : '-';
+    final serviceDpDisplay =
+        serviceDpAmount > 0 ? 'Rp. ${fmtMoney(serviceDpAmount)}' : '-';
+    final pickupSaldoLineLabel = !isPickupFaktur
+        ? ''
+        : pickupSaldoVersusDp > 0
+            ? 'Kurang Bayar'
+            : pickupSaldoVersusDp < 0
+                ? 'Sisa Uang Muka'
+                : 'Lunas';
+    final pickupSaldoLineValue = !isPickupFaktur
+        ? '-'
+        : 'Rp. ${fmtMoney(pickupSaldoVersusDp.abs())}';
+    final pickupPaymentStatusLeft = !isPickupFaktur
+        ? ''
+        : pickupSaldoVersusDp > 0
+            ? 'Telah dibayar ke kasir'
+            : pickupSaldoVersusDp < 0
+                ? 'Telah dibayar ke customer'
+                : 'Lunas';
+    final pickupPaymentStatusRight = !isPickupFaktur
+        ? ''
+        : pickupSaldoVersusDp > 0
+            ? 'Rp. ${fmtMoney(pickupSaldoVersusDp)}'
+            : pickupSaldoVersusDp < 0
+                ? 'Rp. ${fmtMoney(-pickupSaldoVersusDp)}'
+                : '';
+
     String toTitleCase(String s) {
       final cleaned = s.trim();
       if (cleaned.isEmpty) return cleaned;
@@ -706,9 +1050,16 @@ Future<void> printFakturOrder(
       return titled;
     }
 
-    final terbilangText = toTitleCase(
-      '${terbilang(totalFinal.toInt()).trim()} rupiah'.trim(),
-    );
+    final terbilangText = isPickupFaktur
+        ? (pickupSaldoVersusDp != 0
+            ? toTitleCase(
+                '${terbilang(pickupSaldoVersusDp.abs().toInt()).trim()} rupiah'
+                    .trim(),
+              )
+            : '')
+        : toTitleCase(
+            '${terbilang(totalFinal.toInt()).trim()} rupiah'.trim(),
+          );
 
     final noNota = (orderData['order_number'] ?? orderData['order_id'] ?? '-')
         .toString();
@@ -718,22 +1069,37 @@ Future<void> printFakturOrder(
         : (orderData['order_id'] ?? '').toString().trim();
     final tanggal = dateStr(orderData['created_at']);
     final tanggalDisplay = (() {
+      final monthNames = const [
+        'Januari',
+        'Februari',
+        'Maret',
+        'April',
+        'Mei',
+        'Juni',
+        'Juli',
+        'Agustus',
+        'September',
+        'Oktober',
+        'November',
+        'Desember',
+      ];
+      if (isPickupFaktur) {
+        final raw =
+            orderData['pickup_faktur_date'] ??
+            orderData['picked_up_at'] ??
+            orderData['updated_at'];
+        DateTime? dt;
+        if (raw != null) {
+          try {
+            dt = DateTime.parse(raw.toString()).toLocal();
+          } catch (_) {}
+        }
+        dt ??= DateTime.now();
+        return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
+      }
       try {
-        final dt = DateTime.parse(orderData['created_at'].toString()).toLocal();
-        final monthNames = const [
-          'Januari',
-          'Februari',
-          'Maret',
-          'April',
-          'Mei',
-          'Juni',
-          'Juli',
-          'Agustus',
-          'September',
-          'Oktober',
-          'November',
-          'Desember',
-        ];
+        final dt =
+            DateTime.parse(orderData['created_at'].toString()).toLocal();
         return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
       } catch (_) {
         return tanggal.split(' ').first;
@@ -838,12 +1204,9 @@ Future<void> printFakturOrder(
     final serviceAccessories = svcFields['kelengkapan'] ?? '-';
     final serviceNote = svcFields['catatan'] ?? '-';
     final serviceEstimateCost = svcFields['estimasi_biaya'] ?? '-';
+    final serviceBiayaRowLabel =
+        svcFields['service_biaya_row_label'] ?? 'Estimasi biaya';
     final serviceEstimatedFinish = svcFields['estimasi_selesai'] ?? '-';
-    final serviceDpAmount = isServiceOrCustom
-        ? await resolveFakturDpAmount(orderData)
-        : 0.0;
-    final serviceDpDisplay =
-        serviceDpAmount > 0 ? 'Rp. ${fmtMoney(serviceDpAmount)}' : '-';
     String oneLineItemName(String text) {
       final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
       if (compact.length <= 28) return compact;
@@ -1315,15 +1678,27 @@ Future<void> printFakturOrder(
                                                 leftInsetPx: 12,
                                               ),
                                               buybackInfoLine(
-                                                'Estimasi Biaya',
-                                                serviceEstimateCost,
+                                                isPickupFaktur
+                                                    ? 'Total Biaya'
+                                                    : serviceBiayaRowLabel,
+                                                isPickupFaktur
+                                                    ? 'Rp. ${fmtMoney(pickupTotalBiayaPdf)}'
+                                                    : serviceEstimateCost,
                                                 leftInsetPx: 12,
                                               ),
                                               buybackInfoLine(
                                                 'Uang Muka (DP)',
-                                                serviceDpDisplay,
+                                                isPickupFaktur
+                                                    ? pickupDpDisplay
+                                                    : serviceDpDisplay,
                                                 leftInsetPx: 12,
                                               ),
+                                              if (isPickupFaktur)
+                                                buybackInfoLine(
+                                                  pickupSaldoLineLabel,
+                                                  pickupSaldoLineValue,
+                                                  leftInsetPx: 12,
+                                                ),
                                             ],
                                           ),
                                         ),
@@ -1581,26 +1956,55 @@ Future<void> printFakturOrder(
                                       color: PdfColors.grey500,
                                     ),
                                     pw.SizedBox(height: pxY(2)),
-                                    pw.Row(
-                                      mainAxisAlignment:
-                                          pw.MainAxisAlignment.center,
-                                      children: [
-                                        detailItemText('Estimasi Selesai'),
-                                        pw.SizedBox(width: pxX(10)),
-                                        detailItemText(serviceEstimatedFinish),
-                                      ],
-                                    ),
+                                    if (isPickupFaktur && pickupSaldoVersusDp == 0)
+                                      pw.Center(child: detailItemText('Lunas'))
+                                    else
+                                      pw.Row(
+                                        mainAxisAlignment:
+                                            pw.MainAxisAlignment.center,
+                                        children: [
+                                          if (isPickupFaktur) ...[
+                                            detailItemText(
+                                              pickupPaymentStatusLeft,
+                                            ),
+                                            pw.SizedBox(width: pxX(10)),
+                                            detailItemText(
+                                              pickupPaymentStatusRight,
+                                            ),
+                                          ] else ...[
+                                            detailItemText('Estimasi Selesai'),
+                                            pw.SizedBox(width: pxX(10)),
+                                            detailItemText(
+                                              serviceEstimatedFinish,
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                     pw.SizedBox(height: pxY(2)),
                                     pw.Container(
                                       height: 0.8,
                                       color: PdfColors.grey500,
                                     ),
                                     pw.SizedBox(height: pxY(2)),
-                                    pw.Center(
-                                      child: detailItemText(
-                                        'KALAU AMBIL BAWA BUKTI ORDER INI, TIDAK BAWA TIDAK DILAYANI',
+                                    if (!isPickupFaktur)
+                                      pw.Center(
+                                        child: detailItemText(
+                                          'KALAU AMBIL BAWA BUKTI ORDER INI, TIDAK BAWA TIDAK DILAYANI',
+                                        ),
                                       ),
-                                    ),
+                                    if (isPickupFaktur &&
+                                        terbilangText.isNotEmpty) ...[
+                                      pw.SizedBox(height: pxY(6)),
+                                      pw.Padding(
+                                        padding: pw.EdgeInsets.symmetric(
+                                          horizontal: pxX(8),
+                                        ),
+                                        child: detailItemText(
+                                          'Terbilang : $terbilangText',
+                                          style: pw.FontStyle.italic,
+                                        ),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               )
@@ -1895,11 +2299,15 @@ Future<void> printFakturOrder(
                               ),
                               child: pw.Center(
                                 child: pw.Text(
-                                  isCustomOrder
-                                      ? 'ORDER CUSTOM'
-                                      : (isServiceOrder
-                                            ? 'ORDER SERVICE'
-                                            : transactionLabel),
+                                  isPickupFaktur
+                                      ? (isCustomOrder
+                                            ? 'AMBIL CUSTOM'
+                                            : 'AMBIL SERVICE')
+                                      : (isCustomOrder
+                                            ? 'ORDER CUSTOM'
+                                            : (isServiceOrder
+                                                  ? 'ORDER SERVICE'
+                                                  : transactionLabel)),
                                   maxLines: 1,
                                   softWrap: false,
                                   style: pw.TextStyle(
@@ -1946,8 +2354,9 @@ Future<void> printFakturOrder(
       ),
     );
 
-    final filename =
-        'faktur_${orderData['order_number'] ?? orderData['order_id'] ?? 'order'}.pdf';
+    final filename = isPickupFaktur
+        ? 'faktur_ambil_${orderData['order_number'] ?? orderData['order_id'] ?? 'order'}.pdf'
+        : 'faktur_${orderData['order_number'] ?? orderData['order_id'] ?? 'order'}.pdf';
     final pdfBytes = await doc.save();
     try {
       final info = await Printing.info();

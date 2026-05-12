@@ -179,6 +179,7 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
       reportDateLabel: dateLabel,
       reportDateSlug: dateSlug,
       branchLabel: '${_branchLabel()} (${us.branch})',
+      branchIdForLogo: us.branch.trim(),
       cashierLabel:
           '${us.username.isEmpty ? 'Kasir' : us.username}${us.userId != null ? ' · ID ${us.userId}' : ''}',
       orderCount: _orders.length,

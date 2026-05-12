@@ -76,6 +76,7 @@ class _ManagerDailyPaymentSummaryPageState
           managerReportPeriodShortSubtitle(_periodStart, _periodEnd),
       rows: List<Map<String, dynamic>>.from(_rows),
       fileSlugPrefix: slug,
+      branchIdForLogo: ref.read(userStateProvider).branch.trim(),
       includeMethodNominals: widget.showPaymentMethodNominals,
     );
   }

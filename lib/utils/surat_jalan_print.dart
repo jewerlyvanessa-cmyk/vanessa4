@@ -2,14 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 
 Future<void> printSuratJalanTransfer(
   BuildContext context, {
   required Map<String, dynamic> transfer,
   required String fromBranchName,
   required String toBranchName,
+  String fromBranchIdForLogo = '',
+  String toBranchIdForLogo = '',
 }) async {
   try {
+    final left = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
+    final right = await loadBranchLogoRasterBytesForPdf(toBranchIdForLogo);
     final doc = pw.Document();
 
     String dateStr(dynamic created) {
@@ -29,19 +34,12 @@ Future<void> printSuratJalanTransfer(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'SURAT JALAN',
+          leftLogoBytes: left,
+          rightLogoBytes: right,
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'SURAT JALAN',
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 8),
-          pw.Divider(thickness: 2),
-          pw.SizedBox(height: 12),
           pw.Text('No Transfer: ${transfer['transfer_id'] ?? '-'}'),
           pw.Text('Tanggal: ${dateStr(transfer['created_at'])}'),
           pw.SizedBox(height: 12),
@@ -109,12 +107,16 @@ Future<void> printSuratJalanTransfers(
   required List<Map<String, dynamic>> transfers,
   required String fromBranchName,
   required String toBranchName,
+  required String fromBranchIdForLogo,
+  required String toBranchIdForLogo,
   required String courier,
   String notes = '',
 }) async {
   if (transfers.isEmpty) return;
 
   try {
+    final left = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
+    final right = await loadBranchLogoRasterBytesForPdf(toBranchIdForLogo);
     final doc = pw.Document();
 
     String dateStr(dynamic created) {
@@ -144,19 +146,12 @@ Future<void> printSuratJalanTransfers(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'SURAT JALAN',
+          leftLogoBytes: left,
+          rightLogoBytes: right,
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'SURAT JALAN',
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 8),
-          pw.Divider(thickness: 2),
-          pw.SizedBox(height: 12),
           pw.Text(
             'No Transfer: ${transferIds.isEmpty ? '-' : transferIds.join(', ')}',
           ),

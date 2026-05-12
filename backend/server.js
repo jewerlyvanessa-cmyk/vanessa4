@@ -30,11 +30,14 @@ const getOrdersDaily = require('./routes/orders_daily_handler');
 const { registerWorkshopRoutes } = require('./routes/workshop');
 const { registerTransfersRoutes } = require('./routes/transfers');
 const { registerPaymentsCoreRoutes } = require('./routes/payments_core');
+const { createHealthRouter } = require('./routes/health');
 const {
   ordersHasMetadataColumn,
   ordersEstimateColumns,
   ordersHasPickupBranchColumn,
+  orderVisibleAtWorkshopBranchSql,
 } = require('./lib/orders_workshop_helpers');
+const { handleBranchLogoGet } = require('./lib/branch_logo_http_lazy');
 function roundUpToNearest5000(amount) {
   const n = typeof amount === 'number' ? amount : parseFloat(amount);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -199,6 +202,9 @@ async function itemsHasCreatedByColumn() {
 
 const authRequired = authenticateToken(SECRET_KEY);
 
+/** Di-set setelah `attachWebSocketServer`; dipakai GET /health. */
+let wss = null;
+
 /** Presence WebSocket (JWT); dipakai superadmin active-sessions + kick. */
 const wsPresence = createWsPresenceRegistry(SECRET_KEY);
 
@@ -220,6 +226,9 @@ const writeApiLimiter = rateLimit({
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Health checks (publik, tanpa JWT)
+app.use(createHealthRouter({ db, getWss: () => wss }));
 
 // Integrasi file storage untuk foto dan PDF
 const storage = multer.diskStorage({
@@ -450,7 +459,7 @@ app.post('/api/admin/active-sessions/:userId/kick', requireRoles('superadmin'), 
 app.use(
   '/workshop-orders',
   authRequired,
-  requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang', 'stockist')
+  requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang', 'stockist', 'manajer')
 );
 app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
 app.use('/test-db', authRequired, requireRoles('superadmin'));
@@ -490,33 +499,6 @@ app.delete('/orders/:id', (req, res) => {
   const id = parseInt(req.params.id);
   orders = orders.filter(order => order.id !== id);
   res.status(204).send();
-});
-
-// Liveness: tanpa DB — untuk cek koneksi TCP dari emulator/device (hindari timeout saat Postgres down/lambat).
-app.get('/health/live', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Health check endpoint
-app.get('/health', async (req, res) => {
-  try {
-    // Test database connection
-    await db.query('SELECT 1');
-    res.status(200).json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      services: {
-        database: 'connected',
-        websocket: wss ? 'running' : 'not initialized'
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      error: error.message
-    });
-  }
 });
 
 // CRUD untuk tabel orders
@@ -649,6 +631,9 @@ app.get('/orders', async (req, res) => {
         // Nama pada baris order (legacy / cadangan jika belum ada customers row)
         name: order.name ?? null,
         branch_id: order.branch_id.toString(),
+        ...(order.pickup_branch_id != null && order.pickup_branch_id !== undefined
+          ? { pickup_branch_id: String(order.pickup_branch_id) }
+          : {}),
         user_id: order.user_id.toString(),
         total: parseFloat(order.total || 0),
         jumlah: parseFloat(order.jumlah || roundUpToNearest5000(order.total || 0) || 0),
@@ -702,6 +687,41 @@ app.get('/orders', async (req, res) => {
           cur == null ||
           (typeof cur === 'string' && cur.trim() === '');
         if (curEmpty) orderData[mk] = mv;
+      }
+
+      // Logo cabang untuk faktur (terutama GET by order_number / faktur ambil): payload order tidak punya join branches.
+      try {
+        const hasPb = await ordersHasPickupBranchColumn(db);
+        const logoSql = hasPb
+          ? `SELECT br.logo_url AS ob, pb.logo_url AS pb
+             FROM orders o
+             LEFT JOIN branches br ON br.branch_id = o.branch_id
+             LEFT JOIN branches pb ON pb.branch_id = o.pickup_branch_id
+             WHERE o.order_id = $1
+             LIMIT 1`
+          : `SELECT br.logo_url AS ob, NULL::text AS pb
+             FROM orders o
+             LEFT JOIN branches br ON br.branch_id = o.branch_id
+             WHERE o.order_id = $1
+             LIMIT 1`;
+        const lr = await db.query(logoSql, [order.order_id]);
+        if (lr.rows.length) {
+          const ob = lr.rows[0].ob != null ? String(lr.rows[0].ob).trim() : '';
+          const pb = lr.rows[0].pb != null ? String(lr.rows[0].pb).trim() : '';
+          const ot = (order.order_type || '').toString().toLowerCase();
+          let chosen = '';
+          if (ot === 'service' || ot === 'custom') {
+            chosen = pb || ob;
+          } else {
+            chosen = ob || pb;
+          }
+          if (chosen) {
+            orderData.branch_logo_url = chosen;
+            orderData.logo_url = chosen;
+          }
+        }
+      } catch (e) {
+        console.warn('GET /orders branch logo join skipped:', e.message);
       }
 
       try {
@@ -804,9 +824,21 @@ app.post('/orders/pickup', async (req, res) => {
       : 'o.order_number = $1';
     const whereVal = Number.isFinite(orderId) ? orderId : orderNumber;
 
+    const hasPickupBranchCol = await ordersHasPickupBranchColumn(client);
+    const hasMetadataCol = await ordersHasMetadataColumn(client);
+    const selectParts = [
+      'o.order_id',
+      'o.order_number',
+      'o.order_type',
+      'o.status',
+      'o.branch_id',
+    ];
+    if (hasPickupBranchCol) selectParts.push('o.pickup_branch_id');
+    if (hasMetadataCol) selectParts.push('o.metadata');
+
     const ordRes = await client.query(
       `
-        SELECT o.order_id, o.order_number, o.order_type, o.status, o.branch_id
+        SELECT ${selectParts.join(', ')}
         FROM orders o
         WHERE ${whereSql}
         LIMIT 1
@@ -819,16 +851,26 @@ app.post('/orders/pickup', async (req, res) => {
     }
 
     const ord = ordRes.rows[0];
-    if (parseInt(ord.branch_id, 10) !== branchId) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Order bukan milik branch ini' });
-    }
     const ot = (ord.order_type ?? '').toString().trim().toLowerCase();
     if (ot !== 'service' && ot !== 'custom') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Hanya order service/custom yang bisa diambil' });
     }
     const st = (ord.status ?? '').toString().trim().toLowerCase();
+
+    // Sama dengan filter GET /workshop-orders: cabang order, pickup_branch_id, atau
+    // metadata.service_workshop_branch_id (jsonb di DB — lebih andal daripada parse di Node).
+    const branchOk = await orderVisibleAtWorkshopBranchSql(
+      client,
+      ord.order_id,
+      branchId,
+      hasPickupBranchCol,
+      hasMetadataCol,
+    );
+    if (!branchOk) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Order bukan milik branch ini' });
+    }
     if (st !== 'ready_for_pickup' && st !== 'completed') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Order belum siap diambil customer' });
@@ -3678,6 +3720,8 @@ app.get('/branches/:id/statistics', async (req, res) => {
   }
 });
 
+app.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, db));
+
 app.get('/branches/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -4052,7 +4096,7 @@ const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Accessible at http://localhost:${port} and http://10.0.2.2:${port} (Android emulator)`);
 });
 
-const wss = attachWebSocketServer(server, wsPresence);
+wss = attachWebSocketServer(server, wsPresence);
 
 // Tambahkan cron job untuk pengingat otomatis
 cron.schedule('0 9 * * *', () => {

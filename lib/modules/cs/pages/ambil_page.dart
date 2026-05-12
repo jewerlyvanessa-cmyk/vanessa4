@@ -11,7 +11,10 @@ import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/faktur_print.dart'
+    show printPickupServiceCustomFaktur;
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:intl/intl.dart';
 
 class AmbilPage extends ConsumerStatefulWidget {
   const AmbilPage({super.key, this.client});
@@ -38,11 +41,29 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
   File? _fotoFile;
   bool _isLoading = false;
+  bool _loadingOrderLookup = false;
   List<dynamic> _readyItems = [];
   bool _isLoadingItems = false;
   int? _selectedOrderId;
 
   static const Set<String> _allowedReadyPickupOrderTypes = {'service', 'custom'};
+
+  static double _parseLooseAmount(String raw) {
+    var t = raw.trim();
+    if (t.isEmpty) return 0;
+    t = t.replaceAll(RegExp(r'[^0-9.,]'), '');
+    if (t.isEmpty) return 0;
+    if (t.contains(',') && !t.contains('.')) {
+      t = t.replaceAll(',', '.');
+    } else {
+      t = t.replaceAll('.', '');
+    }
+    return double.tryParse(t) ?? 0;
+  }
+
+  static String _fmtRpDots(double v) {
+    return NumberFormat('#,###', 'id_ID').format(v.round());
+  }
 
   @override
   void dispose() {
@@ -107,6 +128,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     setState(() {
       _orderNumberController.text = result;
     });
+    await _loadOrderFromOrderNumberField();
   }
 
   Future<String?> _uploadFoto(File? foto) async {
@@ -127,6 +149,126 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       return data['url'] ?? data['fileUrl'] ?? data['path'];
     }
     return null;
+  }
+
+  /// GET satu order (service/custom) dari nomor nota — sama sumber dengan cetak faktur ambil.
+  Future<Map<String, dynamic>?> _fetchOrderByOrderNumber(String raw) async {
+    final num = raw.trim();
+    if (num.isEmpty) return null;
+    try {
+      final baseUrl = NetworkConfig.baseUrl;
+      final r = await (widget.client ?? http.Client()).get(
+        Uri.parse(
+          '$baseUrl/orders?order_number=${Uri.encodeQueryComponent(num)}',
+        ),
+        headers: NetworkConfig.defaultHeaders,
+      );
+      if (r.statusCode != 200) return null;
+      final body = r.body.trim();
+      if (body.isEmpty || body == 'null') return null;
+      final decoded = jsonDecode(r.body);
+      if (decoded == null) return null;
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (e) {
+      debugPrint('fetch order by number: $e');
+    }
+    return null;
+  }
+
+  /// Isi form dari baris daftar **atau** payload lengkap `GET /orders?order_number=`.
+  void _applyOrderPayloadToForm(Map<String, dynamic> order) {
+    final id = int.tryParse(order['order_id']?.toString() ?? '');
+    final items = order['items'] as List<dynamic>? ?? [];
+    Map<String, dynamic> it = {};
+    if (items.isNotEmpty && items.first is Map) {
+      it = Map<String, dynamic>.from(items.first as Map);
+    }
+    final namaItem = (order['nama_item'] ??
+            order['item_name'] ??
+            it['nama_item'] ??
+            it['name'] ??
+            '')
+        .toString();
+    final beratRaw =
+        order['berat'] ?? order['weight'] ?? it['weight'] ?? it['berat'];
+    setState(() {
+      _selectedOrderId = id;
+      _orderNumberController.text = (order['order_number'] ?? '').toString();
+      _customerController.text =
+          (order['customer_name'] ?? order['name'] ?? '').toString();
+      _customerPhoneController.text =
+          (order['customer_phone'] ?? order['phone'] ?? order['no_hp'] ?? '')
+              .toString();
+      _namaItemController.text = namaItem;
+      _beratController.text = beratRaw?.toString() ?? '';
+      _estimasiBiayaController.text = (order['total'] ?? 0).toString();
+      _dpController.text = '0';
+    });
+    if (id != null) {
+      _fetchAndApplyPaymentSummary(id);
+    }
+  }
+
+  /// Muat service/custom dari nomor nota (keyboard Enter, ikon cari, atau scan QR).
+  Future<bool> _loadOrderFromOrderNumberField({bool quiet = false}) async {
+    final num = _orderNumberController.text.trim();
+    if (num.isEmpty) {
+      if (!quiet && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Isi nomor nota order service atau custom'),
+          ),
+        );
+      }
+      return false;
+    }
+    setState(() => _loadingOrderLookup = true);
+    try {
+      final order = await _fetchOrderByOrderNumber(num);
+      if (!mounted) return false;
+      if (order == null) {
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Order tidak ditemukan')),
+          );
+        }
+        return false;
+      }
+      final type = (order['order_type'] ?? '').toString().toLowerCase();
+      if (!_allowedReadyPickupOrderTypes.contains(type)) {
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Nomor ini bukan order Service atau Custom',
+              ),
+            ),
+          );
+        }
+        return false;
+      }
+      _applyOrderPayloadToForm(order);
+      if (!quiet && mounted) {
+        final st = (order['status'] ?? '').toString();
+        if (st.toLowerCase() != 'ready_for_pickup') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Data dimuat ($type). Status: $st — pastikan siap diambil sebelum simpan.',
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Data order $type #$num dimuat')),
+          );
+        }
+      }
+      return true;
+    } finally {
+      if (mounted) setState(() => _loadingOrderLookup = false);
+    }
   }
 
   Future<void> _fetchAndApplyPaymentSummary(int orderId) async {
@@ -152,22 +294,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   }
 
   void _applyReadyOrderToForm(Map<String, dynamic> order) {
-    final id = int.tryParse(order['order_id']?.toString() ?? '');
-    setState(() {
-      _selectedOrderId = id;
-      _orderNumberController.text = (order['order_number'] ?? '').toString();
-      _customerController.text = (order['customer_name'] ?? '').toString();
-      _customerPhoneController.text =
-          (order['customer_phone'] ?? order['phone'] ?? '').toString();
-      _namaItemController.text =
-          (order['nama_item'] ?? order['item_name'] ?? '').toString();
-      _beratController.text = (order['berat'] ?? order['weight'] ?? '').toString();
-      _estimasiBiayaController.text = (order['total'] ?? 0).toString();
-      _dpController.text = '0';
-    });
-    if (id != null) {
-      _fetchAndApplyPaymentSummary(id);
-    }
+    _applyOrderPayloadToForm(Map<String, dynamic>.from(order));
   }
 
   Future<void> _submitForm() async {
@@ -176,6 +303,22 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     setState(() => _isLoading = true);
 
     try {
+      if (_selectedOrderId == null) {
+        final ok = await _loadOrderFromOrderNumberField(quiet: true);
+        if (!ok) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Muat data gagal: pastikan nomor nota benar (order service/custom), ketik lalu ikon cari, atau pilih dari daftar.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
       final userState = ref.read(userStateProvider);
       final branchId = int.tryParse(userState.branch);
       final userId = userState.userId;
@@ -225,6 +368,32 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     }
   }
 
+  Future<Map<String, dynamic>?> _fetchFullOrderForPickupFaktur() async {
+    return _fetchOrderByOrderNumber(_orderNumberController.text);
+  }
+
+  Future<void> _printPickupFaktur() async {
+    final data = await _fetchFullOrderForPickupFaktur();
+    if (!mounted) return;
+    if (data == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order tidak ditemukan — periksa nomor nota / scan QR'),
+        ),
+      );
+      return;
+    }
+    final type = (data['order_type'] ?? '').toString().toLowerCase();
+    if (type != 'service' && type != 'custom') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Hanya untuk order service atau custom')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await printPickupServiceCustomFaktur(context, data);
+  }
+
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -251,7 +420,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // No. Order
+              // No. Order (service & custom — muat dari server)
               Row(
                 children: [
                   const SizedBox(
@@ -265,10 +434,14 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   Expanded(
                     child: TextFormField(
                       controller: _orderNumberController,
+                      textInputAction: TextInputAction.search,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        hintText: 'Nomor order',
+                        hintText: 'Nomor nota service / custom',
                       ),
+                      onFieldSubmitted: (_) {
+                        _loadOrderFromOrderNumberField();
+                      },
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'No. Order wajib diisi';
@@ -277,14 +450,36 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                       },
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   IconButton(
-                    onPressed: _scanQRCode,
+                    onPressed:
+                        _loadingOrderLookup ? null : _loadOrderFromOrderNumberField,
+                    icon: _loadingOrderLookup
+                        ? SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: cs.primary,
+                            ),
+                          )
+                        : Icon(Icons.search, color: cs.primary),
+                    tooltip: 'Muat data order service/custom',
+                  ),
+                  IconButton(
+                    onPressed: _loadingOrderLookup ? null : _scanQRCode,
                     icon: const Icon(Icons.qr_code_scanner),
                     tooltip: 'Scan QR Code',
                     color: cs.primary,
                   ),
                 ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 128, top: 4),
+                child: Text(
+                  'Ketik nomor nota lalu Enter atau ikon cari — data diambil dari order Service & Custom.',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
               ),
               const SizedBox(height: 12),
               // Customer
@@ -404,14 +599,14 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              // Estimasi Biaya + DP (read-only, dari order service/custom)
+              // Total tagihan + DP (read-only, dari server)
               Row(
                 children: [
                   const SizedBox(
                     width: 120,
                     child: Align(
                       alignment: Alignment.centerLeft,
-                      child: Text('Estimasi Biaya'),
+                      child: Text('Total tagihan'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -446,6 +641,65 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                         border: OutlineInputBorder(),
                         prefixText: 'Rp ',
                       ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Selisih = Total tagihan − Uang muka (Kurang Bayar vs Sisa Uang Muka)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Kurang /\nSisa Uang Muka'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Builder(
+                      builder: (context) {
+                        final total =
+                            _parseLooseAmount(_estimasiBiayaController.text);
+                        final dp = _parseLooseAmount(_dpController.text);
+                        final diff = total - dp;
+                        final absStr = _fmtRpDots(diff.abs());
+                        final scheme = Theme.of(context).colorScheme;
+                        final (String caption, Color valueColor) = diff > 0
+                            ? ('Kurang Bayar', scheme.error)
+                            : diff < 0
+                            ? ('Sisa Uang Muka', scheme.tertiary)
+                            : ('Lunas', scheme.onSurfaceVariant);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            InputDecorator(
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                                prefixText: 'Rp ',
+                              ),
+                              child: Text(
+                                absStr,
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: valueColor,
+                                    ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$caption · = Total tagihan − Uang muka',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -514,6 +768,13 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   ),
                 ),
               const SizedBox(height: 24),
+
+              OutlinedButton.icon(
+                onPressed: _isLoading ? null : _printPickupFaktur,
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Cetak faktur pengambilan (AMBIL)'),
+              ),
+              const SizedBox(height: 12),
 
               // Submit Button
               SizedBox(

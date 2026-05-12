@@ -88,6 +88,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
             .map(
               (b) => StockReportBranchPdfSection(
                 name: b.alias,
+                branchId: b.branchId,
                 error: b.error,
                 rowsStok: List<Map<String, dynamic>>.from(b.rowsStok),
                 rowsBuyback: List<Map<String, dynamic>>.from(b.rowsBuyback),
@@ -105,6 +106,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
       rowsStokByJenis: List<Map<String, dynamic>>.from(_rowsStokByJenis),
       rowsBuybackByJenis: List<Map<String, dynamic>>.from(_rowsBuybackByJenis),
       branchSections: branches,
+      branchIdForLogo: ref.read(userStateProvider).branch.trim(),
     );
   }
 

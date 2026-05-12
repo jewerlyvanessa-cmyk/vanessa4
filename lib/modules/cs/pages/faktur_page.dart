@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:vanessa3/utils/faktur_print.dart'
     show
         printFakturOrder,
+        printPickupServiceCustomFaktur,
         resolveFakturDpAmount,
         fakturDpFromPayloadSync,
         fakturServiceCustomFieldRows;
@@ -187,14 +188,30 @@ class _FakturPageState extends State<FakturPage> {
     final orderType = orderData['order_type'];
     final fakturHeading = _fakturHeading(orderType);
     final orderTypeLabel = _orderTypeDisplayLabel(orderType);
+    final svcFakturFields = (_normalizeOrderType(orderType) == 'service' ||
+            _normalizeOrderType(orderType) == 'custom')
+        ? fakturServiceCustomFieldRows(orderData)
+        : const <String, String>{};
+    final sisaAfterDpLabel =
+        svcFakturFields['sisa_setelah_dp_row_label'] ?? 'Sisa estimasi';
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Faktur Order'),
         actions: [
+          if (_normalizeOrderType(orderType) == 'service' ||
+              _normalizeOrderType(orderType) == 'custom')
+            IconButton(
+              icon: const Icon(Icons.receipt_long_outlined),
+              tooltip: 'Cetak faktur pengambilan (AMBIL)',
+              onPressed: () => printPickupServiceCustomFaktur(
+                context,
+                orderData,
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.print),
-            tooltip: 'Cetak / PDF',
+            tooltip: 'Cetak faktur order (referensi)',
             onPressed: () => printFakturOrder(context, orderData),
           ),
         ],
@@ -401,7 +418,7 @@ class _FakturPageState extends State<FakturPage> {
                   padding: const EdgeInsets.all(16.0),
                   child: Builder(
                     builder: (context) {
-                      final f = fakturServiceCustomFieldRows(orderData);
+                      final f = svcFakturFields;
                       if (f.isEmpty) return const SizedBox.shrink();
                       Widget row(String key, String label) {
                         final v = f[key] ?? '-';
@@ -431,7 +448,10 @@ class _FakturPageState extends State<FakturPage> {
                           row('jenis_service', 'Jenis service'),
                           row('kelengkapan', 'Kelengkapan'),
                           row('catatan', 'Catatan'),
-                          row('estimasi_biaya', 'Estimasi biaya'),
+                          row(
+                            'estimasi_biaya',
+                            f['service_biaya_row_label'] ?? 'Estimasi biaya',
+                          ),
                           row('estimasi_selesai', 'Estimasi selesai'),
                         ],
                       );
@@ -513,7 +533,7 @@ class _FakturPageState extends State<FakturPage> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Text('Sisa estimasi:'),
+                                  Text('$sisaAfterDpLabel:'),
                                   Text(
                                     'Rp ${_fmtMoney(sisa)}',
                                     style: TextStyle(

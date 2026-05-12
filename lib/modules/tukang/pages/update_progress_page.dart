@@ -76,10 +76,18 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
         _workQueue = workQueue;
         _isLoading = false;
       });
-    } on UnauthorizedApiException {
+    } on UnauthorizedApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = null;
+        _workQueue = [];
+        _error = e.message;
+        _isLoading = false;
+      });
+    } on ForbiddenApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _workQueue = [];
+        _error = e.message;
         _isLoading = false;
       });
     } catch (e) {

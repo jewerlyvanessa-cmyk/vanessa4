@@ -242,6 +242,17 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   Widget build(BuildContext context) {
     // Watch health check status for Live indicator
     final isServerHealthy = ref.watch(healthCheckProvider);
+    final orderType =
+        (widget.order['order_type'] ?? '').toString().toLowerCase();
+    final isServiceLike = orderType == 'service' || orderType == 'custom';
+    final hc = widget.order['has_completed_payment'];
+    final hasCompleted =
+        hc == true || hc == 1 || hc?.toString().toLowerCase() == 'true';
+    final paidLabel = isServiceLike
+        ? (hasCompleted ? 'Sudah dibayar (termasuk DP)' : 'Uang muka (DP)')
+        : 'Terbayar';
+    final sisaLabel =
+        isServiceLike ? 'Sisa tagihan (pelunasan)' : 'Sisa Tagihan';
 
     return Scaffold(
       appBar: AppBar(
@@ -288,9 +299,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                       ),
                       Text('Total Tagihan: Rp ${widget.order['total']?.toString() ?? '0'}'),
                       if ((widget.order['paid_amount'] ?? 0) != 0)
-                        Text('Uang Muka: Rp ${widget.order['paid_amount']?.toString() ?? '0'}'),
+                        Text('$paidLabel: Rp ${widget.order['paid_amount']?.toString() ?? '0'}'),
                       if ((widget.order['remaining_amount'] ?? 0) != 0)
-                        Text('Sisa Tagihan: Rp ${widget.order['remaining_amount']?.toString() ?? '0'}'),
+                        Text('$sisaLabel: Rp ${widget.order['remaining_amount']?.toString() ?? '0'}'),
                     ],
                   ),
                 ),

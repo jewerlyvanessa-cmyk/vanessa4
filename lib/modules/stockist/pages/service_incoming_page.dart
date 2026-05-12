@@ -86,7 +86,11 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
       if (!mounted) return;
       if (res.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Order #$oid diteruskan ke workshop')),
+          SnackBar(
+            content: Text(
+              'Order #$oid masuk antrian pekerjaan — buka menu Antrian pekerjaan (admin) atau Antrian kerja (teknisi).',
+            ),
+          ),
         );
         await _load();
       } else {
@@ -101,6 +105,29 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
         );
       }
     }
+  }
+
+  Widget _hintAfterApprove() {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.info_outline, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Setelah disetujui, order hilang dari daftar ini dan masuk daftar pekerjaan: '
+                'di aplikasi admin bengkel buka menu «Antrian pekerjaan»; di aplikasi teknisi buka «Antrian kerja».',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -119,30 +146,47 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
           ? Center(child: Text(_error!))
-          : _rows.isEmpty
-          ? const Center(child: Text('Tidak ada order menunggu persetujuan gudang'))
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _rows.length,
-              itemBuilder: (context, i) {
-                final row = _rows[i];
-                final st = (row['status'] ?? '').toString();
-                return Card(
-                  child: ListTile(
-                    title: Text(
-                      '#${row['order_id']} · ${row['item_name'] ?? '—'}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      '${row['customer_name'] ?? ''} · ${OrderStatusUi.label(st)}',
-                    ),
-                    trailing: FilledButton(
-                      onPressed: () => _approve(row),
-                      child: const Text('Setuju'),
-                    ),
-                  ),
-                );
-              },
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _hintAfterApprove(),
+                Expanded(
+                  child: _rows.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text(
+                              'Tidak ada order menunggu persetujuan bengkel',
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _rows.length,
+                          itemBuilder: (context, i) {
+                            final row = _rows[i];
+                            final st = (row['status'] ?? '').toString();
+                            return Card(
+                              child: ListTile(
+                                title: Text(
+                                  '#${row['order_id']} · ${row['item_name'] ?? '—'}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '${row['customer_name'] ?? ''} · ${OrderStatusUi.label(st)}',
+                                ),
+                                trailing: FilledButton(
+                                  onPressed: () => _approve(row),
+                                  child: const Text('Setuju'),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
     );
   }

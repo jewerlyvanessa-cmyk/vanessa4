@@ -183,7 +183,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
             ),
             const SizedBox(height: 4),
             Text(
-              'Menyimpan akan memperbarui total tagihan (kasir) sesuai rumus pembulatan backend.',
+              'Ini biaya final bengkel (bukan estimasi). Total tagihan di kasir diperbarui; sisa bayar = total − DP.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant,
                   ),

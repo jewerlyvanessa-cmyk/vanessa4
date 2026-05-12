@@ -115,6 +115,10 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
   bool _isInProgressStatus(String s) =>
       s == 'repairing' || s == 'polishing' || s == 'custom_work';
 
+  /// PUT /workshop-orders mengizinkan alur teknisi hanya untuk role ini (bukan admin_workshop).
+  bool _roleCanPutTechnicianWorkshopFlow(String role) =>
+      {'superadmin', 'manajer', 'tukang'}.contains(role);
+
   Future<void> _updateWorkshopStatus(
     dynamic order,
     String nextStatus,
@@ -157,11 +161,26 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
 
   Future<void> _showWorkshopStatusDialog(dynamic order) async {
     final current = (order['status'] ?? '').toString().trim().toLowerCase();
+    final role = ref.read(userStateProvider).role.trim().toLowerCase();
+    final canReceiveFromWarehouse = {
+      'admin_workshop',
+      'stockist',
+      'superadmin',
+      'manajer',
+    }.contains(role);
+    final canTechPut = _roleCanPutTechnicianWorkshopFlow(role);
     final options = <String>[
-      if (current == 'sent-to-workshop') 'in_workshop',
-      if (current == 'in_workshop') ...['repairing', 'polishing', 'done_workshop'],
-      if (current == 'repairing') ...['polishing', 'done_workshop'],
-      if (current == 'polishing' || current == 'custom_work') 'done_workshop',
+      if (current == 'awaiting_warehouse' && canReceiveFromWarehouse)
+        'sent-to-workshop',
+      if (current == 'sent-to-workshop' && canTechPut) 'in_workshop',
+      if (current == 'in_workshop' && canTechPut)
+        ...['repairing', 'polishing', 'done_workshop'],
+      if (current == 'repairing' && canTechPut)
+        ...['polishing', 'done_workshop'],
+      if ((current == 'polishing' || current == 'custom_work') && canTechPut)
+        'done_workshop',
+      // Admin workshop: hanya terima dari gudang & kirim balik ke toko setelah selesai bengkel.
+      if (current == 'done_workshop') 'ready_for_pickup',
     ];
     if (options.isEmpty) {
       if (mounted) {
@@ -211,7 +230,7 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Order Workshop'),
+            const Text('Antrian pekerjaan'),
             Text(
               _scopeSubtitle(),
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -288,6 +307,16 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
               },
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+            child: Text(
+              'Tip: pakai «Antrian» untuk semua pekerjaan di cabang bengkel login. '
+              '«Cabang ini» = cabang asal order sama dengan cabang login, atau order yang metadata-nya mengarah ke bengkel ini.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -359,6 +388,11 @@ const desktopW = 960.0;
                                 box = const BoxConstraints(minWidth: desktopW);
                               }
 
+                              final role = ref
+                                  .read(userStateProvider)
+                                  .role
+                                  .trim()
+                                  .toLowerCase();
                               final rows = <DataRow>[];
                               for (var i = 0; i < _filteredOrders.length; i++) {
                                 final order = _filteredOrders[i];
@@ -383,20 +417,21 @@ const desktopW = 960.0;
                                       tooltip: 'Tindakan',
                                       onSelected: (action) =>
                                           _handleOrderAction(order, action),
-                                      itemBuilder: (context) => const [
-                                        PopupMenuItem(
-                                          value: 'assign_technician',
-                                          child: Text('Assign teknisi'),
-                                        ),
-                                        PopupMenuItem(
+                                      itemBuilder: (context) => [
+                                        if (role != 'admin_workshop')
+                                          const PopupMenuItem(
+                                            value: 'assign_technician',
+                                            child: Text('Assign teknisi'),
+                                          ),
+                                        const PopupMenuItem(
                                           value: 'cost_breakdown',
                                           child: Text('Biaya aktual (tagihan)'),
                                         ),
-                                        PopupMenuItem(
+                                        const PopupMenuItem(
                                           value: 'update_status',
                                           child: Text('Update status'),
                                         ),
-                                        PopupMenuItem(
+                                        const PopupMenuItem(
                                           value: 'view_details',
                                           child: Text('Lihat detail'),
                                         ),
@@ -599,7 +634,9 @@ dataRowMinHeight: narrow ? 52 : 48,
     if (_scope == 'cross_branch') {
       return 'Tidak ada kiriman cabang lain di antrian$filt';
     }
-    return 'Tidak ada order di antrian kerja$filt';
+    return 'Tidak ada order di antrian kerja$filt.\n'
+        'Order baru dari toko: cek status Menunggu bengkel — setujui ke workshop '
+        '(menu Service dari toko atau Update status pada baris berstatus tersebut).';
   }
 
   Widget _buildSummaryCard(
@@ -661,6 +698,9 @@ dataRowMinHeight: narrow ? 52 : 48,
         return 'Poles/Finishing';
       case 'custom_work':
         return 'Custom Work';
+      case 'ready_for_pickup':
+        // Khusus Admin Workshop: lebih jelas sebagai "kirim balik ke toko".
+        return 'Kirim ke Toko (Siap Diambil)';
       default:
         return OrderStatusUi.label(status);
     }

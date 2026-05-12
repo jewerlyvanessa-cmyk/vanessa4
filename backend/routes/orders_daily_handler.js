@@ -1,6 +1,9 @@
 const db = require('../db');
 const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
-const { orderItemLineAmountSql } = require('./order_items_sql');
+const {
+  getOrderItemsPkColumn,
+  orderItemLineAmountSql,
+} = require('./order_items_sql');
 
 const ORDER_CALENDAR_TIMEZONE =
   /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
@@ -46,6 +49,59 @@ function dailyOrdersUserFilterFromJwt(req) {
   return uid;
 }
 
+function nullItemPad() {
+  return {
+    order_item_id: null,
+    nama_item: null,
+    kode_produk: null,
+    weight: null,
+    qty: null,
+    harga_per_gram: null,
+    item_total: null,
+    material: null,
+    purity: null,
+    kategori: null,
+    jenis: null,
+    tipe: null,
+    item_id: null,
+    item_name: null,
+    item_kode: null,
+    item_material: null,
+    item_purity: null,
+    item_weight: null,
+    item_kategori: null,
+    item_jenis: null,
+    item_tipe: null,
+    photo_produk: null,
+  };
+}
+
+/**
+ * Gabungkan baris order (tanpa item) + baris item → bentuk flat sama seperti JOIN lama
+ * (satu baris per baris order_item; order tanpa item → satu baris dengan kolom item NULL).
+ */
+function mergeOrdersAndItemsFlat(orderRows, itemRows) {
+  const byOrder = new Map();
+  for (const it of itemRows) {
+    const oid = it.order_id;
+    if (!byOrder.has(oid)) byOrder.set(oid, []);
+    byOrder.get(oid).push(it);
+  }
+  const out = [];
+  for (const o of orderRows) {
+    const oid = o.order_id;
+    const list = byOrder.get(oid) || [];
+    if (list.length === 0) {
+      out.push({ ...o, ...nullItemPad() });
+      continue;
+    }
+    for (const it of list) {
+      out.push({ ...o, ...it });
+    }
+  }
+  return out;
+}
+
 /**
  * GET /orders/daily (relatif ke mount /api → /api/orders/daily) dan GET /orders/daily di server.js.
  *
@@ -53,6 +109,9 @@ function dailyOrdersUserFilterFromJwt(req) {
  * - Order dengan o.branch_id = cabang (aktivitas hari itu: dibuat atau ada pembayaran completed).
  * - Jika kolom payments.revenue_branch_id ada: juga order dari cabang lain yang punya pembayaran
  *   completed pada tanggal itu dengan atribusi pendapatan ke cabang ini (pelunasan di cabang pickup).
+ *
+ * Performa: default dua query (order + item) agar tidak mem-bloat hash join. Fallback satu query:
+ *   ?legacy_join=1
  */
 async function getOrdersDaily(req, res) {
   try {
@@ -142,7 +201,16 @@ async function getOrdersDaily(req, res) {
       branchActivityWhere = `((o.branch_id = $1 AND ${activitySql}) OR ${crossBranchSql})`;
     }
 
-    let query = `
+    const useLegacyJoin =
+      String(req.query.legacy_join || '')
+        .trim()
+        .toLowerCase() === '1' ||
+      String(req.query.legacy_join || '')
+        .trim()
+        .toLowerCase() === 'true';
+
+    if (useLegacyJoin) {
+      let query = `
         SELECT
           o.*,
           c.name as customer_name,
@@ -154,7 +222,6 @@ async function getOrdersDaily(req, res) {
           oi.qty,
           oi.harga_per_gram,
           ${lineSql} as item_total,
-          -- Source of truth for material/kadar on order lines: order_items
           oi.material as material,
           oi.purity as purity,
           oi.kategori,
@@ -175,20 +242,85 @@ async function getOrdersDaily(req, res) {
         LEFT JOIN items i ON oi.item_id = i.item_id
         WHERE ${branchActivityWhere}
       `;
+      const legacyParams = [...params];
+      if (filterUid != null) {
+        query += ` AND o.user_id = $2`;
+        legacyParams.push(filterUid);
+      }
+      if (targetDate) {
+        legacyParams.push(targetDate);
+      }
+      query += ' ORDER BY o.created_at DESC';
+      const result = await db.query(query, legacyParams);
+      return res.status(200).json(result.rows);
+    }
 
+    /** --- Dua query: orders dulu, lalu order_items (bentuk respons flat sama) --- */
+    let ordersSql = `
+        SELECT
+          o.*,
+          c.name as customer_name,
+          c.phone as customer_phone,
+          c.address as customer_address
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        WHERE ${branchActivityWhere}
+      `;
+    const ordersParams = [...params];
     if (filterUid != null) {
-      query += ` AND o.user_id = $2`;
-      params.push(filterUid);
+      ordersSql += ` AND o.user_id = $2`;
+      ordersParams.push(filterUid);
     }
-
     if (targetDate) {
-      params.push(targetDate);
+      ordersParams.push(targetDate);
+    }
+    ordersSql += ' ORDER BY o.created_at DESC';
+
+    const ordersRes = await db.query(ordersSql, ordersParams);
+    const orderRows = ordersRes.rows;
+    if (orderRows.length === 0) {
+      return res.status(200).json([]);
     }
 
-    query += ' ORDER BY o.created_at DESC';
+    const orderIds = orderRows.map((r) => r.order_id).filter((id) => id != null);
+    const pk = await getOrderItemsPkColumn();
+    if (!/^(order_item_id|id)$/.test(String(pk))) {
+      return res.status(500).json({ error: 'Invalid order_items PK column' });
+    }
 
-    const result = await db.query(query, params);
-    res.status(200).json(result.rows);
+    const itemsSql = `
+        SELECT
+          oi.order_id,
+          oi.${pk} AS order_item_id,
+          oi.nama_item,
+          oi.kode_produk,
+          oi.weight,
+          oi.qty,
+          oi.harga_per_gram,
+          ${lineSql} as item_total,
+          oi.material as material,
+          oi.purity as purity,
+          oi.kategori,
+          oi.jenis,
+          oi.tipe,
+          i.item_id,
+          i.name as item_name,
+          i.kode_produk as item_kode,
+          i.material as item_material,
+          i.purity as item_purity,
+          i.weight as item_weight,
+          i.kategori as item_kategori,
+          i.jenis as item_jenis,
+          i.tipe as item_tipe,
+          oi.photo_produk
+        FROM order_items oi
+        LEFT JOIN items i ON oi.item_id = i.item_id
+        WHERE oi.order_id = ANY($1::bigint[])
+        ORDER BY oi.order_id, oi.${pk}
+      `;
+    const itemsRes = await db.query(itemsSql, [orderIds]);
+    const flat = mergeOrdersAndItemsFlat(orderRows, itemsRes.rows);
+    return res.status(200).json(flat);
   } catch (error) {
     console.error('Error fetching daily orders:', error);
     res.status(500).json({

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 
 String _money(num v) =>
     NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0)
@@ -38,6 +39,7 @@ Future<void> printOrderTodayReportPdf(
   BuildContext context, {
   required DateTime reportDate,
   required String branchLabel,
+  required String branchIdForLogo,
   required Map<String, int> ordersByType,
   Map<String, int>? ordersByMode,
   required int totalOrders,
@@ -52,6 +54,7 @@ Future<void> printOrderTodayReportPdf(
   try {
     int modeN(String k) => ordersByMode?[k] ?? 0;
 
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     final dateLabel = DateFormat('EEEE, dd MMMM yyyy', 'id_ID').format(reportDate);
 
@@ -61,21 +64,14 @@ Future<void> printOrderTodayReportPdf(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'ORDER TODAY',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(dateLabel),
+          ],
+        ),
         build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'ORDER TODAY',
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Center(child: pw.Text(dateLabel, style: const pw.TextStyle(fontSize: 12))),
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
           pw.Text('Cabang: $branchLabel'),
           pw.SizedBox(height: 10),
           pw.Text(

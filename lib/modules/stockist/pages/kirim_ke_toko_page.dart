@@ -806,6 +806,9 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
                                   fromBranchName:
                                       fromName ?? 'Cabang ${userState.branch}',
                                   toBranchName: toName ?? 'Cabang $dest',
+                                  fromBranchIdForLogo:
+                                      userState.branch.toString().trim(),
+                                  toBranchIdForLogo: dest.trim(),
                                   courier: courier,
                                   notes: notesController.text.trim(),
                                 );

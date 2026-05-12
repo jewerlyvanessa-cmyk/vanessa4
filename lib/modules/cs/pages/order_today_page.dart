@@ -34,8 +34,10 @@ class OrderTodayPage extends ConsumerWidget {
       next.whenData((update) {
         if (update['type'] == 'order_update' ||
             update['type'] == 'mock_update') {
-          ref.read(orderTodayStatsProvider.notifier).refresh();
-          ref.read(todayOrdersProvider.notifier).refresh();
+          Future.wait([
+            ref.read(orderTodayStatsProvider.notifier).refresh(),
+            ref.read(todayOrdersProvider.notifier).refresh(),
+          ]);
         }
       });
     });
@@ -67,8 +69,10 @@ class OrderTodayPage extends ConsumerWidget {
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              ref.read(orderTodayStatsProvider.notifier).refresh();
-              ref.read(todayOrdersProvider.notifier).refresh();
+              Future.wait([
+                ref.read(orderTodayStatsProvider.notifier).refresh(),
+                ref.read(todayOrdersProvider.notifier).refresh(),
+              ]);
             },
           ),
           IconButton(
@@ -102,6 +106,7 @@ class OrderTodayPage extends ConsumerWidget {
                 context,
                 reportDate: DateTime.now(),
                 branchLabel: branchLabel,
+                branchIdForLogo: bid,
                 ordersByType: stats.ordersByType,
                 ordersByMode: stats.ordersByMode,
                 totalOrders: stats.totalOrders,
@@ -118,8 +123,10 @@ class OrderTodayPage extends ConsumerWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          await ref.read(orderTodayStatsProvider.notifier).refresh();
-          await ref.read(todayOrdersProvider.notifier).refresh();
+          await Future.wait([
+            ref.read(orderTodayStatsProvider.notifier).refresh(),
+            ref.read(todayOrdersProvider.notifier).refresh(),
+          ]);
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),

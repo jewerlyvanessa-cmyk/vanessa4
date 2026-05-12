@@ -278,14 +278,19 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getWorkQueue(
     String branchId, {
     String? assignedTechnicianId,
+    bool unassignedOnly = false,
   }) async {
     final qp = <String, String>{'branch_id': branchId};
     final aid = assignedTechnicianId?.trim() ?? '';
     if (aid.isNotEmpty) {
       qp['technician_id'] = aid;
     }
-    final url =
-        Uri.parse('$baseUrl/api/workshop/work-queue').replace(queryParameters: qp);
+    if (unassignedOnly) {
+      qp['unassigned_only'] = '1';
+    }
+    final url = Uri.parse(
+      '$baseUrl/api/workshop/work-queue',
+    ).replace(queryParameters: qp);
 
     try {
       final response = await _makeRequest(
@@ -308,7 +313,9 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getMaterialStock(
     String branchId,
   ) async {
-    final url = Uri.parse('$baseUrl/api/workshop/material-stock?branch_id=$branchId');
+    final url = Uri.parse(
+      '$baseUrl/api/workshop/material-stock?branch_id=$branchId',
+    );
 
     try {
       final response = await _makeRequest(
@@ -319,7 +326,9 @@ class ApiService {
         final List<dynamic> data = jsonDecode(response.body);
         return data.map((item) => item as Map<String, dynamic>).toList();
       } else {
-        throw Exception('Failed to fetch material stock: ${response.statusCode}');
+        throw Exception(
+          'Failed to fetch material stock: ${response.statusCode}',
+        );
       }
     } catch (e) {
       debugPrint('getMaterialStock failed: $e');
@@ -379,9 +388,25 @@ class ApiService {
         ),
       );
 
-      return response.statusCode == 200;
+      if (response.statusCode == 200) return true;
+
+      var msg = 'HTTP ${response.statusCode}';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          final d = decoded['details']?.toString().trim();
+          final e = decoded['error']?.toString().trim();
+          if (d != null && d.isNotEmpty) {
+            msg = d;
+          } else if (e != null && e.isNotEmpty) {
+            msg = e;
+          }
+        }
+      } catch (_) {}
+      throw Exception(msg);
     } catch (e) {
       debugPrint('Error updating work progress: $e');
+      if (e is Exception) rethrow;
       throw Exception('Failed to update work progress: $e');
     }
   }

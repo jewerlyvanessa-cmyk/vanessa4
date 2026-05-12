@@ -9,6 +9,49 @@ import 'package:vanessa3/data/offline_cache.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/utils/agent_ndjson.dart';
 
+/// Aktifkan log NDJSON hanya bila perlu debug (`--dart-define=ORDER_TODAY_NDJSON=true`).
+const bool _kOrderTodayNdjson = bool.fromEnvironment(
+  'ORDER_TODAY_NDJSON',
+  defaultValue: false,
+);
+
+void _otNdjson({
+  required String hypothesisId,
+  required String location,
+  required String message,
+  Map<String, Object?> data = const {},
+  String runId = 'order-today',
+}) {
+  if (!_kOrderTodayNdjson) return;
+  agentDebugNdjson(
+    hypothesisId: hypothesisId,
+    location: location,
+    message: message,
+    data: data,
+    runId: runId,
+  );
+}
+
+AsyncValue<OrderTodayStats> _statsLoadingFrom(AsyncValue<OrderTodayStats> cur) {
+  if (cur is AsyncData<OrderTodayStats>) {
+    return const AsyncValue<OrderTodayStats>.loading().copyWithPrevious(
+      AsyncData(cur.value),
+      isRefresh: true,
+    );
+  }
+  return const AsyncValue.loading();
+}
+
+AsyncValue<List<Map<String, dynamic>>> _todayOrdersLoadingFrom(
+  AsyncValue<List<Map<String, dynamic>>> cur,
+) {
+  if (cur is AsyncData<List<Map<String, dynamic>>>) {
+    return const AsyncValue<List<Map<String, dynamic>>>.loading()
+        .copyWithPrevious(AsyncData(cur.value), isRefresh: true);
+  }
+  return const AsyncValue.loading();
+}
+
 /// Tanggal kalender lokal perangkat (sama dengan filter "hari ini" di backend WIB).
 String _localCalendarDateKey() =>
     DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -133,6 +176,7 @@ class OrderTodayStatsNotifier
   int? _lastUserId;
   String? _lastBranch;
   String _lastRole = '';
+  String _lastAuthToken = '';
 
   OrderTodayStatsNotifier(this._ref) : super(const AsyncValue.loading()) {
     // Check if user is already logged in and load data
@@ -141,6 +185,10 @@ class OrderTodayStatsNotifier
 
   void _checkAndFetch() {
     final userState = _ref.read(userStateProvider);
+    if (userState.authToken.trim().isEmpty) {
+      state = const AsyncValue.loading();
+      return;
+    }
     if (userState.branch.isNotEmpty) {
       fetchOrderTodayStats();
     } else {
@@ -153,31 +201,34 @@ class OrderTodayStatsNotifier
     final userState = _ref.read(userStateProvider);
     if (_lastUserId != userState.userId ||
         _lastBranch != userState.branch ||
-        _lastRole != userState.role) {
+        _lastRole != userState.role ||
+        _lastAuthToken != userState.authToken) {
       _lastUserId = userState.userId;
       _lastBranch = userState.branch;
       _lastRole = userState.role;
+      _lastAuthToken = userState.authToken;
       _checkAndFetch();
     }
   }
 
   Future<void> fetchOrderTodayStats() async {
-    state = const AsyncValue.loading();
+    state = _statsLoadingFrom(state);
 
     try {
       final userState = _ref.read(userStateProvider);
+      if (userState.authToken.trim().isEmpty) {
+        state = const AsyncValue.loading();
+        return;
+      }
       final userId = userState.userId;
       final branchIds = _orderTodayBranchIds(userState);
       if (branchIds.isEmpty) {
-        // #region agent log
-        agentDebugNdjson(
+        _otNdjson(
           hypothesisId: 'OT3',
           location: 'order_today_provider.dart:fetchOrderTodayStats:no_branch',
           message: 'branchId null',
           data: <String, Object?>{'branchRaw': userState.branch},
-          runId: 'order-today',
         );
-        // #endregion
         state = AsyncValue.error(
           Exception(
             'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
@@ -198,8 +249,7 @@ class OrderTodayStatsNotifier
         final cached = await OfflineCache.instance
             .getJson<Map<String, dynamic>>(cacheKey);
         if (cached != null) {
-          // #region agent log
-          agentDebugNdjson(
+          _otNdjson(
             hypothesisId: 'OT4',
             location:
                 'order_today_provider.dart:fetchOrderTodayStats:cache_hit',
@@ -207,9 +257,7 @@ class OrderTodayStatsNotifier
             data: <String, Object?>{
               'total_orders': cached.value['total_orders'],
             },
-            runId: 'order-today',
           );
-          // #endregion
           state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
           return;
         }
@@ -218,8 +266,7 @@ class OrderTodayStatsNotifier
       // Use real API call instead of mock data
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT2',
         location: 'order_today_provider.dart:fetchOrderTodayStats:request',
         message: 'fetch stats request',
@@ -241,9 +288,7 @@ class OrderTodayStatsNotifier
                   .isNotEmpty ==
               true,
         },
-        runId: 'order-today',
       );
-      // #endregion
 
       Map<String, dynamic> mergedJson = <String, dynamic>{
         'total_orders': 0,
@@ -259,94 +304,98 @@ class OrderTodayStatsNotifier
         'date': DateTime.now().toIso8601String(),
       };
 
-      for (final bid in branchIds) {
-        final queryParams = <String, String>{
-          'branch_id': bid.toString(),
-          'date': dateKey,
-        };
-        if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
-          queryParams['user_id'] = userId.toString();
+      final client = http.Client();
+      try {
+        for (final bid in branchIds) {
+          final queryParams = <String, String>{
+            'branch_id': bid.toString(),
+            'date': dateKey,
+          };
+          if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
+            queryParams['user_id'] = userId.toString();
+          }
+
+          final uri = Uri.parse(
+            '$baseUrl/api/dashboard/order-today',
+          ).replace(queryParameters: queryParams);
+
+          final response = await client
+              .get(uri, headers: NetworkConfig.defaultHeaders)
+              .timeout(NetworkConfig.connectionTimeout);
+
+          if (response.statusCode != 200) {
+            throw Exception(
+              'Failed to load order stats: ${response.statusCode}',
+            );
+          }
+
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+          mergedJson['total_orders'] =
+              (mergedJson['total_orders'] as int) +
+              ((data['total_orders'] ?? 0) as int);
+          mergedJson['completed_orders'] =
+              (mergedJson['completed_orders'] as int) +
+              ((data['completed_orders'] ?? 0) as int);
+          mergedJson['pending_orders'] =
+              (mergedJson['pending_orders'] as int) +
+              ((data['pending_orders'] ?? 0) as int);
+          mergedJson['total_revenue'] =
+              (mergedJson['total_revenue'] as double) +
+              ((data['total_revenue'] ?? 0) as num).toDouble();
+          mergedJson['revenue_jual_completed'] =
+              (mergedJson['revenue_jual_completed'] as double) +
+              ((data['revenue_jual_completed'] ?? 0) as num).toDouble();
+          mergedJson['expense_buyback_completed'] =
+              (mergedJson['expense_buyback_completed'] as double) +
+              ((data['expense_buyback_completed'] ?? 0) as num).toDouble();
+
+          final obt = data['orders_by_type'];
+          if (obt is Map) {
+            final tgt = mergedJson['orders_by_type'] as Map<String, int>;
+            for (final e in obt.entries) {
+              final k = e.key.toString();
+              final v = e.value;
+              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+            }
+          }
+          final obm = data['orders_by_mode'];
+          if (obm is Map) {
+            final tgt = mergedJson['orders_by_mode'] as Map<String, int>;
+            for (final e in obm.entries) {
+              final k = e.key.toString().toLowerCase();
+              final v = e.value;
+              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+            }
+          }
+          final obs = data['orders_by_status'];
+          if (obs is Map) {
+            final tgt = mergedJson['orders_by_status'] as Map<String, int>;
+            for (final e in obs.entries) {
+              final k = e.key.toString();
+              final v = e.value;
+              tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
+            }
+          }
+          final rbt = data['revenue_by_type_completed'];
+          if (rbt is Map) {
+            final tgt =
+                mergedJson['revenue_by_type_completed'] as Map<String, double>;
+            for (final e in rbt.entries) {
+              final k = e.key.toString();
+              final v = e.value;
+              final d = v is num
+                  ? v.toDouble()
+                  : double.tryParse(v.toString()) ?? 0.0;
+              tgt[k] = (tgt[k] ?? 0.0) + d;
+            }
+          }
         }
-
-        final uri = Uri.parse(
-          '$baseUrl/api/dashboard/order-today',
-        ).replace(queryParameters: queryParams);
-
-        final client = http.Client();
-        final response = await client
-            .get(uri, headers: NetworkConfig.defaultHeaders)
-            .timeout(NetworkConfig.connectionTimeout);
+      } finally {
         client.close();
-
-        if (response.statusCode != 200) {
-          throw Exception('Failed to load order stats: ${response.statusCode}');
-        }
-
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-
-        mergedJson['total_orders'] =
-            (mergedJson['total_orders'] as int) +
-            ((data['total_orders'] ?? 0) as int);
-        mergedJson['completed_orders'] =
-            (mergedJson['completed_orders'] as int) +
-            ((data['completed_orders'] ?? 0) as int);
-        mergedJson['pending_orders'] =
-            (mergedJson['pending_orders'] as int) +
-            ((data['pending_orders'] ?? 0) as int);
-        mergedJson['total_revenue'] =
-            (mergedJson['total_revenue'] as double) +
-            ((data['total_revenue'] ?? 0) as num).toDouble();
-        mergedJson['revenue_jual_completed'] =
-            (mergedJson['revenue_jual_completed'] as double) +
-            ((data['revenue_jual_completed'] ?? 0) as num).toDouble();
-        mergedJson['expense_buyback_completed'] =
-            (mergedJson['expense_buyback_completed'] as double) +
-            ((data['expense_buyback_completed'] ?? 0) as num).toDouble();
-
-        final obt = data['orders_by_type'];
-        if (obt is Map) {
-          final tgt = mergedJson['orders_by_type'] as Map<String, int>;
-          for (final e in obt.entries) {
-            final k = e.key.toString();
-            final v = e.value;
-            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-          }
-        }
-        final obm = data['orders_by_mode'];
-        if (obm is Map) {
-          final tgt = mergedJson['orders_by_mode'] as Map<String, int>;
-          for (final e in obm.entries) {
-            final k = e.key.toString().toLowerCase();
-            final v = e.value;
-            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-          }
-        }
-        final obs = data['orders_by_status'];
-        if (obs is Map) {
-          final tgt = mergedJson['orders_by_status'] as Map<String, int>;
-          for (final e in obs.entries) {
-            final k = e.key.toString();
-            final v = e.value;
-            tgt[k] = (tgt[k] ?? 0) + (v is num ? v.toInt() : 0);
-          }
-        }
-        final rbt = data['revenue_by_type_completed'];
-        if (rbt is Map) {
-          final tgt =
-              mergedJson['revenue_by_type_completed'] as Map<String, double>;
-          for (final e in rbt.entries) {
-            final k = e.key.toString();
-            final v = e.value;
-            final d = v is num
-                ? v.toDouble()
-                : double.tryParse(v.toString()) ?? 0.0;
-            tgt[k] = (tgt[k] ?? 0.0) + d;
-          }
-        }
       }
 
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT2',
         location: 'order_today_provider.dart:fetchOrderTodayStats:ok',
         message: 'stats response 200',
@@ -355,9 +404,7 @@ class OrderTodayStatsNotifier
           'pending': mergedJson['pending_orders'],
           'branchesMerged': branchIds.length,
         },
-        runId: 'order-today',
       );
-      // #endregion
 
       await OfflineCache.instance.setJson(
         cacheKey,
@@ -386,8 +433,7 @@ class OrderTodayStatsNotifier
       } catch (_) {
         // ignore cache errors
       }
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT1',
         location: 'order_today_provider.dart:fetchOrderTodayStats:error',
         message: 'stats fetch failed',
@@ -396,9 +442,7 @@ class OrderTodayStatsNotifier
               ? error.toString().substring(0, 200)
               : error.toString(),
         },
-        runId: 'order-today',
       );
-      // #endregion
       state = AsyncValue.error(error, stackTrace);
     }
   }
@@ -429,6 +473,7 @@ class TodayOrdersNotifier
   int? _lastUserId;
   String? _lastBranch;
   String _lastRole = '';
+  String _lastAuthToken = '';
 
   TodayOrdersNotifier(this._ref) : super(const AsyncValue.loading()) {
     // Check if user is already logged in and load data
@@ -437,6 +482,10 @@ class TodayOrdersNotifier
 
   void _checkAndFetch() {
     final userState = _ref.read(userStateProvider);
+    if (userState.authToken.trim().isEmpty) {
+      state = const AsyncValue.loading();
+      return;
+    }
     if (userState.branch.isNotEmpty) {
       fetchTodayOrders();
     } else {
@@ -449,31 +498,34 @@ class TodayOrdersNotifier
     final userState = _ref.read(userStateProvider);
     if (_lastUserId != userState.userId ||
         _lastBranch != userState.branch ||
-        _lastRole != userState.role) {
+        _lastRole != userState.role ||
+        _lastAuthToken != userState.authToken) {
       _lastUserId = userState.userId;
       _lastBranch = userState.branch;
       _lastRole = userState.role;
+      _lastAuthToken = userState.authToken;
       _checkAndFetch();
     }
   }
 
   Future<void> fetchTodayOrders() async {
-    state = const AsyncValue.loading();
+    state = _todayOrdersLoadingFrom(state);
 
     try {
       final userState = _ref.read(userStateProvider);
+      if (userState.authToken.trim().isEmpty) {
+        state = const AsyncValue.loading();
+        return;
+      }
       final userId = userState.userId;
       final branchIds = _orderTodayBranchIds(userState);
       if (branchIds.isEmpty) {
-        // #region agent log
-        agentDebugNdjson(
+        _otNdjson(
           hypothesisId: 'OT3',
           location: 'order_today_provider.dart:fetchTodayOrders:no_branch',
           message: 'branchId null',
           data: <String, Object?>{'branchRaw': userState.branch},
-          runId: 'order-today',
         );
-        // #endregion
         state = AsyncValue.error(
           Exception(
             'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
@@ -499,15 +551,12 @@ class TodayOrdersNotifier
           final list = (cached.value)
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
-          // #region agent log
-          agentDebugNdjson(
+          _otNdjson(
             hypothesisId: 'OT4',
             location: 'order_today_provider.dart:fetchTodayOrders:cache_hit',
             message: 'today orders offline cache hit',
             data: <String, Object?>{'listLen': list.length},
-            runId: 'order-today',
           );
-          // #endregion
           state = AsyncValue.data(list);
           return;
         }
@@ -516,8 +565,7 @@ class TodayOrdersNotifier
       // Use real API call instead of mock data
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT2',
         location: 'order_today_provider.dart:fetchTodayOrders:request',
         message: 'fetch orders/daily',
@@ -539,31 +587,29 @@ class TodayOrdersNotifier
                   .isNotEmpty ==
               true,
         },
-        runId: 'order-today',
       );
-      // #endregion
 
       final mergedOrders = <Map<String, dynamic>>[];
       var mergedRawCount = 0;
-      for (final bid in branchIds) {
-        // Build query parameters
-        final queryParams = <String, String>{
-          'branch_id': bid.toString(),
-          'date': todayKey, // ensure server uses the same "today" boundary
-        };
+      final dailyClient = http.Client();
+      try {
+        for (final bid in branchIds) {
+          // Build query parameters
+          final queryParams = <String, String>{
+            'branch_id': bid.toString(),
+            'date': todayKey, // ensure server uses the same "today" boundary
+          };
 
-        if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
-          queryParams['user_id'] = userId.toString();
-        }
+          if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
+            queryParams['user_id'] = userId.toString();
+          }
 
-        final client = http.Client();
-        http.Response response;
-        var usedPath = '/api/orders/daily';
-        try {
+          http.Response response;
+          var usedPath = '/api/orders/daily';
           var uri = Uri.parse(
             '$baseUrl/api/orders/daily',
           ).replace(queryParameters: queryParams);
-          response = await client
+          response = await dailyClient
               .get(uri, headers: NetworkConfig.defaultHeaders)
               .timeout(NetworkConfig.connectionTimeout);
           // Backend lama / proxy: coba path tanpa prefix /api.
@@ -572,77 +618,70 @@ class TodayOrdersNotifier
             uri = Uri.parse(
               '$baseUrl/orders/daily',
             ).replace(queryParameters: queryParams);
-            response = await client
+            response = await dailyClient
                 .get(uri, headers: NetworkConfig.defaultHeaders)
                 .timeout(NetworkConfig.connectionTimeout);
           }
-        } finally {
-          client.close();
+
+          if (response.statusCode != 200) {
+            _otNdjson(
+              hypothesisId: 'OT1',
+              location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
+              message: 'orders/daily non-200',
+              data: <String, Object?>{
+                'statusCode': response.statusCode,
+                'usedPath': usedPath,
+                'branchId': bid,
+                'responseLen': response.body.length,
+              },
+            );
+            throw Exception(
+              'Failed to load today orders: ${response.statusCode}',
+            );
+          }
+
+          final decoded = jsonDecode(response.body);
+          if (decoded is! List) {
+            _otNdjson(
+              hypothesisId: 'OT5',
+              location: 'order_today_provider.dart:fetchTodayOrders:bad_shape',
+              message: 'orders/daily: body is not JSON array',
+              data: <String, Object?>{
+                'runtimeType': '${decoded.runtimeType}',
+                'branchId': bid,
+              },
+            );
+            throw Exception(
+              'orders/daily: expected JSON array, got ${decoded.runtimeType}',
+            );
+          }
+
+          final rawOrders = decoded
+              .map((dynamic order) => Map<String, dynamic>.from(order as Map))
+              .toList();
+          mergedRawCount += rawOrders.length;
+
+          // Check if response already includes item details (from updated /orders/daily endpoint)
+          final hasItemDetails =
+              rawOrders.isNotEmpty && rawOrders.first.containsKey('nama_item');
+
+          if (hasItemDetails) {
+            mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
+          } else {
+            // Legacy behavior: fetch order items separately
+            final ordersWithItems = await _fetchOrderItemsForOrders(
+              rawOrders,
+              baseUrl,
+              queryParams,
+            );
+            mergedOrders.addAll(ordersWithItems);
+          }
         }
-
-        if (response.statusCode != 200) {
-          // #region agent log
-          agentDebugNdjson(
-            hypothesisId: 'OT1',
-            location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
-            message: 'orders/daily non-200',
-            data: <String, Object?>{
-              'statusCode': response.statusCode,
-              'usedPath': usedPath,
-              'branchId': bid,
-              'responseLen': response.body.length,
-            },
-            runId: 'order-today',
-          );
-          // #endregion
-          throw Exception(
-            'Failed to load today orders: ${response.statusCode}',
-          );
-        }
-
-        final decoded = jsonDecode(response.body);
-        if (decoded is! List) {
-          // #region agent log
-          agentDebugNdjson(
-            hypothesisId: 'OT5',
-            location: 'order_today_provider.dart:fetchTodayOrders:bad_shape',
-            message: 'orders/daily: body is not JSON array',
-            data: <String, Object?>{
-              'runtimeType': '${decoded.runtimeType}',
-              'branchId': bid,
-            },
-            runId: 'order-today',
-          );
-          // #endregion
-          throw Exception(
-            'orders/daily: expected JSON array, got ${decoded.runtimeType}',
-          );
-        }
-
-        final rawOrders = decoded
-            .map((dynamic order) => Map<String, dynamic>.from(order as Map))
-            .toList();
-        mergedRawCount += rawOrders.length;
-
-        // Check if response already includes item details (from updated /orders/daily endpoint)
-        final hasItemDetails =
-            rawOrders.isNotEmpty && rawOrders.first.containsKey('nama_item');
-
-        if (hasItemDetails) {
-          mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
-        } else {
-          // Legacy behavior: fetch order items separately
-          final ordersWithItems = await _fetchOrderItemsForOrders(
-            rawOrders,
-            baseUrl,
-            queryParams,
-          );
-          mergedOrders.addAll(ordersWithItems);
-        }
+      } finally {
+        dailyClient.close();
       }
 
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT2',
         location: 'order_today_provider.dart:fetchTodayOrders:ok_merged',
         message: 'orders/daily 200 (merged branches)',
@@ -651,9 +690,7 @@ class TodayOrdersNotifier
           'mergedRawCount': mergedRawCount,
           'mergedOrderCount': mergedOrders.length,
         },
-        runId: 'order-today',
       );
-      // #endregion
 
       await OfflineCache.instance.setJson(
         cacheKey,
@@ -686,8 +723,7 @@ class TodayOrdersNotifier
       } catch (_) {
         // ignore cache errors
       }
-      // #region agent log
-      agentDebugNdjson(
+      _otNdjson(
         hypothesisId: 'OT1',
         location: 'order_today_provider.dart:fetchTodayOrders:error',
         message: 'today orders fetch failed',
@@ -696,9 +732,7 @@ class TodayOrdersNotifier
               ? error.toString().substring(0, 200)
               : error.toString(),
         },
-        runId: 'order-today',
       );
-      // #endregion
       state = AsyncValue.error(error, stackTrace);
     }
   }

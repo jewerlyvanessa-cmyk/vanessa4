@@ -4,6 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
+import 'package:vanessa3/utils/branch_logo_pdf.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 String _moneyPdf(num v) =>
@@ -32,6 +33,7 @@ String? _absPhotoUrl(dynamic raw) {
 Future<void> printStoreOperationalPdf(
   BuildContext context, {
   required String branchLabel,
+  required String branchIdForLogo,
   required DateTime periodStart,
   required DateTime periodEnd,
   required List<Map<String, dynamic>> entries,
@@ -40,6 +42,8 @@ Future<void> printStoreOperationalPdf(
   final s = managerReportDateOnly(periodStart);
   final e = managerReportDateOnly(periodEnd);
   final periodTitle = managerReportPeriodTitle(s, e);
+
+  final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
 
   final sorted = List<Map<String, dynamic>>.from(entries);
   sorted.sort((a, b) {
@@ -73,38 +77,24 @@ Future<void> printStoreOperationalPdf(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
-        build: (ctx) => [
-          pw.Center(
-            child: pw.Text(
-              'CATATAN KEUANGAN TOKO',
-              style: pw.TextStyle(
-                fontSize: 16,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-          ),
-          pw.Center(
-            child: pw.Text(
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'CATATAN KEUANGAN TOKO',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(
               'Pemasukan & pengeluaran operasional (bukan pembayaran order)',
-              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+              fontSize: 9,
+              color: PdfColors.grey700,
             ),
-          ),
-          pw.SizedBox(height: 8),
-          pw.Center(
-            child: pw.Text(
-              branchLabel,
-              style: const pw.TextStyle(fontSize: 12),
-            ),
-          ),
-          pw.Center(
-            child: pw.Text(
+            PdfLaporanHeaderSubtitleLine(branchLabel),
+            PdfLaporanHeaderSubtitleLine(
               periodTitle,
-              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+              fontSize: 10,
+              color: PdfColors.grey700,
             ),
-          ),
-          pw.SizedBox(height: 16),
-          pw.Divider(thickness: 1),
-          pw.SizedBox(height: 12),
+          ],
+        ),
+        build: (ctx) => [
           if (sorted.isEmpty)
             pw.Text('Tidak ada catatan pada periode ini.')
           else
@@ -168,6 +158,7 @@ Future<void> printStoreOperationalPdf(
 Future<void> printStoreOperationalReceiptPdf(
   BuildContext context, {
   required String branchLabel,
+  required String branchIdForLogo,
   required Map<String, dynamic> entry,
 }) async {
   if (!context.mounted) return;
@@ -197,6 +188,8 @@ Future<void> printStoreOperationalReceiptPdf(
       }
     }
 
+    final branchLogoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
+
     final doc = pw.Document();
     doc.addPage(
       pw.Page(
@@ -205,6 +198,7 @@ Future<void> printStoreOperationalReceiptPdf(
         build: (ctx) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
+            ...pdfInlineLogoWidgets(branchLogoBytes),
             pw.Center(
               child: pw.Text(
                 'BUKTI CATATAN KEUANGAN',
