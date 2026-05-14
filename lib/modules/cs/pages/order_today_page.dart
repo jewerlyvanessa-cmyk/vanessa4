@@ -1,9 +1,8 @@
-import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
@@ -11,14 +10,23 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/utils/order_today_report_print.dart';
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/order_faktur_resolve.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 
-class OrderTodayPage extends ConsumerWidget {
+class OrderTodayPage extends ConsumerStatefulWidget {
   const OrderTodayPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<OrderTodayPage> createState() => _OrderTodayPageState();
+}
+
+class _OrderTodayPageState extends ConsumerState<OrderTodayPage> {
+  int _orderTodayTablePage = 0;
+  static const int _kOrderTodayPageSize = 50;
+
+  @override
+  Widget build(BuildContext context) {
     final orderStatsAsync = ref.watch(orderTodayStatsProvider);
     final todayOrdersAsync = ref.watch(todayOrdersProvider);
     final isServerHealthy = ref.watch(healthCheckProvider);
@@ -104,7 +112,7 @@ class OrderTodayPage extends ConsumerWidget {
 
               await printOrderTodayReportPdf(
                 context,
-                reportDate: DateTime.now(),
+                reportDate: BusinessCalendar.todayWibDateOnly(),
                 branchLabel: branchLabel,
                 branchIdForLogo: bid,
                 ordersByType: stats.ordersByType,
@@ -200,7 +208,7 @@ class OrderTodayPage extends ConsumerWidget {
 
   Widget _headerCard(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final today = DateTime.now();
+    final today = BusinessCalendar.todayWibDateOnly();
     final formatter = DateFormat('EEEE, dd MMMM yyyy', 'id_ID');
     return Card(
       child: ListTile(
@@ -556,6 +564,25 @@ class OrderTodayPage extends ConsumerWidget {
     final narrow = MediaQuery.sizeOf(context).width < 600;
     final webWide = kIsWeb && !narrow;
     final lines = _flattenOrders(orders);
+    final pageCount = lines.isEmpty
+        ? 1
+        : (lines.length + _kOrderTodayPageSize - 1) ~/ _kOrderTodayPageSize;
+    final page = min(_orderTodayTablePage, pageCount - 1);
+    final start = page * _kOrderTodayPageSize;
+    final end = start + _kOrderTodayPageSize > lines.length
+        ? lines.length
+        : start + _kOrderTodayPageSize;
+    final linesPage = lines.sublist(start, end);
+
+    Future<void> openFaktur(Map<String, dynamic> data) async {
+      final fakturData = await loadOrderDataForFakturPage(data);
+      if (!context.mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FakturPage(orderData: fakturData)),
+      );
+    }
+
     final mobileCellStyle = Theme.of(
       context,
     ).textTheme.bodyMedium?.copyWith(fontSize: 12, height: 1.15);
@@ -622,43 +649,13 @@ class OrderTodayPage extends ConsumerWidget {
           ];
 
     final rows = <DataRow>[];
-    for (var i = 0; i < lines.length; i++) {
-      final order = Map<String, dynamic>.from(lines[i]['order'] as Map);
-      final item = lines[i]['item'] as Map<String, dynamic>?;
+    for (var j = 0; j < linesPage.length; j++) {
+      final i = start + j;
+      final order = Map<String, dynamic>.from(linesPage[j]['order'] as Map);
+      final item = linesPage[j]['item'] as Map<String, dynamic>?;
       final nama = _lineNama(item);
       final berat = _lineBerat(item);
       final total = _lineTotal(order);
-
-      Future<void> openFaktur(Map<String, dynamic> data) async {
-        Map<String, dynamic> fakturData = Map<String, dynamic>.from(data);
-        final orderNumber = (data['order_number'] ?? '').toString().trim();
-
-        if (orderNumber.isNotEmpty) {
-          try {
-            final uri = Uri.parse(
-              '${NetworkConfig.baseUrl}/orders',
-            ).replace(queryParameters: {'order_number': orderNumber});
-            final resp = await http.get(
-              uri,
-              headers: NetworkConfig.defaultHeaders,
-            );
-            if (resp.statusCode == 200) {
-              final decoded = jsonDecode(resp.body);
-              if (decoded is Map<String, dynamic>) {
-                fakturData = decoded;
-              }
-            }
-          } catch (_) {
-            // Fallback to current row data when detail fetch fails.
-          }
-        }
-
-        if (!context.mounted) return;
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => FakturPage(orderData: fakturData)),
-        );
-      }
 
       final cells = <DataCell>[
         DataCell(cell(_orderDisplayRef(order), maxLines: 1)),
@@ -769,45 +766,84 @@ class OrderTodayPage extends ConsumerWidget {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final minW = narrow ? constraints.maxWidth : (webWide ? 1280.0 : 920.0);
-        return Material(
-          elevation: 0,
-          color: cs.surfaceContainerLow.withValues(alpha: 0.65),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
-          ),
-          clipBehavior: Clip.antiAlias,
-          // Avoid Scrollbar assertion on Web when the PrimaryScrollController
-          // isn't attached (nested scroll views + hover).
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: minW),
-                child: DataTable(
-                  headingTextStyle: narrow ? mobileHeaderStyle : null,
-                  dataTextStyle: narrow ? mobileCellStyle : null,
-                  headingRowColor: WidgetStateProperty.all(
-                    cs.surfaceContainerHigh,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (lines.length > _kOrderTodayPageSize)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Baris ${start + 1}–$end dari ${lines.length}',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  dataRowMinHeight: narrow ? 34 : 40,
-                  dataRowMaxHeight: narrow ? 42 : 52,
-                  columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
-                  horizontalMargin: 10,
-                  showCheckboxColumn: false,
-                  dividerThickness: 0.6,
-                  columns: columns,
-                  rows: rows,
                 ),
-              ),
+                IconButton(
+                  tooltip: 'Halaman sebelumnya',
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: page > 0
+                      ? () => setState(() => _orderTodayTablePage = page - 1)
+                      : null,
+                ),
+                Text('${page + 1} / $pageCount'),
+                IconButton(
+                  tooltip: 'Halaman berikutnya',
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: page < pageCount - 1
+                      ? () => setState(() => _orderTodayTablePage = page + 1)
+                      : null,
+                ),
+              ],
             ),
           ),
-        );
-      },
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final minW = narrow
+                ? constraints.maxWidth
+                : (webWide ? 1280.0 : 920.0);
+            return Material(
+              elevation: 0,
+              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.45),
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              // Avoid Scrollbar assertion on Web when the PrimaryScrollController
+              // isn't attached (nested scroll views + hover).
+              child: SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: minW),
+                    child: DataTable(
+                      headingTextStyle: narrow ? mobileHeaderStyle : null,
+                      dataTextStyle: narrow ? mobileCellStyle : null,
+                      headingRowColor: WidgetStateProperty.all(
+                        cs.surfaceContainerHigh,
+                      ),
+                      dataRowMinHeight: narrow ? 34 : 40,
+                      dataRowMaxHeight: narrow ? 42 : 52,
+                      columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
+                      horizontalMargin: 10,
+                      showCheckboxColumn: false,
+                      dividerThickness: 0.6,
+                      columns: columns,
+                      rows: rows,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 }

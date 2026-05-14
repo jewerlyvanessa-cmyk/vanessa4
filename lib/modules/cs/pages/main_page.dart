@@ -1,8 +1,7 @@
-import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -15,7 +14,8 @@ import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/order_faktur_resolve.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -93,10 +93,13 @@ class CSMainPage extends ConsumerStatefulWidget {
 
 class _CSMainPageState extends ConsumerState<CSMainPage> {
   String _csOrderSearchQuery = '';
+  late final TextEditingController _csOrderSearchController;
 
   /// `all` | `open` (belum selesai) | `done` (selesai / terjual)
   String _csTodayStatusFilter = 'all';
   bool _refreshingCsToday = false;
+  int _csDashboardTodayTablePage = 0;
+  static const int _kCsTodayTablePageSize = 50;
 
   String _fmtRp(dynamic v) {
     final n = double.tryParse(v?.toString() ?? '');
@@ -120,6 +123,13 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
   @override
   void initState() {
     super.initState();
+    _csOrderSearchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _csOrderSearchController.dispose();
+    super.dispose();
   }
 
   String _getStatusLabel(String? status) {
@@ -258,6 +268,10 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
   Future<void> _scanAndFillSearch() async {
     final value = await pushQrScanPage(context, title: 'Scan QR Order');
     if (!mounted || value == null || value.isEmpty) return;
+    _csOrderSearchController.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
     setState(() => _csOrderSearchQuery = value);
   }
 
@@ -398,6 +412,16 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
 
   Widget _buildCsTodayOrdersTable(BuildContext context, List<dynamic> orders) {
     final lines = _flattenCsTodayOrders(orders);
+    final pageCount = lines.isEmpty
+        ? 1
+        : (lines.length + _kCsTodayTablePageSize - 1) ~/ _kCsTodayTablePageSize;
+    final page = min(_csDashboardTodayTablePage, pageCount - 1);
+    final start = page * _kCsTodayTablePageSize;
+    final end = start + _kCsTodayTablePageSize > lines.length
+        ? lines.length
+        : start + _kCsTodayTablePageSize;
+    final linesPage = lines.sublist(start, end);
+
     final narrow = MediaQuery.sizeOf(context).width < 600;
     final webWide = kIsWeb && !narrow;
     final mobileCellStyle = Theme.of(
@@ -466,29 +490,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
           ];
 
     Future<void> openFaktur(Map<String, dynamic> order) async {
-      Map<String, dynamic> fakturData = Map<String, dynamic>.from(order);
-      final orderNumber = (order['order_number'] ?? '').toString().trim();
-
-      if (orderNumber.isNotEmpty) {
-        try {
-          final uri = Uri.parse(
-            '${NetworkConfig.baseUrl}/orders',
-          ).replace(queryParameters: {'order_number': orderNumber});
-          final resp = await http.get(
-            uri,
-            headers: NetworkConfig.defaultHeaders,
-          );
-          if (resp.statusCode == 200) {
-            final decoded = jsonDecode(resp.body);
-            if (decoded is Map<String, dynamic>) {
-              fakturData = decoded;
-            }
-          }
-        } catch (_) {
-          // Fallback to current row data when detail fetch fails.
-        }
-      }
-
+      final fakturData = await loadOrderDataForFakturPage(order);
       if (!context.mounted) return;
       Navigator.push(
         context,
@@ -500,8 +502,9 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
 
     final colorScheme = Theme.of(context).colorScheme;
     final rows = <DataRow>[];
-    for (var idx = 0; idx < lines.length; idx++) {
-      final line = lines[idx];
+    for (var j = 0; j < linesPage.length; j++) {
+      final idx = start + j;
+      final line = linesPage[j];
       final order = line.order;
       final item = line.item;
       final nama = _lineItemName(item);
@@ -617,41 +620,80 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final minW = narrow
-            ? constraints.maxWidth
-            : webWide
-            ? 1280.0
-            : 920.0;
-        return Scrollbar(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: minW),
-                child: DataTable(
-                  headingTextStyle: narrow ? mobileHeaderStyle : null,
-                  dataTextStyle: narrow ? mobileCellStyle : null,
-                  headingRowColor: WidgetStateProperty.all(
-                    colorScheme.surfaceContainerHigh,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (lines.length > _kCsTodayTablePageSize)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Baris ${start + 1}–$end dari ${lines.length}',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  // Sedikit lebih rapat agar tinggi baris pas dengan teks.
-                  dataRowMinHeight: narrow ? 34 : 40,
-                  dataRowMaxHeight: narrow ? 42 : 52,
-                  columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
-                  horizontalMargin: 10,
-                  showCheckboxColumn: false,
-                  dividerThickness: 0.6,
-                  columns: columns,
-                  rows: rows,
                 ),
-              ),
+                IconButton(
+                  tooltip: 'Halaman sebelumnya',
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: page > 0
+                      ? () => setState(
+                          () => _csDashboardTodayTablePage = page - 1,
+                        )
+                      : null,
+                ),
+                Text('${page + 1} / $pageCount'),
+                IconButton(
+                  tooltip: 'Halaman berikutnya',
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: page < pageCount - 1
+                      ? () => setState(
+                          () => _csDashboardTodayTablePage = page + 1,
+                        )
+                      : null,
+                ),
+              ],
             ),
           ),
-        );
-      },
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final minW = narrow
+                ? constraints.maxWidth
+                : webWide
+                ? 1280.0
+                : 920.0;
+            return Scrollbar(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: minW),
+                    child: DataTable(
+                      headingTextStyle: narrow ? mobileHeaderStyle : null,
+                      dataTextStyle: narrow ? mobileCellStyle : null,
+                      headingRowColor: WidgetStateProperty.all(
+                        colorScheme.surfaceContainerHigh,
+                      ),
+                      // Sedikit lebih rapat agar tinggi baris pas dengan teks.
+                      dataRowMinHeight: narrow ? 34 : 40,
+                      dataRowMaxHeight: narrow ? 42 : 52,
+                      columnSpacing: narrow ? 10 : (webWide ? 14 : 18),
+                      horizontalMargin: 10,
+                      showCheckboxColumn: false,
+                      dividerThickness: 0.6,
+                      columns: columns,
+                      rows: rows,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -855,7 +897,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
-                                      'Order hari ini · ${DateFormat('EEEE, d MMM yyyy', 'id_ID').format(DateTime.now())}',
+                                      'Order hari ini · ${DateFormat('EEEE, d MMM yyyy', 'id_ID').format(BusinessCalendar.todayWibDateOnly())}',
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: Theme.of(context)
@@ -996,9 +1038,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                       ),
                       const SizedBox(height: 4),
                       TextField(
-                        controller: TextEditingController(
-                          text: _csOrderSearchQuery,
-                        ),
+                        controller: _csOrderSearchController,
                         onChanged: (v) =>
                             setState(() => _csOrderSearchQuery = v),
                         decoration: InputDecoration(
@@ -1204,10 +1244,14 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                                             ),
                                             const SizedBox(height: 16),
                                             OutlinedButton.icon(
-                                              onPressed: () => setState(() {
-                                                _csOrderSearchQuery = '';
-                                                _csTodayStatusFilter = 'all';
-                                              }),
+                                              onPressed: () {
+                                                _csOrderSearchController
+                                                    .clear();
+                                                setState(() {
+                                                  _csOrderSearchQuery = '';
+                                                  _csTodayStatusFilter = 'all';
+                                                });
+                                              },
                                               icon: const Icon(
                                                 Icons.filter_alt_off,
                                                 size: 20,

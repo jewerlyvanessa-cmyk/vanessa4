@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:intl/intl.dart';
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
+import 'package:file_picker/file_picker.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart'; // Import todayOrdersProvider
 
@@ -65,6 +68,13 @@ class _JualPageState extends ConsumerState<JualPage> {
   Map<String, dynamic>? _selectedItem;
   bool _isSubmitting = false; // Loading state for submit
   Timer? _itemSearchTimer; // Timer for debouncing item search
+
+  /// Web: isi dari [FilePicker] (stub [ImagePicker] di web selalu null).
+  Uint8List? _fotoBytes;
+  String? _fotoName;
+
+  bool get _hasFoto =>
+      (_fotoBytes != null && _fotoBytes!.isNotEmpty) || _fotoFile != null;
 
   // Material choice UI for UNREGISTERED/QSR mode.
   // Value will be mirrored into _materialController for payload consistency.
@@ -206,22 +216,40 @@ class _JualPageState extends ConsumerState<JualPage> {
     return MediaType('image', 'jpeg');
   }
 
-  Future<String?> _uploadFoto(File? foto) async {
-    if (foto == null) return null;
+  Future<String?> _uploadProductPhoto() async {
+    if (!_hasFoto) return null;
 
     try {
       final baseUrl = NetworkConfig.storageUrl;
       debugPrint('Uploading foto to: $baseUrl/upload');
 
       final uri = Uri.parse('$baseUrl/upload');
-      final request = http.MultipartRequest('POST', uri)
-        ..files.add(
+      final request = http.MultipartRequest('POST', uri);
+      if (kIsWeb) {
+        final bytes = _fotoBytes;
+        if (bytes == null || bytes.isEmpty) return null;
+        final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
+            ? _fotoName!.trim()
+            : 'foto.jpg';
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'file',
+            bytes,
+            filename: name,
+            contentType: _detectImageMediaType(name),
+          ),
+        );
+      } else {
+        final foto = _fotoFile;
+        if (foto == null) return null;
+        request.files.add(
           await http.MultipartFile.fromPath(
             'file',
             foto.path,
             contentType: _detectImageMediaType(foto.path),
           ),
         );
+      }
 
       final response = await request.send();
       debugPrint('Upload response status: ${response.statusCode}');
@@ -255,22 +283,70 @@ class _JualPageState extends ConsumerState<JualPage> {
     return null;
   }
 
+  Future<void> _pickFotoWebOrGallery() async {
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: true,
+      );
+      final f = picked?.files.single;
+      if (f == null) return;
+      final bytes = f.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _fotoBytes = bytes;
+        _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+        _fotoFile = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+      }
+    }
+  }
+
   Future<void> _pickFoto() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
     final pickedFile = await _picker.pickImage(source: ImageSource.camera);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
         _fotoFile = compressedFile;
+        _fotoBytes = null;
+        _fotoName = null;
       });
     }
   }
 
   Future<void> _pickFotoFromGallery() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
         _fotoFile = compressedFile;
+        _fotoBytes = null;
+        _fotoName = null;
       });
     }
   }
@@ -315,9 +391,7 @@ class _JualPageState extends ConsumerState<JualPage> {
       final userState = ref.read(userStateProvider);
       final branchId = userState.branch;
 
-      Future<List<Map<String, dynamic>>> fetchExact({
-        String? status,
-      }) async {
+      Future<List<Map<String, dynamic>>> fetchExact({String? status}) async {
         final uri = Uri.parse(
           '$baseUrl/items?item_code=$query&limit=5'
           '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
@@ -343,10 +417,16 @@ class _JualPageState extends ConsumerState<JualPage> {
       List<Map<String, dynamic>> suggestions = [];
       // Hanya stok layak jual (bukan buyback / servis / custom).
       suggestions = await fetchExact(status: 'ready');
-      if (suggestions.isEmpty) suggestions = await fetchExact(status: 'available');
-      if (suggestions.isEmpty) suggestions = await fetchSellableOnly();
+      if (suggestions.isEmpty) {
+        suggestions = await fetchExact(status: 'available');
+      }
+      if (suggestions.isEmpty) {
+        suggestions = await fetchSellableOnly();
+      }
       // If still empty, fallback to search (hanya stok layak jual).
-      if (suggestions.isEmpty) suggestions = await _fetchItemSuggestions(query);
+      if (suggestions.isEmpty) {
+        suggestions = await _fetchItemSuggestions(query);
+      }
       if (!mounted) return;
 
       final normalized = query.toLowerCase();
@@ -541,7 +621,7 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
 
     // Validasi foto untuk QSR
-    if (_saleType == 'qsr' && _fotoFile == null) {
+    if (_saleType == 'qsr' && !_hasFoto) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -575,20 +655,22 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
 
     String? fotoUrl;
-    if (_fotoFile != null) {
+    if (_hasFoto) {
       debugPrint('Foto file exists, uploading...');
-      fotoUrl = await _uploadFoto(_fotoFile);
+      fotoUrl = await _uploadProductPhoto();
       debugPrint('Foto URL result: $fotoUrl');
     } else {
       debugPrint('No foto file to upload');
     }
 
     // If user picked a photo but upload failed, stop here.
-    if (_fotoFile != null && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+    if (_hasFoto && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Upload foto gagal. Coba ambil foto ulang atau pilih dari galeri (JPEG/PNG).'),
+            content: Text(
+              'Upload foto gagal. Coba ambil foto ulang atau pilih dari galeri (JPEG/PNG).',
+            ),
           ),
         );
       }
@@ -600,17 +682,18 @@ class _JualPageState extends ConsumerState<JualPage> {
 
     // Pastikan order_items.photo_produk terisi:
     // - Jika ambil dari stok dan item belum punya foto, maka foto wajib diupload.
-    if (_saleType == 'from_stock' && _fotoFile == null) {
-      final existingPhoto = (_selectedItem?['photo_url'] ??
-              _selectedItem?['photo_produk'] ??
-              '')
-          .toString()
-          .trim();
+    if (_saleType == 'from_stock' && !_hasFoto) {
+      final existingPhoto =
+          (_selectedItem?['photo_url'] ?? _selectedItem?['photo_produk'] ?? '')
+              .toString()
+              .trim();
       if (existingPhoto.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Foto produk WAJIB diisi untuk item stok tanpa foto.'),
+              content: Text(
+                'Foto produk WAJIB diisi untuk item stok tanpa foto.',
+              ),
             ),
           );
         }
@@ -688,12 +771,13 @@ class _JualPageState extends ConsumerState<JualPage> {
 
     if (_saleType == 'from_stock' && _selectedItem != null) {
       // For stock items
-      final existingPhoto = (_selectedItem?['photo_url'] ??
-              _selectedItem?['photo_produk'] ??
-              _selectedItem?['photo'] ??
-              '')
-          .toString()
-          .trim();
+      final existingPhoto =
+          (_selectedItem?['photo_url'] ??
+                  _selectedItem?['photo_produk'] ??
+                  _selectedItem?['photo'] ??
+                  '')
+              .toString()
+              .trim();
       final photoProduk = (fotoUrl?.toString().trim().isNotEmpty ?? false)
           ? fotoUrl
           : (existingPhoto.isNotEmpty ? existingPhoto : null);
@@ -765,15 +849,20 @@ class _JualPageState extends ConsumerState<JualPage> {
         final fakturData = <String, dynamic>{
           ...(data is Map<String, dynamic> ? data : <String, dynamic>{}),
           // Ensure customer fields are present for immediate Faktur display
-          'customer_name': (data is Map<String, dynamic> &&
-                  (data['customer_name']?.toString().trim().isNotEmpty ?? false))
+          'customer_name':
+              (data is Map<String, dynamic> &&
+                  (data['customer_name']?.toString().trim().isNotEmpty ??
+                      false))
               ? data['customer_name']
               : _customerController.text,
-          'customer_phone': (data is Map<String, dynamic> &&
-                  (data['customer_phone']?.toString().trim().isNotEmpty ?? false))
+          'customer_phone':
+              (data is Map<String, dynamic> &&
+                  (data['customer_phone']?.toString().trim().isNotEmpty ??
+                      false))
               ? data['customer_phone']
               : _customerPhoneController.text,
-          'customer_address': (data is Map<String, dynamic> &&
+          'customer_address':
+              (data is Map<String, dynamic> &&
                   (data['customer_address']?.toString().trim().isNotEmpty ??
                       false))
               ? data['customer_address']
@@ -1426,10 +1515,10 @@ class _JualPageState extends ConsumerState<JualPage> {
                                 _namaItemController.text = item['name'] ?? '';
                                 _beratController.text =
                                     item['weight']?.toString() ?? '';
-                            _materialController.text =
-                                (item['material'] ?? '').toString();
-                            _kadarController.text =
-                                (item['purity'] ?? '').toString();
+                                _materialController.text =
+                                    (item['material'] ?? '').toString();
+                                _kadarController.text = (item['purity'] ?? '')
+                                    .toString();
                                 _kategoriController.text =
                                     item['kategori'] ?? '';
                                 _jenisController.text = item['jenis'] ?? '';
@@ -1507,9 +1596,10 @@ class _JualPageState extends ConsumerState<JualPage> {
                             _itemAutocompleteFieldController ??
                                 _itemCodeController,
                             onFilled: () async {
-                              final code = (_itemAutocompleteFieldController ??
-                                      _itemCodeController)
-                                  .text;
+                              final code =
+                                  (_itemAutocompleteFieldController ??
+                                          _itemCodeController)
+                                      .text;
                               _itemCodeController.text = code;
                               _updateItemSuggestions(code);
                               await _tryAutoSelectItemByCode(code);
@@ -1672,8 +1762,8 @@ class _JualPageState extends ConsumerState<JualPage> {
                                 runSpacing: 8.0,
                                 children:
                                     orderItemJenisOptionsForKategori(
-                                      _kategoriController.text,
-                                    )
+                                          _kategoriController.text,
+                                        )
                                         .map(
                                           (jenis) => ChoiceChip(
                                             label: Text(jenis),
@@ -1867,7 +1957,8 @@ class _JualPageState extends ConsumerState<JualPage> {
                                   controller: _materialController,
                                   decoration: const InputDecoration(
                                     border: OutlineInputBorder(),
-                                    hintText: 'Tulis material (contoh: PLATINA)',
+                                    hintText:
+                                        'Tulis material (contoh: PLATINA)',
                                   ),
                                 ),
                               ],
@@ -2128,28 +2219,41 @@ class _JualPageState extends ConsumerState<JualPage> {
                                   _pickFotoFromGallery();
                                 }
                               },
-                              itemBuilder: (BuildContext context) => [
-                                const PopupMenuItem<String>(
-                                  value: 'camera',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.camera_alt),
-                                      SizedBox(width: 8),
-                                      Text('Ambil Foto'),
+                              itemBuilder: (BuildContext context) => kIsWeb
+                                  ? [
+                                      const PopupMenuItem<String>(
+                                        value: 'gallery',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.upload_file),
+                                            SizedBox(width: 8),
+                                            Text('Pilih file gambar'),
+                                          ],
+                                        ),
+                                      ),
+                                    ]
+                                  : [
+                                      const PopupMenuItem<String>(
+                                        value: 'camera',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.camera_alt),
+                                            SizedBox(width: 8),
+                                            Text('Ambil Foto'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem<String>(
+                                        value: 'gallery',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.photo_library),
+                                            SizedBox(width: 8),
+                                            Text('Upload dari Galeri'),
+                                          ],
+                                        ),
+                                      ),
                                     ],
-                                  ),
-                                ),
-                                const PopupMenuItem<String>(
-                                  value: 'gallery',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.photo_library),
-                                      SizedBox(width: 8),
-                                      Text('Upload dari Galeri'),
-                                    ],
-                                  ),
-                                ),
-                              ],
                               child: ElevatedButton.icon(
                                 icon: const Icon(Icons.photo_camera),
                                 label: const Text('Pilih Foto'),
@@ -2159,22 +2263,29 @@ class _JualPageState extends ConsumerState<JualPage> {
                             ),
                           ],
                         ),
-                        if (_saleType == 'qsr' && _fotoFile == null) ...[
+                        if (_saleType == 'qsr' && !_hasFoto) ...[
                           const SizedBox(height: 8),
                           const Text(
                             'Foto WAJIB untuk QSR',
                             style: TextStyle(color: Colors.red, fontSize: 12),
                           ),
                         ],
-                        if (_fotoFile != null) ...[
+                        if (_hasFoto) ...[
                           const SizedBox(height: 8),
                           Center(
-                            child: Image.file(
-                              _fotoFile!,
-                              width: 160,
-                              height: 160,
-                              fit: BoxFit.cover,
-                            ),
+                            child: _fotoBytes != null
+                                ? Image.memory(
+                                    _fotoBytes!,
+                                    width: 160,
+                                    height: 160,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Image.file(
+                                    _fotoFile!,
+                                    width: 160,
+                                    height: 160,
+                                    fit: BoxFit.cover,
+                                  ),
                           ),
                         ],
                       ],

@@ -100,6 +100,27 @@ List<Map<String, dynamic>> groupOrdersWithItemsForOrderToday(
 ) {
   final Map<String, Map<String, dynamic>> ordersMap = {};
 
+  void copyFakturExtrasFromRow(
+    Map<String, dynamic> dest,
+    Map<String, dynamic> row,
+  ) {
+    for (final k in const [
+      'metadata',
+      'kondisi_barang',
+      'service_dp_amount',
+      'dp_amount',
+      'uang_muka',
+    ]) {
+      if (!row.containsKey(k)) continue;
+      final v = row[k];
+      if (v == null) continue;
+      final cur = dest[k];
+      final curEmpty =
+          cur == null || (cur is String && cur.toString().trim().isEmpty);
+      if (curEmpty) dest[k] = v;
+    }
+  }
+
   for (final row in rawData) {
     final orderId = row['order_id'].toString();
 
@@ -133,6 +154,9 @@ List<Map<String, dynamic>> groupOrdersWithItemsForOrderToday(
         'updated_at': row['updated_at'],
         'items': <Map<String, dynamic>>[],
       };
+      copyFakturExtrasFromRow(ordersMap[orderId]!, row);
+    } else {
+      copyFakturExtrasFromRow(ordersMap[orderId]!, row);
     }
 
     if (row['nama_item'] != null) {
@@ -391,9 +415,7 @@ class OrderTodayStatsNotifier
         final response = await ApiClient.get(uri.toString());
 
         if (response.statusCode != 200) {
-          throw Exception(
-            'Failed to load order stats: ${response.statusCode}',
-          );
+          throw Exception('Failed to load order stats: ${response.statusCode}');
         }
 
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -710,46 +732,46 @@ class TodayOrdersNotifier
         }
 
         if (response.statusCode != 200) {
-            _otNdjson(
-              hypothesisId: 'OT1',
-              location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
-              message: 'orders/daily non-200',
-              data: <String, Object?>{
-                'statusCode': response.statusCode,
-                'usedPath': usedPath,
-                'branchId': bid,
-                'responseLen': response.body.length,
-              },
-            );
-            throw Exception(
-              'Failed to load today orders: ${response.statusCode}',
-            );
-          }
+          _otNdjson(
+            hypothesisId: 'OT1',
+            location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
+            message: 'orders/daily non-200',
+            data: <String, Object?>{
+              'statusCode': response.statusCode,
+              'usedPath': usedPath,
+              'branchId': bid,
+              'responseLen': response.body.length,
+            },
+          );
+          throw Exception(
+            'Failed to load today orders: ${response.statusCode}',
+          );
+        }
 
-          final decoded = jsonDecode(response.body);
-          if (decoded is! List) {
-            _otNdjson(
-              hypothesisId: 'OT5',
-              location: 'order_today_provider.dart:fetchTodayOrders:bad_shape',
-              message: 'orders/daily: body is not JSON array',
-              data: <String, Object?>{
-                'runtimeType': '${decoded.runtimeType}',
-                'branchId': bid,
-              },
-            );
-            throw Exception(
-              'orders/daily: expected JSON array, got ${decoded.runtimeType}',
-            );
-          }
+        final decoded = jsonDecode(response.body);
+        if (decoded is! List) {
+          _otNdjson(
+            hypothesisId: 'OT5',
+            location: 'order_today_provider.dart:fetchTodayOrders:bad_shape',
+            message: 'orders/daily: body is not JSON array',
+            data: <String, Object?>{
+              'runtimeType': '${decoded.runtimeType}',
+              'branchId': bid,
+            },
+          );
+          throw Exception(
+            'orders/daily: expected JSON array, got ${decoded.runtimeType}',
+          );
+        }
 
-          final rawOrders = decoded
-              .map((dynamic order) => Map<String, dynamic>.from(order as Map))
-              .toList();
-          mergedRawCount += rawOrders.length;
+        final rawOrders = decoded
+            .map((dynamic order) => Map<String, dynamic>.from(order as Map))
+            .toList();
+        mergedRawCount += rawOrders.length;
 
-          // Selalu grup dari flat /orders/daily. Jangan GET /order-items — endpoint
-          // itu tidak memfilter cabang/tanggal dan memuat seluruh DB.
-          mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
+        // Selalu grup dari flat /orders/daily. Jangan GET /order-items — endpoint
+        // itu tidak memfilter cabang/tanggal dan memuat seluruh DB.
+        mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
       }
 
       _otNdjson(
@@ -884,7 +906,8 @@ class OrderTodayBundleSync {
     // Satu round-trip snapshot: jangan skip hanya karena health HTTP sempat false
     // selama WS masih terhubung ( pola sama seperti network_provider ).
     final wsLikelyUp = ref.read(webSocketProvider.notifier).isConnected;
-    final trySnapshot = branchIds.length == 1 &&
+    final trySnapshot =
+        branchIds.length == 1 &&
         (networkState.isOnline ||
             networkState.isBackendReachable ||
             wsLikelyUp);
@@ -897,7 +920,8 @@ class OrderTodayBundleSync {
           'branch_id': bid.toString(),
           'date': dateKey,
         };
-        if (_orderTodayOwnUserOnlyScope(userState) && userState.userId != null) {
+        if (_orderTodayOwnUserOnlyScope(userState) &&
+            userState.userId != null) {
           qp['user_id'] = userState.userId.toString();
         }
         final uri = Uri.parse(
@@ -937,7 +961,8 @@ class OrderTodayBundleSync {
 
           _otNdjson(
             hypothesisId: 'OT2',
-            location: 'order_today_provider.dart:OrderTodayBundleSync:snapshot_ok',
+            location:
+                'order_today_provider.dart:OrderTodayBundleSync:snapshot_ok',
             message: 'order-today-snapshot 200',
             data: <String, Object?>{
               'branchId': bid,

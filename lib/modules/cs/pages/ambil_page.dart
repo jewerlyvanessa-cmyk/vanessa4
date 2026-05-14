@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 // Conditional imports for platform-specific packages
@@ -35,18 +39,27 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       TextEditingController();
   final TextEditingController _namaItemController = TextEditingController();
   final TextEditingController _beratController = TextEditingController();
-  final TextEditingController _estimasiBiayaController = TextEditingController();
+  final TextEditingController _estimasiBiayaController =
+      TextEditingController();
   final TextEditingController _dpController = TextEditingController();
   final TextEditingController _keteranganController = TextEditingController();
 
   File? _fotoFile;
+  Uint8List? _fotoBytes;
+  String? _fotoName;
   bool _isLoading = false;
   bool _loadingOrderLookup = false;
   List<dynamic> _readyItems = [];
   bool _isLoadingItems = false;
   int? _selectedOrderId;
 
-  static const Set<String> _allowedReadyPickupOrderTypes = {'service', 'custom'};
+  static const Set<String> _allowedReadyPickupOrderTypes = {
+    'service',
+    'custom',
+  };
+
+  bool get _hasFoto =>
+      (_fotoBytes != null && _fotoBytes!.isNotEmpty) || _fotoFile != null;
 
   static double _parseLooseAmount(String raw) {
     var t = raw.trim();
@@ -101,12 +114,11 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
         final data = jsonDecode(response.body);
         setState(() {
           final rows = data is List ? data : const [];
-          _readyItems =
-              rows.where((row) {
-                if (row is! Map) return false;
-                final type = (row['order_type'] ?? '').toString().toLowerCase();
-                return _allowedReadyPickupOrderTypes.contains(type);
-              }).toList();
+          _readyItems = rows.where((row) {
+            if (row is! Map) return false;
+            final type = (row['order_type'] ?? '').toString().toLowerCase();
+            return _allowedReadyPickupOrderTypes.contains(type);
+          }).toList();
         });
       }
     } catch (e) {
@@ -131,12 +143,37 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     await _loadOrderFromOrderNumberField();
   }
 
-  Future<String?> _uploadFoto(File? foto) async {
-    if (foto == null) return null;
+  MediaType _detectImageMediaType(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    return MediaType('image', 'jpeg');
+  }
+
+  Future<String?> _uploadFoto() async {
+    if (!_hasFoto) return null;
     final storageUrl = NetworkConfig.storageUrl;
     final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri)
-      ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+    final request = http.MultipartRequest('POST', uri);
+    if (kIsWeb) {
+      final bytes = _fotoBytes;
+      if (bytes == null || bytes.isEmpty) return null;
+      final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
+          ? _fotoName!.trim()
+          : 'foto.jpg';
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: name,
+          contentType: _detectImageMediaType(name),
+        ),
+      );
+    } else {
+      final foto = _fotoFile;
+      if (foto == null) return null;
+      request.files.add(await http.MultipartFile.fromPath('file', foto.path));
+    }
     final token = NetworkConfig.authToken;
     if (token != null && token.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $token';
@@ -146,7 +183,11 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     if (response.statusCode == 200) {
       final respStr = await response.stream.bytesToString();
       final data = jsonDecode(respStr);
-      return data['url'] ?? data['fileUrl'] ?? data['path'];
+      final raw = data['url'] ?? data['fileUrl'] ?? data['path'];
+      if (raw is String && raw.startsWith('/')) {
+        return '$storageUrl$raw';
+      }
+      return raw?.toString();
     }
     return null;
   }
@@ -184,19 +225,20 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     if (items.isNotEmpty && items.first is Map) {
       it = Map<String, dynamic>.from(items.first as Map);
     }
-    final namaItem = (order['nama_item'] ??
-            order['item_name'] ??
-            it['nama_item'] ??
-            it['name'] ??
-            '')
-        .toString();
+    final namaItem =
+        (order['nama_item'] ??
+                order['item_name'] ??
+                it['nama_item'] ??
+                it['name'] ??
+                '')
+            .toString();
     final beratRaw =
         order['berat'] ?? order['weight'] ?? it['weight'] ?? it['berat'];
     setState(() {
       _selectedOrderId = id;
       _orderNumberController.text = (order['order_number'] ?? '').toString();
-      _customerController.text =
-          (order['customer_name'] ?? order['name'] ?? '').toString();
+      _customerController.text = (order['customer_name'] ?? order['name'] ?? '')
+          .toString();
       _customerPhoneController.text =
           (order['customer_phone'] ?? order['phone'] ?? order['no_hp'] ?? '')
               .toString();
@@ -240,9 +282,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
         if (!quiet) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text(
-                'Nomor ini bukan order Service atau Custom',
-              ),
+              content: Text('Nomor ini bukan order Service atau Custom'),
             ),
           );
         }
@@ -328,8 +368,8 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       }
 
       String? fotoUrl;
-      if (_fotoFile != null) {
-        fotoUrl = await _uploadFoto(_fotoFile);
+      if (_hasFoto) {
+        fotoUrl = await _uploadFoto();
       }
 
       final baseUrl = NetworkConfig.baseUrl;
@@ -395,12 +435,51 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   }
 
   Future<void> _pickImage() async {
+    if (kIsWeb) {
+      try {
+        final picked = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          allowMultiple: false,
+          withData: true,
+        );
+        final f = picked?.files.single;
+        if (f == null) return;
+        final bytes = f.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        setState(() {
+          _fotoBytes = bytes;
+          _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+          _fotoFile = null;
+        });
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+        }
+      }
+      return;
+    }
+
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
     if (pickedFile != null) {
       setState(() {
         _fotoFile = File(pickedFile.path);
+        _fotoBytes = null;
+        _fotoName = null;
       });
     }
   }
@@ -452,8 +531,9 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   ),
                   const SizedBox(width: 4),
                   IconButton(
-                    onPressed:
-                        _loadingOrderLookup ? null : _loadOrderFromOrderNumberField,
+                    onPressed: _loadingOrderLookup
+                        ? null
+                        : _loadOrderFromOrderNumberField,
                     icon: _loadingOrderLookup
                         ? SizedBox(
                             width: 22,
@@ -661,8 +741,9 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   Expanded(
                     child: Builder(
                       builder: (context) {
-                        final total =
-                            _parseLooseAmount(_estimasiBiayaController.text);
+                        final total = _parseLooseAmount(
+                          _estimasiBiayaController.text,
+                        );
                         final dp = _parseLooseAmount(_dpController.text);
                         final diff = total - dp;
                         final absStr = _fmtRpDots(diff.abs());
@@ -743,13 +824,13 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: _pickImage,
-                      icon: const Icon(Icons.photo),
-                      label: const Text('Pilih Foto'),
+                      icon: Icon(kIsWeb ? Icons.upload_file : Icons.photo),
+                      label: Text(kIsWeb ? 'Pilih file gambar' : 'Pilih Foto'),
                     ),
                   ),
                 ],
               ),
-              if (_fotoFile != null)
+              if (_hasFoto)
                 Padding(
                   padding: const EdgeInsets.only(top: 8.0),
                   child: Row(
@@ -762,7 +843,9 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                           border: Border.all(color: cs.outlineVariant),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Image.file(_fotoFile!, fit: BoxFit.cover),
+                        child: _fotoBytes != null
+                            ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
+                            : Image.file(_fotoFile!, fit: BoxFit.cover),
                       ),
                     ],
                   ),
@@ -827,7 +910,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                 LayoutBuilder(
                   builder: (context, c) {
                     final cs = Theme.of(context).colorScheme;
-final rows = <DataRow>[];
+                    final rows = <DataRow>[];
                     for (var i = 0; i < _readyItems.length; i++) {
                       final item = _readyItems[i] as Map;
                       rows.add(
@@ -842,8 +925,9 @@ final rows = <DataRow>[];
                               return cs.primary.withValues(alpha: 0.06);
                             }
                             return i.isOdd
-                                ? cs.surfaceContainerHighest
-                                    .withValues(alpha: 0.45)
+                                ? cs.surfaceContainerHighest.withValues(
+                                    alpha: 0.45,
+                                  )
                                 : null;
                           }),
                           cells: [
@@ -857,9 +941,7 @@ final rows = <DataRow>[];
                             ),
                             DataCell(Text('${item['customer_name'] ?? '—'}')),
                             DataCell(Text('${item['nama_item'] ?? '—'}')),
-                            DataCell(
-                              Text('${item['berat'] ?? '—'} gr'),
-                            ),
+                            DataCell(Text('${item['berat'] ?? '—'} gr')),
                             DataCell(Text('${item['customer_phone'] ?? '—'}')),
                           ],
                         ),
@@ -890,18 +972,28 @@ final rows = <DataRow>[];
                                 headingRowColor: WidgetStateProperty.all(
                                   cs.surfaceContainerHigh,
                                 ),
-dataRowMinHeight: 44,
+                                dataRowMinHeight: 44,
                                 dataRowMaxHeight: 56,
                                 columnSpacing: 12,
                                 horizontalMargin: 10,
                                 showCheckboxColumn: false,
                                 dividerThickness: 0.5,
                                 columns: [
-                                  DataColumn(label: dataTableColumnLabel('No. Order')),
-                                  DataColumn(label: dataTableColumnLabel('Pelanggan')),
-                                  DataColumn(label: dataTableColumnLabel('Item')),
-                                  DataColumn(label: dataTableColumnLabel('Berat')),
-                                  DataColumn(label: dataTableColumnLabel('No. HP')),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('No. Order'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Pelanggan'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Item'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Berat'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('No. HP'),
+                                  ),
                                 ],
                                 rows: rows,
                               ),

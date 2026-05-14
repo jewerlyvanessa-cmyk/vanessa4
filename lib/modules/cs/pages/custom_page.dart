@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'customers_page.dart';
 import 'faktur_page.dart';
@@ -54,6 +58,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
   Map<String, dynamic>? _selectedCustomer;
   File? _fotoFile;
+  Uint8List? _fotoBytes;
+  String? _fotoName;
   String _modeToko = 'TOKO'; // Mode selection: TOKO or ONLINE
   String _jenisBarang =
       'KALUNG'; // Item type: KALUNG, GELANG, CINCIN, ANTING, LIONTIN
@@ -63,6 +69,9 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   /// `null` = sama dengan cabang order (tidak kirim `pickup_branch_id`).
   int? _pickupBranchId;
 
+  bool get _hasFoto =>
+      (_fotoBytes != null && _fotoBytes!.isNotEmpty) || _fotoFile != null;
+
   @override
   void initState() {
     super.initState();
@@ -71,12 +80,37 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     });
   }
 
-  Future<String?> _uploadFoto(File? foto) async {
-    if (foto == null) return null;
+  MediaType _detectImageMediaType(String filePath) {
+    final lower = filePath.toLowerCase();
+    if (lower.endsWith('.png')) return MediaType('image', 'png');
+    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
+    return MediaType('image', 'jpeg');
+  }
+
+  Future<String?> _uploadFoto() async {
+    if (!_hasFoto) return null;
     final storageUrl = NetworkConfig.storageUrl;
     final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri)
-      ..files.add(await http.MultipartFile.fromPath('file', foto.path));
+    final request = http.MultipartRequest('POST', uri);
+    if (kIsWeb) {
+      final bytes = _fotoBytes;
+      if (bytes == null || bytes.isEmpty) return null;
+      final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
+          ? _fotoName!.trim()
+          : 'foto.jpg';
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: name,
+          contentType: _detectImageMediaType(name),
+        ),
+      );
+    } else {
+      final foto = _fotoFile;
+      if (foto == null) return null;
+      request.files.add(await http.MultipartFile.fromPath('file', foto.path));
+    }
     final token = NetworkConfig.authToken;
     if (token != null && token.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer $token';
@@ -89,7 +123,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
       if (url is String && url.startsWith('/')) {
         return '$storageUrl$url';
       }
-      return url;
+      return url?.toString();
     }
     return null;
   }
@@ -101,12 +135,51 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   }
 
   Future<void> _pickFoto() async {
+    if (kIsWeb) {
+      try {
+        final picked = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          allowMultiple: false,
+          withData: true,
+        );
+        final f = picked?.files.single;
+        if (f == null) return;
+        final bytes = f.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        setState(() {
+          _fotoBytes = bytes;
+          _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+          _fotoFile = null;
+        });
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+        }
+      }
+      return;
+    }
+
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.camera);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
         _fotoFile = compressedFile;
+        _fotoBytes = null;
+        _fotoName = null;
       });
     }
   }
@@ -238,7 +311,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     }
 
     // Foto WAJIB untuk Custom (referensi/desain)
-    if (_fotoFile == null) {
+    if (!_hasFoto) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -299,13 +372,17 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     }
 
     String? fotoUrl;
-    if (_fotoFile != null) {
-      fotoUrl = await _uploadFoto(_fotoFile);
+    if (_hasFoto) {
+      fotoUrl = await _uploadFoto();
     }
-    if (_fotoFile != null && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
+    if (_hasFoto && (fotoUrl == null || fotoUrl.toString().trim().isEmpty)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).')),
+          const SnackBar(
+            content: Text(
+              'Upload foto gagal. Coba ambil foto ulang (JPEG/PNG).',
+            ),
+          ),
         );
       }
       return;
@@ -494,8 +571,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
     // Listen to user state changes to regenerate order number when branch changes
     ref.listen(userStateProvider, (previous, next) {
-      final branchChanged =
-          previous == null || previous.branch != next.branch;
+      final branchChanged = previous == null || previous.branch != next.branch;
       if (branchChanged && mounted) {
         setState(() => _pickupBranchId = null);
       }
@@ -634,14 +710,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                                           ? TextEditingValue(
                                               text:
                                                   _selectedCustomer!['name'] ??
-                                                      _selectedCustomer!['nama'] ??
-                                                      '',
+                                                  _selectedCustomer!['nama'] ??
+                                                  '',
                                             )
                                           : null,
                                       optionsBuilder:
-                                          (
-                                            TextEditingValue textEditingValue,
-                                          ) {
+                                          (TextEditingValue textEditingValue) {
                                             if (textEditingValue.text == '') {
                                               return const Iterable<
                                                 Map<String, dynamic>
@@ -649,14 +723,18 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                                             }
                                             final input = textEditingValue.text
                                                 .toLowerCase();
-                                            final suggestions =
-                                                customerList.customers.where((c) {
-                                              final name =
-                                                  (c['name'] ?? c['nama'] ?? '')
-                                                      .toString()
-                                                      .toLowerCase();
-                                              return name.contains(input);
-                                            }).toList();
+                                            final suggestions = customerList
+                                                .customers
+                                                .where((c) {
+                                                  final name =
+                                                      (c['name'] ??
+                                                              c['nama'] ??
+                                                              '')
+                                                          .toString()
+                                                          .toLowerCase();
+                                                  return name.contains(input);
+                                                })
+                                                .toList();
                                             return suggestions;
                                           },
                                       displayStringForOption: (option) =>
@@ -760,11 +838,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                                                                 ),
                                                                 tooltip:
                                                                     'Tambah Customer',
-                                                                onPressed: () => _showAddCustomerDialog(
-                                                                  controller
-                                                                      .text,
-                                                                  controller,
-                                                                ),
+                                                                onPressed: () =>
+                                                                    _showAddCustomerDialog(
+                                                                      controller
+                                                                          .text,
+                                                                      controller,
+                                                                    ),
                                                                 padding:
                                                                     EdgeInsets
                                                                         .zero,
@@ -805,11 +884,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                                                                 ),
                                                                 tooltip:
                                                                     'Tambah Customer',
-                                                                onPressed: () => _showAddCustomerDialog(
-                                                                  controller
-                                                                      .text,
-                                                                  controller,
-                                                                ),
+                                                                onPressed: () =>
+                                                                    _showAddCustomerDialog(
+                                                                      controller
+                                                                          .text,
+                                                                      controller,
+                                                                    ),
                                                                 padding:
                                                                     EdgeInsets
                                                                         .zero,
@@ -1261,7 +1341,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              if (_fotoFile != null)
+              if (_hasFoto)
                 Container(
                   height: 200,
                   width: double.infinity,
@@ -1269,13 +1349,19 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                     border: Border.all(color: Colors.grey),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Image.file(_fotoFile!, fit: BoxFit.cover),
+                  child: _fotoBytes != null
+                      ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
+                      : Image.file(_fotoFile!, fit: BoxFit.cover),
                 ),
               const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: _pickFoto,
-                icon: const Icon(Icons.camera_alt),
-                label: Text(_fotoFile == null ? 'Ambil Foto' : 'Ganti Foto'),
+                icon: Icon(kIsWeb ? Icons.upload_file : Icons.camera_alt),
+                label: Text(
+                  !_hasFoto
+                      ? (kIsWeb ? 'Pilih file gambar' : 'Ambil Foto')
+                      : (kIsWeb ? 'Ganti file gambar' : 'Ganti Foto'),
+                ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   backgroundColor: Colors.blue,
