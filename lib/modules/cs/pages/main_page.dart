@@ -29,6 +29,8 @@ String getMainModuleForRole(String role) {
       return 'admin_toko';
     case 'admin_workshop':
       return 'admin_workshop';
+    case 'admin_warehouse':
+      return 'admin_warehouse';
     case 'tukang':
       return 'tukang';
     case 'manajer':
@@ -54,6 +56,9 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       break;
     case 'admin_workshop':
       navigator.pushReplacementNamed('/admin_workshop');
+      break;
+    case 'admin_warehouse':
+      navigator.pushReplacementNamed('/admin_warehouse');
       break;
     case 'tukang':
       navigator.pushReplacementNamed('/tukang');
@@ -101,6 +106,15 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (Match m) => '${m[1]}.',
     );
+  }
+
+  /// Tampilan user-facing: nomor order bila ada, else id internal.
+  String _orderDisplayRef(Map<String, dynamic> order) {
+    final n = (order['order_number'] ?? '').toString().trim();
+    if (n.isNotEmpty) return n;
+    final id = (order['order_id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return '#$id';
+    return '—';
   }
 
   @override
@@ -415,7 +429,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
 
     final columns = narrow
         ? <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Jenis')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Berat'), numeric: true),
@@ -423,7 +437,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
           ]
         : webWide
         ? <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Kode')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Kategori')),
@@ -441,7 +455,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
             const DataColumn(label: SizedBox(width: 44)),
           ]
         : <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Berat'), numeric: true),
             DataColumn(label: dataTableColumnLabel('Total'), numeric: true),
@@ -490,13 +504,12 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
       final line = lines[idx];
       final order = line.order;
       final item = line.item;
-      final oid = order['order_id']?.toString() ?? 'N/A';
       final nama = _lineItemName(item);
       final berat = _lineBerat(item);
       final totalStr = _lineTotalDisplay(item, order);
 
       final cells = <DataCell>[
-        DataCell(cell('#$oid', maxLines: 1)),
+        DataCell(cell(_orderDisplayRef(order), maxLines: 1)),
         if (narrow)
           DataCell(cell(order['order_type']?.toString() ?? '—', maxLines: 1)),
         if (!narrow && webWide) ...[

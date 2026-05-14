@@ -9,79 +9,7 @@ import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dar
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
-
-/// One logical row from bulk paste: `kode,nama,berat,qty,kadar`.
-class _BulkStockLine {
-  const _BulkStockLine({
-    required this.displayLine,
-    required this.kode,
-    required this.nama,
-    required this.berat,
-    required this.qty,
-    required this.purity,
-  });
-
-  final int displayLine;
-  final String kode;
-  final String nama;
-  final double berat;
-  final int qty;
-  final String purity;
-}
-
-List<_BulkStockLine> _parseBulkStockLines(String raw) {
-  final out = <_BulkStockLine>[];
-  final lines = raw.split(RegExp(r'\r?\n'));
-  var lineNo = 0;
-  for (final rawLine in lines) {
-    lineNo++;
-    final line = rawLine.trim();
-    if (line.isEmpty || line.startsWith('#')) continue;
-    final parts = line.contains(';')
-        ? line.split(';').map((s) => s.trim()).toList()
-        : line.split(',').map((s) => s.trim()).toList();
-    if (parts.length < 5) {
-      throw FormatException(
-        'Baris $lineNo: butuh 5 kolom — kode, nama, berat, qty, kadar '
-        '(pisah koma atau titik koma; jika nama mengandung koma gunakan titik koma).',
-      );
-    }
-    final kode = parts[0];
-    final nama = parts[1];
-    final berat = double.tryParse(parts[2].replaceAll(',', '.'));
-    final qty = int.tryParse(parts[3]);
-    final purity = parts[4].trim();
-    if (kode.isEmpty) {
-      throw FormatException('Baris $lineNo: kode kosong.');
-    }
-    if (nama.isEmpty) {
-      throw FormatException('Baris $lineNo: nama kosong.');
-    }
-    if (berat == null || berat <= 0) {
-      throw FormatException('Baris $lineNo: berat tidak valid.');
-    }
-    if (qty == null || qty <= 0) {
-      throw FormatException('Baris $lineNo: qty tidak valid.');
-    }
-    if (purity.isEmpty) {
-      throw FormatException('Baris $lineNo: kadar kosong.');
-    }
-    out.add(
-      _BulkStockLine(
-        displayLine: lineNo,
-        kode: kode,
-        nama: nama,
-        berat: berat,
-        qty: qty,
-        purity: purity,
-      ),
-    );
-  }
-  if (out.isEmpty) {
-    throw const FormatException('Tidak ada baris data (kosong atau hanya komentar #).');
-  }
-  return out;
-}
+import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
 
 class StockWarehousePage extends ConsumerStatefulWidget {
   const StockWarehousePage({super.key});
@@ -95,7 +23,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   String _error = '';
   List<dynamic> _items = [];
   String _search = '';
-  String _selectedStatus = 'all';
+  String _selectedStatus = 'ready';
   /// `null` = hanya tampilkan daftar jenis; non-null = detail stok untuk jenis itu.
   String? _jenisDetailFocus;
   // Note: saving state is handled inside the add dialog to avoid
@@ -137,7 +65,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Tambah Stok Warehouse'),
+              title: const Text('Tambah Stok'),
               content: SizedBox(
                 width: 420,
                 child: SingleChildScrollView(
@@ -395,60 +323,19 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
     required String jenis,
     required String tipe,
   }) async {
-    try {
-      final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
-
-      final payload = <String, dynamic>{
-        'name': name,
-        // Keep both for compatibility: some clients/backends use either field.
-        'item_code': kodeBarang,
-        'kode_produk': kodeBarang,
-        'weight': weight,
-        'quantity': quantity,
-        'status': 'ready',
-        'branch_id': userState.branch,
-        'source': 'manual_stockist',
-        'kategori': kategori,
-        'jenis': jenis,
-        'tipe': tipe,
-        'material': material,
-        if (purity.isNotEmpty) 'purity': purity,
-      };
-
-      final resp = await http.post(
-        Uri.parse('$baseUrl/items'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(payload),
-      );
-
-      if (resp.statusCode == 201 || resp.statusCode == 200) {
-        Map<String, dynamic>? created;
-        try {
-          final decoded = jsonDecode(resp.body);
-          if (decoded is Map) {
-            created = Map<String, dynamic>.from(decoded);
-          }
-        } catch (_) {}
-        return (created: created, error: null);
-      }
-
-      String backendMsg = resp.body;
-      try {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map && decoded['error'] != null) {
-          backendMsg = decoded['error'].toString();
-        } else if (decoded is Map && decoded['detail'] != null) {
-          backendMsg = decoded['detail'].toString();
-        }
-      } catch (_) {}
-      return (
-        created: null,
-        error: '(${resp.statusCode}) $backendMsg',
-      );
-    } catch (e) {
-      return (created: null, error: e.toString());
-    }
+    final userState = ref.read(userStateProvider);
+    return warehousePostStockItem(
+      branchId: userState.branch.toString(),
+      name: name,
+      kodeBarang: kodeBarang,
+      weight: weight,
+      quantity: quantity,
+      material: material,
+      purity: purity,
+      kategori: kategori,
+      jenis: jenis,
+      tipe: tipe,
+    );
   }
 
   Future<Map<String, dynamic>?> _addStockItem({
@@ -549,7 +436,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                               return 'Wajib diisi';
                             }
                             try {
-                              _parseBulkStockLines(v);
+                              parseWarehouseBulkLines(v);
                             } on FormatException catch (e) {
                               return e.message;
                             }
@@ -663,9 +550,9 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                       ? null
                       : () async {
                           if (formKey.currentState?.validate() != true) return;
-                          List<_BulkStockLine> rows;
+                          List<WarehouseBulkLine> rows;
                           try {
-                            rows = _parseBulkStockLines(bulkTextController.text);
+                            rows = parseWarehouseBulkLines(bulkTextController.text);
                           } on FormatException catch (e) {
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -783,7 +670,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
       final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
         setState(() {
-          _error = 'Gagal memuat stok warehouse (${resp.statusCode})';
+          _error = 'Gagal memuat stok (${resp.statusCode})';
           _isLoading = false;
         });
         return;
@@ -823,7 +710,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stock Warehouse'),
+        title: const Text('Stok'),
         actions: [
           IconButton(
             tooltip: 'Tambah stok massal',

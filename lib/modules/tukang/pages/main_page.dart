@@ -6,7 +6,7 @@ import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/technician_dashboard_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
-import 'work_queue_page.dart';
+import 'package:vanessa3/modules/admin_workshop/pages/workshop_orders_page.dart';
 import 'update_progress_page.dart';
 import 'material_usage_page.dart';
 import 'work_history_page.dart';
@@ -165,7 +165,7 @@ class TukangMainPage extends ConsumerWidget {
                   entries: [
                   ModuleMenuEntry(
                     icon: Icons.queue,
-                    label: 'ANTRIAN KERJA',
+                    label: 'ANTRIAN PEKERJAAN',
                     iconColor: Colors.blue,
                     outlined: true,
                     badgeCount: dashboardAsync.maybeWhen(
@@ -176,7 +176,7 @@ class TukangMainPage extends ConsumerWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const WorkQueuePage(),
+                          builder: (context) => const WorkshopOrdersPage(),
                         ),
                       );
                     },

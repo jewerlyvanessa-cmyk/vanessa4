@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class KasirReportsPage extends ConsumerStatefulWidget {
@@ -47,7 +48,7 @@ Map<String, double> _aggregatePaymentAmountsByMethod(Iterable<dynamic> payments)
 }
 
 class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
-  DateTime _selectedDate = DateTime.now();
+  DateTime _selectedDate = BusinessCalendar.todayWibDateOnly();
   bool _isLoading = true;
   String _error = '';
 
@@ -66,7 +67,7 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: BusinessCalendar.todayWibDateOnly(),
     );
     if (picked != null && picked != _selectedDate) {
       setState(() => _selectedDate = picked);

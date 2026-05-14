@@ -539,6 +539,15 @@ class OrderTodayPage extends ConsumerWidget {
 
   Color _getStatusColor(String? status) => OrderStatusUi.color(status);
 
+  /// Tampilan user-facing: nomor order bila ada, else id internal.
+  String _orderDisplayRef(Map<String, dynamic> order) {
+    final n = (order['order_number'] ?? '').toString().trim();
+    if (n.isNotEmpty) return n;
+    final id = (order['order_id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return '#$id';
+    return '—';
+  }
+
   Widget _todayOrdersTable(
     BuildContext context,
     List<Map<String, dynamic>> orders,
@@ -576,7 +585,7 @@ class OrderTodayPage extends ConsumerWidget {
 
     final columns = narrow
         ? <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Jenis')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Berat'), numeric: true),
@@ -584,7 +593,7 @@ class OrderTodayPage extends ConsumerWidget {
           ]
         : webWide
         ? <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Kode')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Kategori')),
@@ -602,7 +611,7 @@ class OrderTodayPage extends ConsumerWidget {
             const DataColumn(label: SizedBox(width: 44)),
           ]
         : <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
+            DataColumn(label: dataTableColumnLabel('Nomor order')),
             DataColumn(label: dataTableColumnLabel('Nama item')),
             DataColumn(label: dataTableColumnLabel('Berat'), numeric: true),
             DataColumn(label: dataTableColumnLabel('Total'), numeric: true),
@@ -616,7 +625,6 @@ class OrderTodayPage extends ConsumerWidget {
     for (var i = 0; i < lines.length; i++) {
       final order = Map<String, dynamic>.from(lines[i]['order'] as Map);
       final item = lines[i]['item'] as Map<String, dynamic>?;
-      final oid = order['order_id']?.toString() ?? '—';
       final nama = _lineNama(item);
       final berat = _lineBerat(item);
       final total = _lineTotal(order);
@@ -653,7 +661,7 @@ class OrderTodayPage extends ConsumerWidget {
       }
 
       final cells = <DataCell>[
-        DataCell(cell('#$oid', maxLines: 1)),
+        DataCell(cell(_orderDisplayRef(order), maxLines: 1)),
         if (narrow)
           DataCell(cell(order['order_type']?.toString() ?? '—', maxLines: 1)),
         if (!narrow && webWide) ...[

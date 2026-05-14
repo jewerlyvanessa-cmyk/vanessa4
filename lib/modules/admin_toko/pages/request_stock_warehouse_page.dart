@@ -7,8 +7,20 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 import 'package:vanessa3/utils/branch_types.dart';
+import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 
-/// Admin toko: buat transfer pending gudang → toko ini (ditandai di `notes` untuk stockist).
+class _CatJenisLine {
+  /// Selaras form order Jual (default kategori umum).
+  String? kategori = orderItemKategoriOptions.first;
+  String? jenis;
+  final TextEditingController qty = TextEditingController(text: '1');
+
+  void dispose() {
+    qty.dispose();
+  }
+}
+
+/// Admin toko: permintaan stok ke gudang per **kategori + jenis + qty** (bukan pilih SKU).
 class RequestStockWarehousePage extends ConsumerStatefulWidget {
   const RequestStockWarehousePage({super.key});
 
@@ -20,14 +32,11 @@ class RequestStockWarehousePage extends ConsumerStatefulWidget {
 class _RequestStockWarehousePageState
     extends ConsumerState<RequestStockWarehousePage> {
   List<dynamic> _branches = [];
-  List<Map<String, dynamic>> _warehouseItems = [];
+  final List<_CatJenisLine> _lines = [_CatJenisLine()];
   bool _loadingBranches = true;
-  bool _loadingItems = false;
   bool _submitting = false;
   String _error = '';
   String? _warehouseBranchId;
-  Map<String, dynamic>? _selectedItem;
-  final _qtyController = TextEditingController(text: '1');
   final _notesController = TextEditingController();
 
   @override
@@ -38,8 +47,10 @@ class _RequestStockWarehousePageState
 
   @override
   void dispose() {
-    _qtyController.dispose();
     _notesController.dispose();
+    for (final l in _lines) {
+      l.dispose();
+    }
     super.dispose();
   }
 
@@ -79,7 +90,7 @@ class _RequestStockWarehousePageState
           .where((b) {
             final id = b['branch_id']?.toString();
             if (id == null || id == user.branch.toString()) return false;
-            return branchTypeCanSupplyStockForTransfer(
+            return branchTypeIsWarehouse(
               b['branch_type']?.toString(),
             );
           })
@@ -98,63 +109,20 @@ class _RequestStockWarehousePageState
     }
   }
 
-  String _itemLabel(Map<String, dynamic> it) {
-    final code = (it['item_code'] ?? it['kode_produk'] ?? '').toString();
-    final name = (it['name'] ?? it['item_name'] ?? '').toString();
-    if (code.isNotEmpty && name.isNotEmpty) return '$code - $name';
-    return name.isNotEmpty ? name : code;
+  void _addLine() {
+    setState(() => _lines.add(_CatJenisLine()));
   }
 
-  Future<void> _loadItemsForWarehouse(String warehouseId) async {
+  void _removeLine(int index) {
+    if (_lines.length <= 1) return;
     setState(() {
-      _loadingItems = true;
-      _warehouseItems = [];
-      _selectedItem = null;
-      _error = '';
+      _lines[index].dispose();
+      _lines.removeAt(index);
     });
-    final baseUrl = NetworkConfig.baseUrl;
-    Future<List<Map<String, dynamic>>> fetch(String url) async {
-      final resp = await http.get(
-        Uri.parse(url),
-        headers: NetworkConfig.defaultHeaders,
-      );
-      if (resp.statusCode != 200) {
-        throw Exception('Gagal memuat stok gudang (${resp.statusCode})');
-      }
-      final decoded = jsonDecode(resp.body);
-      if (decoded is! List) return <Map<String, dynamic>>[];
-      return decoded
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .toList();
-    }
-
-    try {
-      final withStockType = await fetch(
-        '$baseUrl/items?branch_id=$warehouseId&stock_type=inventory&limit=200',
-      );
-      final items =
-          withStockType.isNotEmpty
-              ? withStockType
-              : await fetch('$baseUrl/items?branch_id=$warehouseId&limit=200');
-      if (!mounted) return;
-      setState(() {
-        _warehouseItems = items;
-        _loadingItems = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loadingItems = false;
-      });
-    }
   }
 
   Future<void> _submit() async {
     final warehouseId = _warehouseBranchId;
-    final item = _selectedItem;
-    final qty = int.tryParse(_qtyController.text.trim()) ?? 0;
     final user = ref.read(userStateProvider);
     final storeBranchId = user.branch.toString();
 
@@ -164,44 +132,84 @@ class _RequestStockWarehousePageState
       );
       return;
     }
-    if (item == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih barang')),
-      );
-      return;
-    }
-    if (qty <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Qty harus lebih dari 0')),
-      );
-      return;
+
+    final entries = <({String k, String j, int q})>[];
+    for (final l in _lines) {
+      final k = l.kategori?.trim() ?? '';
+      final j = l.jenis?.trim() ?? '';
+      final q = int.tryParse(l.qty.text.trim()) ?? 0;
+      if (k.isEmpty || j.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Setiap baris: pilih kategori dan jenis'),
+          ),
+        );
+        return;
+      }
+      if (!orderItemIsValidKategoriJenisPair(k, j)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Kombinasi kategori dan jenis tidak valid'),
+          ),
+        );
+        return;
+      }
+      if (q <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Qty harus lebih dari 0 di setiap baris')),
+        );
+        return;
+      }
+      entries.add((k: k, j: j, q: q));
     }
 
     setState(() => _submitting = true);
     final baseUrl = NetworkConfig.baseUrl;
-    final itemName = _itemLabel(item).trim();
+    final userNotes = _notesController.text.trim();
+    var ok = 0;
+    String? lastErr;
+
     try {
-      final resp = await http.post(
-        Uri.parse('$baseUrl/transfers'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'from_branch_id': warehouseId,
-          'to_branch_id': storeBranchId,
-          'item_name': itemName,
-          'quantity': qty,
-          'source_type': 'stok',
-          'courier': 'Permintaan toko',
-          'notes': buildStockRequestTransferNotes(_notesController.text),
-          'created_by': user.userId,
-        }),
-      );
+      for (final e in entries) {
+        final itemName = stockRequestItemNameFromCategoryJenis(
+          kategori: e.k,
+          jenis: e.j,
+        );
+        final notes = buildStockRequestNotesByCategory(
+          kategori: e.k,
+          jenis: e.j,
+          userNotes: userNotes.isEmpty ? null : userNotes,
+        );
+        final resp = await http.post(
+          Uri.parse('$baseUrl/transfers'),
+          headers: NetworkConfig.defaultHeaders,
+          body: jsonEncode({
+            'from_branch_id': warehouseId,
+            'to_branch_id': storeBranchId,
+            'item_name': itemName,
+            'quantity': e.q,
+            'source_type': 'stok',
+            'courier': 'Permintaan toko',
+            'notes': notes,
+            'created_by': user.userId,
+          }),
+        );
+        if (resp.statusCode == 201) {
+          ok++;
+        } else {
+          lastErr = '${resp.statusCode}: ${resp.body}';
+          break;
+        }
+      }
+
       if (!mounted) return;
       setState(() => _submitting = false);
-      if (resp.statusCode == 201) {
+
+      if (ok == entries.length) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Permintaan terkirim. Stockist gudang dapat memproses di menu terkait.',
+              ok == 1 ? 'Permintaan terkirim.' : '$ok permintaan terkirim.',
             ),
           ),
         );
@@ -209,7 +217,11 @@ class _RequestStockWarehousePageState
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Gagal (${resp.statusCode}): ${resp.body}'),
+            content: Text(
+              lastErr != null
+                  ? 'Gagal setelah $ok sukses: $lastErr'
+                  : 'Gagal mengirim permintaan',
+            ),
           ),
         );
       }
@@ -225,6 +237,7 @@ class _RequestStockWarehousePageState
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userStateProvider);
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -258,9 +271,10 @@ class _RequestStockWarehousePageState
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Hanya cabang bertipe Gudang atau Pusat (HQ) yang tampil — atur di Superadmin → Manajemen cabang.',
+                    'Kategori & jenis mengikuti form order Jual (CS). '
+                    'Hanya cabang bertipe Gudang (warehouse) yang tampil — atur di Superadmin.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      color: cs.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -273,104 +287,158 @@ class _RequestStockWarehousePageState
                       isDense: true,
                     ),
                     hint: const Text('Pilih gudang'),
-                    items:
-                        _branches.map((b) {
-                          final m = b as Map;
-                          final id = m['branch_id'].toString();
-                          final name = (m['name'] ?? id).toString();
-                          return DropdownMenuItem<String>(
-                            value: id,
-                            child: Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          );
-                        }).toList(),
+                    items: _branches.map((b) {
+                      final m = b as Map;
+                      final id = m['branch_id'].toString();
+                      final name = (m['name'] ?? id).toString();
+                      return DropdownMenuItem<String>(
+                        value: id,
+                        child: Text(
+                          name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
                     onChanged: (v) {
-                      setState(() {
-                        _warehouseBranchId = v;
-                        _selectedItem = null;
-                      });
-                      if (v != null) _loadItemsForWarehouse(v);
+                      setState(() => _warehouseBranchId = v);
                     },
                   ),
                   if (_branches.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        'Tidak ada cabang tipe Gudang atau Pusat selain toko ini. '
+                        'Tidak ada cabang tipe Gudang (warehouse) selain toko ini. '
                         'Jalankan migrasi cabang (branch_type) dan set tipe di Superadmin.',
                         style: TextStyle(
                           fontSize: 13,
-                          color: Theme.of(context).colorScheme.tertiary,
+                          color: cs.tertiary,
                         ),
                       ),
                     ),
-                  const SizedBox(height: 16),
                   if (_warehouseBranchId != null) ...[
-                    if (_loadingItems)
-                      const LinearProgressIndicator()
-                    else if (_warehouseItems.isEmpty)
-                      const Text('Tidak ada stok di gudang ini untuk dipilih.')
-                    else
-                      Autocomplete<Map<String, dynamic>>(
-                        key: ValueKey(_warehouseBranchId),
-                        displayStringForOption: _itemLabel,
-                        optionsBuilder: (textEditingValue) {
-                          final q = textEditingValue.text.trim().toLowerCase();
-                          if (q.isEmpty) {
-                            return _warehouseItems.take(40);
-                          }
-                          return _warehouseItems
-                              .where(
-                                (it) =>
-                                    _itemLabel(it).toLowerCase().contains(q),
-                              )
-                              .take(40);
-                        },
-                        onSelected: (it) {
-                          setState(() => _selectedItem = it);
-                        },
-                        fieldViewBuilder: (
-                          context,
-                          textEditingController,
-                          focusNode,
-                          onFieldSubmitted,
-                        ) {
-                          return TextFormField(
-                            controller: textEditingController,
-                            focusNode: focusNode,
-                            decoration: const InputDecoration(
-                              labelText: 'Barang (dari stok gudang)',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                              hintText: 'Ketik untuk mencari',
-                            ),
-                            onChanged: (_) {
-                              if (_selectedItem != null) {
-                                setState(() => _selectedItem = null);
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _qtyController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Jumlah',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Text(
+                          'Detail permintaan',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        TextButton.icon(
+                          onPressed: _addLine,
+                          icon: const Icon(Icons.add, size: 20),
+                          label: const Text('Baris'),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
+                    ...List.generate(_lines.length, (index) {
+                      final line = _lines[index];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    'Baris ${index + 1}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (_lines.length > 1)
+                                    IconButton(
+                                      tooltip: 'Hapus baris',
+                                      icon: Icon(
+                                        Icons.close,
+                                        color: cs.error,
+                                        size: 20,
+                                      ),
+                                      onPressed: () => _removeLine(index),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              DropdownButtonFormField<String>(
+                                key: ValueKey('kat-$index-${line.kategori}'),
+                                initialValue: line.kategori,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Kategori',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                items: orderItemKategoriOptions
+                                    .map(
+                                      (k) => DropdownMenuItem<String>(
+                                        value: k,
+                                        child: Text(k),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (v) {
+                                  setState(() {
+                                    line.kategori = v;
+                                    line.jenis = null;
+                                  });
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              DropdownButtonFormField<String>(
+                                key: ValueKey('jen-$index-${line.kategori}-${line.jenis}'),
+                                initialValue: line.jenis,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Jenis',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                hint: const Text('Pilih jenis'),
+                                items: orderItemJenisOptionsForKategori(
+                                  line.kategori ?? '',
+                                )
+                                    .map(
+                                      (j) => DropdownMenuItem<String>(
+                                        value: j,
+                                        child: Text(j),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: line.kategori == null
+                                    ? null
+                                    : (v) {
+                                        setState(() => line.jenis = v);
+                                      },
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: line.qty,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'Qty',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: _notesController,
                       maxLines: 3,
                       decoration: const InputDecoration(
-                        labelText: 'Catatan (opsional)',
+                        labelText: 'Catatan (opsional, sama untuk semua baris)',
                         border: OutlineInputBorder(),
                         isDense: true,
                         alignLabelWithHint: true,
@@ -379,29 +447,25 @@ class _RequestStockWarehousePageState
                     const SizedBox(height: 20),
                     FilledButton.icon(
                       onPressed:
-                          _submitting ||
-                              _loadingItems ||
-                              _warehouseBranchId == null
+                          _submitting || _warehouseBranchId == null
                           ? null
                           : _submit,
-                      icon:
-                          _submitting
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.send),
+                      icon: _submitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send),
                       label: const Text('Kirim permintaan'),
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Permintaan muncul di gudang sebagai transfer keluar pending. '
-                      'Stockist dapat menyetujui (stok terkirim) atau menolak.',
+                      'Stockist melihat permintaan di gudang. Menyetujui hanya mengubah status '
+                      '(tanpa mutasi stok otomatis di sistem untuk permintaan per kategori/jenis); '
+                      'pencatatan fisik dilakukan di gudang.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                   ],

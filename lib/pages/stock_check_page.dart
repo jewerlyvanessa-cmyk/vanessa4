@@ -1,18 +1,12 @@
-import 'dart:convert';
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart'
     show showStockHistorySheet, stockBranchDisplayName;
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart'
     show stockItemStatusLabel;
-import 'package:vanessa3/utils/network_config.dart';
-
-import 'package:mobile_scanner/mobile_scanner.dart'
-    if (dart.library.html) '../utils/mobile_scanner_stub.dart';
+import 'package:vanessa3/modules/stockist/stock_lookup_by_code.dart';
+import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 class StockCheckPage extends ConsumerStatefulWidget {
   const StockCheckPage({super.key});
@@ -23,7 +17,6 @@ class StockCheckPage extends ConsumerStatefulWidget {
 
 class _StockCheckPageState extends ConsumerState<StockCheckPage> {
   final _codeCtrl = TextEditingController();
-  bool _scannerEnabled = true;
   bool _loading = false;
   String _error = '';
   List<Map<String, dynamic>> _items = const [];
@@ -42,7 +35,7 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
       final id = (b['branch_id'] ?? '').toString();
       if (id != bid) continue;
       final alias = (b['alias'] ?? '').toString().trim();
-        if (alias.isNotEmpty) return alias;
+      if (alias.isNotEmpty) return alias;
       final name = (b['name'] ?? '').toString().trim();
       if (name.isNotEmpty) return name;
     }
@@ -60,51 +53,9 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final user = ref.read(userStateProvider);
       final branchId = user.branch.toString().trim();
-
-      Uri uri = Uri.parse('$baseUrl/items').replace(
-        queryParameters: <String, String>{
-          if (branchId.isNotEmpty) 'branch_id': branchId,
-          'item_code': code,
-          'limit': '10',
-        },
-      );
-
-      var resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        final list = (decoded is List ? decoded : const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-        if (list.isNotEmpty) {
-          setState(() {
-            _items = list;
-            _loading = false;
-          });
-          return;
-        }
-      }
-
-      // Fallback: try search (kode / nama / id).
-      uri = Uri.parse('$baseUrl/items').replace(
-        queryParameters: <String, String>{
-          if (branchId.isNotEmpty) 'branch_id': branchId,
-          'search': code,
-          'limit': '10',
-        },
-      );
-      resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-      if (resp.statusCode != 200) {
-        throw Exception('HTTP ${resp.statusCode}');
-      }
-      final decoded2 = jsonDecode(resp.body);
-      final list2 = (decoded2 is List ? decoded2 : const [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      final list2 = await fetchStockItemsByCode(code: code, branchId: branchId);
 
       setState(() {
         _items = list2;
@@ -119,79 +70,14 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
     }
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    if (!_scannerEnabled) return;
-    final raw = capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
-    final code = (raw ?? '').toString().trim();
-    if (code.isEmpty) return;
-
-    setState(() {
-      _scannerEnabled = false;
-      _codeCtrl.text = code;
-    });
-    _lookup(code);
-  }
-
-  Widget _scannerPanel(ColorScheme cs) {
-    if (kIsWeb) {
-      return _webScannerStub(cs);
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: Stack(
-        children: [
-          AspectRatio(
-            aspectRatio: 1,
-            child: MobileScanner(
-              onDetect: _onDetect,
-            ),
-          ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: cs.primary.withValues(alpha: 0.75),
-                      width: 2,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 10,
-            top: 10,
-            child: FilledButton.tonalIcon(
-              onPressed: () {
-                setState(() => _scannerEnabled = !_scannerEnabled);
-              },
-              icon: Icon(_scannerEnabled ? Icons.pause : Icons.play_arrow),
-              label: Text(_scannerEnabled ? 'Pause' : 'Scan'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _webScannerStub(ColorScheme cs) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.6)),
-      ),
-      child: const AspectRatio(
-        aspectRatio: 1,
-        child: Center(
-          child: Text('Scanner tidak tersedia di web.\nGunakan input manual.'),
-        ),
-      ),
-    );
+  /// Layar scan standar aplikasi (`pushQrScanPage`), sama seperti kasir / CS / stockist lain.
+  Future<void> _openStandardScan() async {
+    if (_loading) return;
+    final raw = await pushQrScanPage(context, title: 'Scan QR — Cek stok');
+    if (!mounted || raw == null || raw.trim().isEmpty) return;
+    final code = raw.trim();
+    setState(() => _codeCtrl.text = code);
+    await _lookup(code);
   }
 
   Widget _itemCard(BuildContext context, Map<String, dynamic> item) {
@@ -288,9 +174,7 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () {
-                      setState(() => _scannerEnabled = true);
-                    },
+                    onPressed: _loading ? null : _openStandardScan,
                     icon: const Icon(Icons.qr_code_scanner),
                     label: const Text('Scan lagi'),
                   ),
@@ -299,7 +183,8 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
             ),
             if (status.isNotEmpty &&
                 (status.toLowerCase() != status ||
-                    status.toLowerCase() != stockItemStatusLabel(status).toLowerCase())) ...[
+                    status.toLowerCase() !=
+                        stockItemStatusLabel(status).toLowerCase())) ...[
               const SizedBox(height: 8),
               Text(
                 'Status: $status',
@@ -349,7 +234,6 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
                 _codeCtrl.clear();
                 _items = const [];
                 _error = '';
-                _scannerEnabled = true;
               });
             },
             icon: const Icon(Icons.clear_all),
@@ -359,7 +243,19 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
         children: [
-          _scannerPanel(cs),
+          FilledButton.icon(
+            onPressed: _loading ? null : _openStandardScan,
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Pindai QR / barcode'),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Memakai layar scan standar aplikasi (sama seperti kasir / menu lain). '
+            'Anda juga bisa mengetik kode di bawah.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _codeCtrl,
@@ -368,10 +264,20 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
               hintText: 'Masukkan kode item (barcode / QR)',
               border: const OutlineInputBorder(),
               isDense: true,
-              suffixIcon: IconButton(
-                tooltip: 'Cek',
-                icon: const Icon(Icons.arrow_forward),
-                onPressed: _loading ? null : () => _lookup(_codeCtrl.text),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Pindai QR',
+                    onPressed: _loading ? null : _openStandardScan,
+                    icon: const Icon(Icons.qr_code_scanner),
+                  ),
+                  IconButton(
+                    tooltip: 'Cek',
+                    onPressed: _loading ? null : () => _lookup(_codeCtrl.text),
+                    icon: const Icon(Icons.arrow_forward),
+                  ),
+                ],
               ),
             ),
             onSubmitted: (v) => _lookup(v),
@@ -390,7 +296,7 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
             ..._items.map((it) => _itemCard(context, it))
           else if (!_loading && _error.isEmpty)
             Text(
-              'Scan barcode/QR atau ketik kode untuk melihat data item.',
+              'Pindai QR/barcode atau ketik kode untuk melihat data item.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant,
                   ),
@@ -400,4 +306,3 @@ class _StockCheckPageState extends ConsumerState<StockCheckPage> {
     );
   }
 }
-

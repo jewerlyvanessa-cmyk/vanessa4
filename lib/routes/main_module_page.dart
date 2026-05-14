@@ -288,6 +288,8 @@ String getMainModuleForRole(String role) {
       return 'adminToko';
     case 'admin_workshop':
       return 'admin_workshop';
+    case 'admin_warehouse':
+      return 'admin_warehouse';
     case 'tukang':
       return 'tukang';
     case 'manajer':
@@ -316,6 +318,9 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       break;
     case 'admin_workshop':
       navigator.pushReplacementNamed('/admin_workshop');
+      break;
+    case 'admin_warehouse':
+      navigator.pushReplacementNamed('/admin_warehouse');
       break;
     case 'manajer':
       navigator.pushReplacementNamed('/manager');

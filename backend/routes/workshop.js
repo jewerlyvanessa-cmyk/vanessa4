@@ -10,6 +10,8 @@ const {
   orderVisibleAtWorkshopBranchId,
   orderVisibleForWorkshopStatusPut,
   sqlWorkshopTukangQueueStatuses,
+  sqlWorkshopOrderIsUnassigned,
+  sqlWorkshopOrderAssignedToTechnician,
   jsonSafeDbRow,
 } = require('../lib/orders_workshop_helpers');
 
@@ -75,24 +77,7 @@ workshopApi.get("/work-queue", async (req, res) => {
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
 
     if (unassignedOnly) {
-      // "Antrian" = belum ada teknisi terikat (ID positif di metadata). Jangan hanya cek string kosong:
-      // nilai sampah ("null", spasi) atau key iseng tidak boleh menutup order dari antrian tukang.
-      // orders.user_id jangan dipakai di sini — sering kasir/pembuat order, bukan teknisi.
-      if (hasMetaWq) {
-        inner += ` AND NOT (
-          (
-            COALESCE(o.metadata->>'assigned_technician_id', '') ~ '^[0-9]+$'
-            AND (NULLIF(BTRIM(o.metadata->>'assigned_technician_id'), ''))::bigint > 0
-          )
-          OR (
-            COALESCE(o.metadata->>'assigned_technician', '') ~ '^[0-9]+$'
-            AND (NULLIF(BTRIM(o.metadata->>'assigned_technician'), ''))::bigint > 0
-          )
-        )`;
-      } else {
-        // DB tanpa metadata: penugasan legacy memakai orders.user_id sebagai teknisi.
-        inner += ` AND o.user_id IS NULL`;
-      }
+      inner += ` AND (${sqlWorkshopOrderIsUnassigned('o', hasMetaWq)})`;
     }
 
     // Dengan technician_id: filter "pekerjaan milik teknisi ini" (halaman Update Progress).
@@ -101,10 +86,7 @@ workshopApi.get("/work-queue", async (req, res) => {
     // Tanpa kolom metadata: legacy memakai orders.user_id sebagai teknisi.
     if (Number.isFinite(technicianId) && technicianId > 0) {
       if (hasMetaWq) {
-        inner += ` AND (
-          COALESCE(o.metadata->>'assigned_technician_id', '') = $2::text
-          OR COALESCE(o.metadata->>'assigned_technician', '') = $2::text
-        )`;
+        inner += ` AND (${sqlWorkshopOrderAssignedToTechnician('o', 2, hasMetaWq)})`;
         params.push(technicianId);
       } else {
         inner += ` AND o.user_id = $2`;
@@ -171,7 +153,7 @@ app.get('/api/workshop/service-incoming', async (req, res) => {
       return res.status(400).json({ error: 'branch_id is required' });
     }
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    if (!new Set(['stockist', 'admin_workshop', 'superadmin', 'manajer']).has(role)) {
+    if (!new Set(['stockist', 'admin_warehouse', 'admin_workshop', 'superadmin', 'manajer']).has(role)) {
       return res.status(403).json({ error: 'Role tidak diizinkan' });
     }
     const hasPickupSi = await ordersHasPickupBranchColumn(db);
@@ -1270,8 +1252,37 @@ technicianApi.get("/dashboard", async (req, res) => {
     const hasMetaTd = await ordersHasMetadataColumn(db);
     const brScopeTd = sqlOrdersVisibleAtWorkshopBranch('o', 1, hasPickupTd, hasMetaTd);
 
-    // Statistik order service/custom di cabang bengkel (branch / pickup / metadata.service_workshop_branch_id).
-    const statsResult = await db.query(`
+    const userIdTd = parseInt(String(req.query.user_id ?? ''), 10);
+    const userIdTdOk = Number.isFinite(userIdTd) && userIdTd > 0;
+
+    const queueStatusesTd = sqlWorkshopTukangQueueStatuses('o');
+    const unassTd = sqlWorkshopOrderIsUnassigned('o', hasMetaTd);
+    const assTd = sqlWorkshopOrderAssignedToTechnician('o', 2, hasMetaTd);
+
+    let statsResult;
+    if (hasMetaTd && userIdTdOk) {
+      statsResult = await db.query(
+        `
+      SELECT
+        COUNT(*) FILTER (
+          WHERE (${queueStatusesTd}) AND (${unassTd})
+        )::int AS pending_work_orders,
+        COUNT(*) FILTER (
+          WHERE (${queueStatusesTd}) AND (${assTd})
+        )::int AS in_progress_work_orders,
+        COUNT(*) FILTER (
+          WHERE o.status::text IN ('completed', 'delivered', 'done_workshop', 'ready_for_pickup')
+        )::int AS completed_work_orders
+      FROM orders o
+      WHERE ${brScopeTd}
+        AND o.order_type::text IN ('service', 'custom')
+        AND DATE(o.created_at) = CURRENT_DATE
+    `,
+        [branchId, userIdTd]
+      );
+    } else {
+      statsResult = await db.query(
+        `
       SELECT
         COUNT(CASE WHEN o.status::text IN ('in_workshop', 'repairing', 'polishing', 'custom_work', 'sent-to-workshop') THEN 1 END) as pending_work_orders,
         COUNT(CASE WHEN o.status::text IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_work_orders,
@@ -1280,7 +1291,10 @@ technicianApi.get("/dashboard", async (req, res) => {
       WHERE ${brScopeTd}
         AND o.order_type::text IN ('service', 'custom')
         AND DATE(o.created_at) = CURRENT_DATE
-    `, [branchId]);
+    `,
+        [branchId]
+      );
+    }
 
     const stats = statsResult.rows[0];
 
@@ -1335,7 +1349,8 @@ technicianApi.get("/dashboard", async (req, res) => {
 
   app.use('/api/technician', technicianApi);
 
-// Get workshop orders for admin workshop — daftar default = antrian kerja tukang (sama /api/workshop/work-queue).
+// Get workshop orders — antrian bengkel. Query `unassigned_only=1` (dipakai UI «Antrian pekerjaan»):
+// sembunyikan order yang sudah punya teknisi di metadata, supaya hanya muncul di Update Progress milik teknisi itu.
 // scope=all (default): semua order terlihat di cabang bengkel; cross_branch / local = sempitkan by cabang asal.
 app.get('/workshop-orders', async (req, res) => {
   try {
@@ -1403,6 +1418,7 @@ app.get('/workshop-orders', async (req, res) => {
       const roleWo = (req.user?.role ?? '').toString().trim().toLowerCase();
       const showWarehouseQueue = new Set([
         'admin_workshop',
+        'admin_warehouse',
         'stockist',
         'superadmin',
         'manajer',
@@ -1418,6 +1434,17 @@ app.get('/workshop-orders', async (req, res) => {
 
     if (conditions.length > 0) {
       innerWhere += ' AND ' + conditions.join(' AND ');
+    }
+
+    const unassignedOnlyWoRaw = String(req.query.unassigned_only ?? '')
+      .trim()
+      .toLowerCase();
+    const unassignedOnlyWo =
+      unassignedOnlyWoRaw === '1' ||
+      unassignedOnlyWoRaw === 'true' ||
+      unassignedOnlyWoRaw === 'yes';
+    if (unassignedOnlyWo) {
+      innerWhere += ` AND (${sqlWorkshopOrderIsUnassigned('o', hasMetaWo)})`;
     }
 
     const innerOrderBy = orderCompletedView
@@ -1506,6 +1533,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
       'superadmin',
       'admin_toko',
       'admin_workshop',
+      'admin_warehouse',
       'tukang',
       'stockist',
       'manajer',
@@ -1535,7 +1563,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     const receivingFromWarehouse =
       currentStatus === 'awaiting_warehouse' &&
       nextStatusRaw === 'sent-to-workshop' &&
-      new Set(['stockist', 'admin_workshop', 'superadmin', 'manajer']).has(role);
+      new Set(['stockist', 'admin_warehouse', 'admin_workshop', 'superadmin', 'manajer']).has(role);
     // Sumber kebenaran sama GET /workshop-orders (SQL), hindari false negative dari parse metadata di Node.
     if (!receivingFromWarehouse) {
       const visiblePut = await orderVisibleForWorkshopStatusPut(
@@ -1557,6 +1585,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     const allowedByRole = {
       admin_toko: new Set(['awaiting_warehouse', 'ready_for_pickup']),
       stockist: new Set(['sent-to-workshop']),
+      admin_warehouse: new Set(['sent-to-workshop']),
       admin_workshop: new Set(ADMIN_WORKSHOP_PUT_ALLOWED_STATUSES),
       tukang: new Set([
         'in_workshop',
@@ -1655,20 +1684,41 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
         [
           nextStatusRaw,
           orderId,
-          JSON.stringify({ service_workshop_branch_id: String(branchId) }),
+          JSON.stringify({
+            service_workshop_branch_id: String(branchId),
+            service_origin_branch_id: String(order.branch_id),
+          }),
         ]
       );
     } else if (awaitingToWorkshop && !hasMetaPut) {
       // Tanpa kolom metadata, service_workshop_branch_id tidak tersimpan — order tetap
       // branch_id toko sehingga tidak lolos filter bengkel. Pindahkan cabang asal ke bengkel yang menerima.
-      await db.query(
-        `
+      // Simpan cabang toko asal di pickup_branch_id bila kosong, supaya admin toko masih lolos
+      // `orderVisibleForWorkshopStatusPut` / GET saat `branch_id` sudah di bengkel.
+      const originStoreId = order.branch_id;
+      if (hasPickupPut) {
+        await db.query(
+          `
+          UPDATE orders
+          SET
+            status = $1,
+            branch_id = $2::bigint,
+            pickup_branch_id = COALESCE(pickup_branch_id, $3::bigint),
+            updated_at = NOW()
+          WHERE order_id = $4
+        `,
+          [nextStatusRaw, branchId, originStoreId, orderId]
+        );
+      } else {
+        await db.query(
+          `
           UPDATE orders
           SET status = $1, branch_id = $2::bigint, updated_at = NOW()
           WHERE order_id = $3
         `,
-        [nextStatusRaw, branchId, orderId]
-      );
+          [nextStatusRaw, branchId, orderId]
+        );
+      }
     } else {
       await db.query(
         `

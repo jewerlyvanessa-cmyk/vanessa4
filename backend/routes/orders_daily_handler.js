@@ -4,11 +4,7 @@ const {
   getOrderItemsPkColumn,
   orderItemLineAmountSql,
 } = require('./order_items_sql');
-
-const ORDER_CALENDAR_TIMEZONE =
-  /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-    ? String(process.env.BUSINESS_TIMEZONE).trim()
-    : 'Asia/Jakarta';
+const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
 
 /** @type {boolean | null} */
 let _cachedPaymentsRevenueBranchColumn = null;
@@ -160,11 +156,10 @@ async function fetchOrdersDailyPayload(req) {
     const dateRef = filterUid != null ? '$3' : '$2';
     const activitySql = `(
           ${createdDateMatch(dateRef)}
-          OR EXISTS (
-            SELECT 1
+          OR o.order_id IN (
+            SELECT p.order_id
             FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
+            WHERE p.status = 'completed'
               AND ${paymentDateMatch('p', dateRef)}
           )
         )`;
@@ -182,11 +177,10 @@ async function fetchOrdersDailyPayload(req) {
   } else {
     const activitySql = `(
           ${createdDateMatch(nowDateRef)}
-          OR EXISTS (
-            SELECT 1
+          OR o.order_id IN (
+            SELECT p.order_id
             FROM payments p
-            WHERE p.order_id = o.order_id
-              AND p.status = 'completed'
+            WHERE p.status = 'completed'
               AND ${paymentDateMatch('p', nowDateRef)}
           )
         )`;
@@ -277,14 +271,16 @@ async function fetchOrdersDailyPayload(req) {
   }
   ordersSql += ' ORDER BY o.created_at DESC';
 
-  const ordersRes = await db.query(ordersSql, ordersParams);
+  const [ordersRes, pk] = await Promise.all([
+    db.query(ordersSql, ordersParams),
+    getOrderItemsPkColumn(),
+  ]);
   const orderRows = ordersRes.rows;
   if (orderRows.length === 0) {
     return { ok: true, rows: [] };
   }
 
   const orderIds = orderRows.map((r) => r.order_id).filter((id) => id != null);
-  const pk = await getOrderItemsPkColumn();
   if (!/^(order_item_id|id)$/.test(String(pk))) {
     return {
       ok: false,

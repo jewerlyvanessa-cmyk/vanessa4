@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'daily_orders_payments_page.dart';
+import 'service_awaiting_store_receipt_page.dart';
 import 'goods_transfer_page.dart';
 import 'request_stock_warehouse_page.dart';
 import 'stock_mutation_page.dart';
@@ -30,6 +31,8 @@ String getMainModuleForRole(String role) {
       return 'admin_toko';
     case 'admin_workshop':
       return 'admin_workshop';
+    case 'admin_warehouse':
+      return 'admin_warehouse';
     case 'tukang':
       return 'tukang';
     case 'manajer':
@@ -55,6 +58,9 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       break;
     case 'admin_workshop':
       navigator.pushReplacementNamed('/admin_workshop');
+      break;
+    case 'admin_warehouse':
+      navigator.pushReplacementNamed('/admin_warehouse');
       break;
     case 'tukang':
       navigator.pushReplacementNamed('/tukang');
@@ -200,6 +206,18 @@ class AdminTokoMainPage extends ConsumerWidget {
                         builder: (context) => const DailyOrdersPaymentsPage(
                           serviceCustomMode: true,
                         ),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.handyman_outlined,
+                    label: 'Terima dari bengkel',
+                    iconColor: Colors.indigo,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            const ServiceAwaitingStoreReceiptPage(),
                       ),
                     ),
                   ),

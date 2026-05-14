@@ -22,6 +22,7 @@ import '../modules/superadmin/pages/main_page.dart';
 // Order Today lives under CS module (shared view)
 import '../modules/admin_toko/pages/main_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
+import '../modules/admin_warehouse/pages/main_page.dart';
 import '../modules/tukang/pages/main_page.dart';
 import '../modules/manajer/pages/main_page.dart';
 import '../modules/manajer/pages/completed_orders_today_page.dart';
@@ -49,6 +50,7 @@ class AppRoutes {
   static const String tukang = '/tukang';
   static const String adminToko = '/admin_toko';
   static const String adminWorkshop = '/admin_workshop';
+  static const String adminWarehouse = '/admin_warehouse';
   static const String manajer = '/manager';
   static const String customers = '/customers';
   static const String manajerCompletedOrdersToday =
@@ -72,6 +74,7 @@ class AppRoutes {
     superadmin: (context) => const SuperadminMainPage(),
     adminToko: (context) => const AdminTokoMainPage(),
     adminWorkshop: (context) => const AdminWorkshopMainPage(),
+    adminWarehouse: (context) => const AdminWarehouseMainPage(),
     tukang: (context) => const TukangMainPage(),
     manajer: (context) => const ManajerMainPage(),
     manajerCompletedOrdersToday: (context) => const CompletedOrdersTodayPage(),
@@ -173,6 +176,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               break;
             case 'admin_workshop':
               route = AppRoutes.adminWorkshop;
+              break;
+            case 'admin_warehouse':
+              route = AppRoutes.adminWarehouse;
               break;
             case 'manajer':
               route = AppRoutes.manajer;

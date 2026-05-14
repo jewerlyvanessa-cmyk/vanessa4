@@ -812,7 +812,21 @@ dataRowMinHeight: narrow ? 40 : 52,
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        centerTitle: false,
         title: const Text('Manajemen Cabang'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: () => _showBranchForm(),
+              icon: const Icon(Icons.add),
+              label: const Text('Tambah cabang'),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+              ),
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -927,10 +941,6 @@ dataRowMinHeight: narrow ? 40 : 52,
                           ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showBranchForm(),
-        child: const Icon(Icons.add),
       ),
     );
   }

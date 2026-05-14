@@ -4,6 +4,7 @@ const {
   parseKodeProdukFromTransferItemLabel,
   extractKurirFromTransferNotes,
   extractTransferSourceTypeFromNotes,
+  transferSkipStockMovementOnComplete,
 } = require('../lib/transfer_helpers');
 
 /** GET/POST/PUT /transfers */
@@ -12,7 +13,7 @@ function registerTransfersRoutes(app, deps) {
 
 app.get('/transfers', async (req, res) => {
   try {
-    const { branch_id, status, type, purpose } = req.query;
+    const { branch_id, status, type, purpose, created_by } = req.query;
 
     // Backward-compatible: columns may not exist yet.
     async function hasTransfersColumn(columnName) {
@@ -98,6 +99,13 @@ app.get('/transfers', async (req, res) => {
     if (String(purpose || '').trim().toLowerCase() === 'stock_request') {
       query += ` AND COALESCE(t.notes, '') ILIKE $${paramIndex}`;
       params.push('%[PERMINTAAN_STOK]%');
+      paramIndex++;
+    }
+
+    const createdByFilter = parseInt(String(created_by ?? '').trim(), 10);
+    if (Number.isFinite(createdByFilter) && createdByFilter > 0) {
+      query += ` AND t.created_by = $${paramIndex}`;
+      params.push(createdByFilter);
       paramIndex++;
     }
 
@@ -358,6 +366,9 @@ app.put('/transfers/:id', async (req, res) => {
 
       // Apply stock movement only once when transitioning into "completed"
       if (status === 'completed' && prevStatus !== 'completed') {
+        if (transferSkipStockMovementOnComplete(transfer.notes)) {
+          // Permintaan per kategori/jenis: tidak ada SKU pasti di gudang — hanya update status.
+        } else {
         const fromBranchId = transfer.from_branch_id;
         const toBranchId = transfer.to_branch_id;
         const qty = parseInt(transfer.quantity, 10);
@@ -673,6 +684,7 @@ app.put('/transfers/:id', async (req, res) => {
             approverUserId,
           ]
         );
+        }
       }
 
       await client.query('COMMIT');

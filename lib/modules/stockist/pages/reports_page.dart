@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stockist_input_report_print.dart';
 
+/// Laporan input stok oleh **user login** hanya untuk **cabang aktif** (`user.branch`),
+/// bukan cabang lain. Data diambil via `GET /items?branch_id=<aktif>&created_by=<userId>`.
 class StockistReportsPage extends ConsumerStatefulWidget {
   const StockistReportsPage({super.key});
 
@@ -18,70 +22,21 @@ class StockistReportsPage extends ConsumerStatefulWidget {
 class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
   bool _isLoading = true;
   String? _error;
-  bool _isLoadingBranches = false;
+  bool _missingUserId = false;
+  bool _missingBranch = false;
 
-  List<Map<String, dynamic>> _transfers = const [];
   List<Map<String, dynamic>> _items = const [];
-  List<Map<String, dynamic>> _availableBranches = const [];
 
-  // Filters
   late DateTime _fromDate;
   late DateTime _toDate;
-  String? _selectedBranchId;
-  bool _dirtyFilters = false;
 
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
+    _fromDate = DateTime(now.year, now.month, now.day);
     _toDate = DateTime(now.year, now.month, now.day, 23, 59, 59);
-    final from = now.subtract(const Duration(days: 30));
-    _fromDate = DateTime(from.year, from.month, from.day);
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _ensureBranchesLoaded();
-      await _load();
-    });
-  }
-
-  Future<void> _ensureBranchesLoaded() async {
-    if (_availableBranches.isNotEmpty) return;
-
-    final user = ref.read(userStateProvider);
-    if (user.branches.isNotEmpty) {
-      setState(() {
-        _availableBranches = user.branches;
-        _selectedBranchId ??= user.branch.isNotEmpty
-            ? user.branch
-            : (user.branches[0]['branch_id']?.toString() ?? '');
-      });
-      return;
-    }
-
-    setState(() => _isLoadingBranches = true);
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final uri = Uri.parse('$baseUrl/branches');
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-      if (res.statusCode == 200) {
-        final json = jsonDecode(res.body);
-        final branches = (json is List ? json : const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-        setState(() {
-          _availableBranches = branches;
-          _selectedBranchId ??= user.branch.isNotEmpty
-              ? user.branch
-              : (branches.isNotEmpty
-                  ? (branches[0]['branch_id']?.toString() ?? '')
-                  : '');
-        });
-      }
-    } catch (_) {
-      // ignore; fallback UI will show empty list
-    } finally {
-      if (mounted) setState(() => _isLoadingBranches = false);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   Future<void> _pickDateRange() async {
@@ -104,72 +59,62 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
         59,
         59,
       );
-      _dirtyFilters = true;
     });
-  }
-
-  Future<void> _applyFilters() async {
-    setState(() => _dirtyFilters = false);
-    await _load();
   }
 
   Future<void> _load() async {
     setState(() {
       _isLoading = true;
       _error = null;
+      _missingBranch = false;
     });
 
+    final user = ref.read(userStateProvider);
+    final uid = user.userId;
+    if (uid == null) {
+      setState(() {
+        _missingUserId = true;
+        _items = const [];
+        _isLoading = false;
+      });
+      return;
+    }
+    _missingUserId = false;
+
+    final activeBranchId = user.branch.trim();
+    if (activeBranchId.isEmpty) {
+      setState(() {
+        _missingBranch = true;
+        _items = const [];
+        _isLoading = false;
+      });
+      return;
+    }
+
     try {
-      final user = ref.read(userStateProvider);
-      final selectedBranchId = (_selectedBranchId?.isNotEmpty == true)
-          ? _selectedBranchId!
-          : (user.branch.isNotEmpty
-              ? user.branch
-              : (_availableBranches.isNotEmpty
-                  ? (_availableBranches[0]['branch_id']?.toString() ?? '1')
-                  : (user.branches.isNotEmpty
-                      ? (user.branches[0]['branch_id']?.toString() ?? '1')
-                      : '1')));
-
-      // Ensure dropdown has a value after first load
-      _selectedBranchId ??= selectedBranchId;
       final baseUrl = NetworkConfig.baseUrl;
+      final itemsUri = Uri.parse(
+        '$baseUrl/items?branch_id=$activeBranchId&created_by=$uid&limit=500',
+      );
 
-      final transfersUri =
-          Uri.parse('$baseUrl/transfers?branch_id=$selectedBranchId');
-      final itemsUri =
-          Uri.parse('$baseUrl/items?branch_id=$selectedBranchId&limit=200');
+      final itemsRes =
+          await http.get(itemsUri, headers: NetworkConfig.defaultHeaders);
 
-      final transfersFuture =
-          http.get(transfersUri, headers: NetworkConfig.defaultHeaders);
-      final itemsFuture = http.get(itemsUri, headers: NetworkConfig.defaultHeaders);
-
-      final transfersRes = await transfersFuture;
-      final itemsRes = await itemsFuture;
-
-      if (transfersRes.statusCode != 200 || itemsRes.statusCode != 200) {
+      if (itemsRes.statusCode != 200) {
         setState(() {
-          _error =
-              'Gagal memuat laporan (transfers: ${transfersRes.statusCode}, items: ${itemsRes.statusCode})';
+          _error = 'Gagal memuat data (items: ${itemsRes.statusCode})';
           _isLoading = false;
         });
         return;
       }
 
-      final transfersJson = jsonDecode(transfersRes.body);
       final itemsJson = jsonDecode(itemsRes.body);
-
-      final transfers = (transfersJson is List ? transfersJson : const [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
       final items = (itemsJson is List ? itemsJson : const [])
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
 
       setState(() {
-        _transfers = transfers;
         _items = items;
         _isLoading = false;
       });
@@ -192,85 +137,104 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
 
   int _asInt(dynamic v) => int.tryParse(v?.toString() ?? '') ?? 0;
 
+  String _activeBranchLabel(UserState user) {
+    final id = user.branch.trim();
+    if (id.isEmpty) return '-';
+    for (final b in user.branches) {
+      if (b['branch_id']?.toString() == id) {
+        return (b['name'] ?? 'Cabang $id').toString();
+      }
+    }
+    return 'Cabang $id';
+  }
+
+  String _periodSubtitle() {
+    final fromD = DateTime(_fromDate.year, _fromDate.month, _fromDate.day);
+    final toD = DateTime(_toDate.year, _toDate.month, _toDate.day);
+    final df = DateFormat('dd MMM yyyy', 'id_ID');
+    if (fromD == toD) {
+      return 'Hari ini, ${df.format(fromD)}';
+    }
+    return '${df.format(fromD)} – ${df.format(toD)}';
+  }
+
+  Future<void> _printReport() async {
+    final user = ref.read(userStateProvider);
+    if (user.userId == null || user.branch.trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak dapat mencetak — sesi atau cabang tidak lengkap.')),
+      );
+      return;
+    }
+
+    bool inRange(DateTime? dt) {
+      if (dt == null) return true;
+      return !dt.isBefore(_fromDate) && !dt.isAfter(_toDate);
+    }
+
+    final itemsInPeriod =
+        _items.where((i) => inRange(_parseDate(i['created_at']))).toList();
+    final sku = itemsInPeriod.length;
+    final qty = itemsInPeriod.fold<int>(0, (s, i) => s + _asInt(i['quantity']));
+
+    await printStockistInputReportPdf(
+      context,
+      fromDate: _fromDate,
+      toDate: _toDate,
+      branchLabel: _activeBranchLabel(user),
+      branchIdForLogo: user.branch.trim(),
+      username: user.username,
+      skuCount: sku,
+      totalQty: qty,
+      items: itemsInPeriod,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(userStateProvider);
-    final branches = _availableBranches.isNotEmpty ? _availableBranches : user.branches;
-    final selectedBranchId = (_selectedBranchId?.isNotEmpty == true)
-        ? _selectedBranchId!
-        : (user.branch.isNotEmpty ? user.branch : '');
-
-    final dateFmt = DateFormat('dd MMM yyyy', 'id_ID');
-
-    final filteredTransfers = _transfers.where((t) {
-      final dt = _parseDate(t['created_at']);
-      if (dt == null) return true;
-      return !dt.isBefore(_fromDate) && !dt.isAfter(_toDate);
-    }).toList();
-
-    final completedTransfers = filteredTransfers
-        .where((t) => (t['status'] ?? '').toString() == 'completed')
-        .toList();
-
-    final outgoingQty = completedTransfers.fold<int>(0, (sum, t) {
-      final from = t['from_branch_id']?.toString();
-      final qty = _asInt(t['quantity']);
-      return sum + (from == selectedBranchId ? qty : 0);
+    ref.listen(userStateProvider, (UserState? prev, UserState next) {
+      if (prev?.branch != next.branch) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _load();
+        });
+      }
     });
 
-    final totalItemRows = _items.length;
-    // total qty (all) not shown currently; keep only the pieces we show
+    final dtFmt = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
 
-    final itemsAvailable =
-        _items.where((i) => _asInt(i['quantity']) >= 1).toList();
-    final itemsCritical = _items.where((i) => _asInt(i['quantity']) < 1).toList();
-    final availableRows = itemsAvailable.length;
-    final availableQty = itemsAvailable.fold<int>(
-      0,
-      (sum, i) => sum + _asInt(i['quantity']),
-    );
-    final criticalRows = itemsCritical.length;
-
-    // Outgoing transfers grouped by destination branch
-    final outgoingTransfers = completedTransfers.where((t) {
-      final from = t['from_branch_id']?.toString();
-      return from == selectedBranchId;
-    }).toList();
-    final outgoingCount = outgoingTransfers.length;
-    final outgoingByDest = <String, int>{};
-    for (final t in outgoingTransfers) {
-      final to = (t['to_branch_name'] ?? t['to_branch_id'] ?? '-').toString();
-      final qty = _asInt(t['quantity']);
-      outgoingByDest[to] = (outgoingByDest[to] ?? 0) + qty;
+    bool inRange(DateTime? dt) {
+      if (dt == null) return true;
+      return !dt.isBefore(_fromDate) && !dt.isAfter(_toDate);
     }
-    final topOutgoingDest = outgoingByDest.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
 
-    final selectedBranchName = branches
-        .cast<Map<String, dynamic>>()
-        .where((b) => b['branch_id']?.toString() == selectedBranchId)
-        .map((b) => (b['name'] ?? 'Cabang $selectedBranchId').toString())
-        .cast<String?>()
-        .firstWhere((x) => x != null, orElse: () => null) ??
-        (selectedBranchId.isEmpty ? '-' : 'Cabang $selectedBranchId');
+    final itemsInPeriod =
+        _items.where((i) => inRange(_parseDate(i['created_at']))).toList();
+
+    final skuCount = itemsInPeriod.length;
+    final totalQty =
+        itemsInPeriod.fold<int>(0, (s, i) => s + _asInt(i['quantity']));
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Laporan Stockist'),
+        title: const Text('Laporan Input Stok'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Cetak laporan',
+            onPressed: _isLoading ||
+                    _error != null ||
+                    _missingUserId ||
+                    _missingBranch
+                ? null
+                : _printReport,
+          ),
           IconButton(
             icon: const Icon(Icons.date_range),
             tooltip: 'Pilih periode',
             onPressed: _pickDateRange,
           ),
-          if (_dirtyFilters)
-            TextButton(
-              onPressed: _applyFilters,
-              child: const Text(
-                'Terapkan',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh',
@@ -306,117 +270,84 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    _InfoRangeCard(
-                      title: 'Periode',
-                      subtitle:
-                          '${dateFmt.format(_fromDate)} - ${dateFmt.format(_toDate)}',
-                    ),
-                    const SizedBox(height: 12),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Branch',
-                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
+                    if (_missingUserId) ...[
+                      Card(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.warning_amber_rounded,
+                                color: Theme.of(context).colorScheme.onErrorContainer,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Sesi tidak menyimpan ID pengguna. Silakan logout dan login ulang.',
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onErrorContainer,
                                   ),
-                            ),
-                            const SizedBox(height: 8),
-                            DropdownButtonFormField<String>(
-                              initialValue:
-                                  selectedBranchId.isEmpty ? null : selectedBranchId,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
                                 ),
                               ),
-                              hint: const Text('Pilih branch'),
-                              items: branches
-                                  .map(
-                                    (b) => DropdownMenuItem<String>(
-                                      value: b['branch_id']?.toString() ?? '',
-                                      child: Text(
-                                        (b['name'] ??
-                                                'Cabang ${b['branch_id']?.toString() ?? ''}')
-                                            .toString(),
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (v) {
-                                setState(() => _selectedBranchId = v);
-                                _dirtyFilters = true;
-                              },
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Terpilih: $selectedBranchName (ID: $selectedBranchId)',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            if (_isLoadingBranches)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Row(
-                                  children: [
-                                    const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Memuat daftar branch...',
-                                      style: Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    _SummaryCard(
-                      title: 'Stock tersedia',
-                      items: [
-                        _SummaryItem(label: 'Branch', value: selectedBranchName),
-                        _SummaryItem(label: 'Item tersedia', value: '$availableRows'),
-                        _SummaryItem(label: 'Total qty', value: '$availableQty'),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _SummaryCard(
-                      title: 'Stock kritis (qty < 1)',
-                      items: [
-                        _SummaryItem(label: 'Branch', value: selectedBranchName),
-                        _SummaryItem(label: 'Item kritis', value: '$criticalRows'),
-                        _SummaryItem(label: 'Total item', value: '$totalItemRows'),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _SummaryCard(
-                      title: 'Kirim ke branch (Completed)',
-                      items: [
-                        _SummaryItem(label: 'Jumlah transfer', value: '$outgoingCount'),
-                        _SummaryItem(label: 'Total qty keluar', value: '$outgoingQty'),
-                        _SummaryItem(
-                          label: 'Tujuan teratas',
-                          value: topOutgoingDest.isEmpty
-                              ? '-'
-                              : '${topOutgoingDest.first.key} (${topOutgoingDest.first.value})',
+                      const SizedBox(height: 12),
+                    ],
+                    if (_missingBranch) ...[
+                      Card(
+                        color: Theme.of(context).colorScheme.errorContainer,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.store_mall_directory_outlined,
+                                color: Theme.of(context).colorScheme.onErrorContainer,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Belum ada cabang aktif. Pilih cabang di header atau ganti peran/cabang, lalu buka lagi laporan ini.',
+                                  style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.onErrorContainer,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    _InfoRangeCard(
+                      title: 'Periode',
+                      subtitle: _periodSubtitle(),
+                    ),
+                    if (user.username.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Pengguna: ${user.username}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    _SummaryCard(
+                      title: 'Laporan Input Stok',
+                      items: [
+                        _SummaryItem(label: 'Jumlah SKU', value: '$skuCount'),
+                        _SummaryItem(label: 'Total qty', value: '$totalQty'),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    _TransfersPreview(
-                      title: 'Kirim ke branch terbaru',
-                      transfers: outgoingTransfers.take(10).toList(),
+                    _MyItemsTable(
+                      title: 'Daftar item',
+                      items: itemsInPeriod,
+                      dateFmt: dtFmt,
                     ),
                   ],
                 ),
@@ -424,11 +355,107 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
   }
 }
 
+class _MyItemsTable extends StatelessWidget {
+  const _MyItemsTable({
+    required this.title,
+    required this.items,
+    required this.dateFmt,
+  });
+
+  final String title;
+  final List<Map<String, dynamic>> items;
+  final DateFormat dateFmt;
+
+  String _code(Map<String, dynamic> i) =>
+      (i['kode_produk'] ?? i['item_code'] ?? '-').toString();
+
+  String _fmt(dynamic v) {
+    try {
+      return dateFmt.format(DateTime.parse(v.toString()).toLocal());
+    } catch (_) {
+      return '-';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            if (items.isEmpty)
+              Text(
+                'Tidak ada item yang tercatat dibuat oleh Anda pada periode ini.',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  horizontalMargin: 10,
+                  columnSpacing: 18,
+                  headingRowHeight: 34,
+                  dataRowMinHeight: 32,
+                  dataRowMaxHeight: 52,
+                  dividerThickness: 0.5,
+                  dataTextStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        height: 1.15,
+                      ),
+                  headingTextStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        height: 1.1,
+                      ),
+                  columns: const [
+                    DataColumn(label: Text('Kode')),
+                    DataColumn(label: Text('Nama')),
+                    DataColumn(label: Text('Qty')),
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Dibuat')),
+                  ],
+                  rows: items.map((i) {
+                    final qty = int.tryParse(
+                          (i['quantity'] ?? i['qty'] ?? '0').toString(),
+                        ) ??
+                        0;
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(_code(i))),
+                        DataCell(
+                          Text(
+                            (i['name'] ?? '-').toString(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        DataCell(Text('$qty')),
+                        DataCell(Text((i['status'] ?? '-').toString())),
+                        DataCell(Text(_fmt(i['created_at']))),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoRangeCard extends StatelessWidget {
+  const _InfoRangeCard({required this.title, required this.subtitle});
+
   final String title;
   final String subtitle;
-
-  const _InfoRangeCard({required this.title, required this.subtitle});
 
   @override
   Widget build(BuildContext context) {
@@ -462,10 +489,10 @@ class _InfoRangeCard extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.title, required this.items});
+
   final String title;
   final List<_SummaryItem> items;
-
-  const _SummaryCard({required this.title, required this.items});
 
   @override
   Widget build(BuildContext context) {
@@ -528,78 +555,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _SummaryItem {
+  const _SummaryItem({required this.label, required this.value});
   final String label;
   final String value;
-  const _SummaryItem({required this.label, required this.value});
 }
-
-class _TransfersPreview extends StatelessWidget {
-  final String title;
-  final List<Map<String, dynamic>> transfers;
-
-  const _TransfersPreview({required this.title, required this.transfers});
-
-  String _fmtDate(dynamic v) {
-    try {
-      return DateFormat('dd/MM HH:mm', 'id_ID')
-          .format(DateTime.parse(v.toString()).toLocal());
-    } catch (_) {
-      return '-';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            if (transfers.isEmpty)
-              const Text('Tidak ada data transfer pada periode ini')
-            else
-              ...transfers.map((t) {
-                final item = (t['item_name'] ?? '-').toString();
-                final qty = (t['quantity'] ?? 0).toString();
-                final status = (t['status'] ?? '-').toString();
-                final from = (t['from_branch_name'] ??
-                        t['from_branch_id'] ??
-                        '-')
-                    .toString();
-                final to =
-                    (t['to_branch_name'] ?? t['to_branch_id'] ?? '-').toString();
-                return ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    radius: 16,
-                    child: Text(qty, style: const TextStyle(fontSize: 12)),
-                  ),
-                  title:
-                      Text(item, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('$from → $to • ${_fmtDate(t['created_at'])}'),
-                  trailing: Text(
-                    status,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color:
-                          status == 'completed' ? Colors.green : Colors.orange,
-                    ),
-                  ),
-                );
-              }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-

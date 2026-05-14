@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
 
@@ -21,12 +22,20 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
   Map<String, dynamic> _summary = {};
   bool _isLoading = true;
   String _error = '';
-  DateTime _selectedDate = DateTime.now();
+  DateTime _selectedDate = BusinessCalendar.todayWibDateOnly();
 
   num _toNum(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v;
     return num.tryParse(v.toString()) ?? 0;
+  }
+
+  String _displayOrderRef(Map<String, dynamic> m) {
+    final n = (m['order_number'] ?? '').toString().trim();
+    if (n.isNotEmpty) return n;
+    final id = (m['order_id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return '#$id';
+    return '—';
   }
 
   String? _normalizeUrl(dynamic raw) {
@@ -192,8 +201,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _detailRow('Order', '#${payment['order_id'] ?? '-'}'),
-                _detailRow('Order Number', '${payment['order_number'] ?? '-'}'),
+                _detailRow('Nomor order', _displayOrderRef(payment)),
                 _detailRow('Customer', '${payment['customer_name'] ?? '-'}'),
                 _detailRow(
                   'Metode',
@@ -313,7 +321,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
 
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
       // Backend (role kasir): default hanya transaksi dengan payments.validated_by = user login,
-      // tanggal pakai zona bisnis (Asia/Jakarta / BUSINESS_TIMEZONE). Opsional: validated_by_only=0.
+      // tanggal pakai zona bisnis GMT+7 (WIB / Asia/Jakarta). Opsional: validated_by_only=0.
       final response = await ApiClient.get(
         '/payments/daily-summary',
         query: {
@@ -393,7 +401,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: BusinessCalendar.todayWibDateOnly(),
     );
     if (picked != null && picked != _selectedDate) {
       setState(() {
@@ -679,7 +687,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                                   cells: [
                                     DataCell(
                                       Text(
-                                        '#${m['order_id'] ?? '—'}',
+                                        _displayOrderRef(m),
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -750,7 +758,7 @@ dataRowMinHeight: 44,
                                         showCheckboxColumn: false,
                                         dividerThickness: 0.5,
                                         columns: [
-                                          DataColumn(label: dataTableColumnLabel('Order')),
+                                          DataColumn(label: dataTableColumnLabel('Nomor order')),
                                           DataColumn(label: dataTableColumnLabel('Jenis')),
                                           DataColumn(label: dataTableColumnLabel('Customer')),
                                           DataColumn(label: dataTableColumnLabel('Metode')),

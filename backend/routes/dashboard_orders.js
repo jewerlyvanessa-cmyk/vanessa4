@@ -5,13 +5,17 @@ const {
   orderItemLineAmountSql: _orderItemLineAmountSql,
 } = require('./order_items_sql');
 
-const ORDER_CALENDAR_TIMEZONE =
-  /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-    ? String(process.env.BUSINESS_TIMEZONE).trim()
-    : 'Asia/Jakarta';
-
 const { computeOrderTodayStats } = require('../lib/order_today_stats_compute');
 const getOrdersDaily = require('./orders_daily_handler');
+const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
+const {
+  ordersHasPickupBranchColumn,
+  ordersHasMetadataColumn,
+  paymentsHasRevenueBranchColumn,
+  sqlOrderVisibleAtBranchForWorkshopPut,
+  jsonSafeDbRow,
+} = require('../lib/orders_workshop_helpers');
+const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
 const multer = require('multer');
 const _path = require('path');
 const crypto = require('crypto');
@@ -75,11 +79,14 @@ router.get('/dashboard/order-today-snapshot', async (req, res) => {
           'Snapshot hanya mendukung satu hari (parameter date). Untuk rentang gunakan /dashboard/order-today.',
       });
     }
-    const statsResult = await computeOrderTodayStats(req);
+    // Paralel: agregasi stats dan daftar order saling independen → kurangi latency wall-clock (~setengah vs berurutan).
+    const [statsResult, dailyResult] = await Promise.all([
+      computeOrderTodayStats(req),
+      getOrdersDaily.fetchOrdersDailyPayload(req),
+    ]);
     if (!statsResult.ok) {
       return res.status(statsResult.status).json(statsResult.body);
     }
-    const dailyResult = await getOrdersDaily.fetchOrdersDailyPayload(req);
     if (!dailyResult.ok) {
       return res.status(dailyResult.status).json(dailyResult.body);
     }
@@ -529,5 +536,56 @@ router.post('/upload', upload.single('photo'), async (req, res) => {
 });
 
 router.get('/orders/daily', getOrdersDaily);
+
+// GET /api/orders/service-awaiting-store-receipt
+// Service/custom status done_workshop: menunggu admin toko konfirmasi terima (→ ready_for_pickup).
+// Tidak memakai filter tanggal pembuatan; scope cabang selaras PUT /workshop-orders/:id/status (admin_toko).
+router.get('/orders/service-awaiting-store-receipt', async (req, res) => {
+  try {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    if (!['admin_toko', 'superadmin', 'manajer'].includes(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan' });
+    }
+    const scope = await assertUserCanAccessBranchForOrders(req, req.query.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
+    }
+    const bid = scope.branchId;
+    const hasPickup = await ordersHasPickupBranchColumn(db);
+    const hasMeta = await ordersHasMetadataColumn(db);
+    const hasRev = await paymentsHasRevenueBranchColumn(db);
+    const vis = sqlOrderVisibleAtBranchForWorkshopPut('o', 1, hasPickup, hasMeta, hasRev);
+    const sql = `
+      SELECT * FROM (
+        SELECT DISTINCT ON (o.order_id)
+          o.order_id,
+          o.order_number,
+          o.order_type,
+          o.status,
+          o.created_at,
+          o.updated_at,
+          o.branch_id,
+          c.name AS customer_name,
+          c.phone AS customer_phone,
+          COALESCE(oi.nama_item, i.name) AS item_name
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN items i ON oi.item_id = i.item_id
+        WHERE o.order_type::text IN ('service', 'custom')
+          AND o.status::text = 'done_workshop'
+          AND ${vis}
+        ORDER BY o.order_id, o.created_at ASC, oi.order_item_id ASC NULLS LAST
+      ) x
+      ORDER BY x.updated_at DESC NULLS LAST, x.order_id DESC
+    `;
+    const result = await db.query(sql, [bid]);
+    const rows = (result.rows ?? []).map((r) => jsonSafeDbRow(r));
+    return res.status(200).json(rows);
+  } catch (e) {
+    console.error('service-awaiting-store-receipt:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 module.exports = router;

@@ -19,7 +19,7 @@ class _StockPageState extends ConsumerState<StockPage> {
   List<dynamic> _items = [];
   bool _isLoading = true;
   String _error = '';
-  String _selectedStatus = 'all'; // all, ready, reserved, sold, buyback
+  String _selectedStatus = 'ready';
 
   String? _normalizePhotoUrl(dynamic raw) {
     final s = raw?.toString().trim();

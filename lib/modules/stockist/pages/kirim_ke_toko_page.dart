@@ -763,7 +763,7 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
                                 if (stockQty != null && qty > stockQty) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text('Qty melebihi stok warehouse ($stockQty)'),
+                                      content: Text('Qty melebihi stok tersedia ($stockQty)'),
                                     ),
                                   );
                                   return;

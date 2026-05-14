@@ -2,11 +2,7 @@
 
 const db = require('../db');
 const { assertUserCanAccessBranchForOrders } = require('../routes/order_branch_scope');
-
-const ORDER_CALENDAR_TIMEZONE =
-  /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-    ? String(process.env.BUSINESS_TIMEZONE).trim()
-    : 'Asia/Jakarta';
+const { ORDER_CALENDAR_TIMEZONE } = require('./business_timezone');
 
 function orderTodayUserFilterFromJwt(req) {
   const role = (req.user?.role ?? '').toString().trim().toLowerCase();
@@ -93,24 +89,23 @@ async function computeOrderTodayStats(req) {
       )
     `;
 
+    // IN (bukan EXISTS berkorelasi) → sering lebih mudah dioptimalkan planner untuk semi-join.
     const dayMatchSql = useRange
       ? `(
         ${orderCreatedDateBetween('$1', '$2')}
-        OR EXISTS (
-          SELECT 1
+        OR o.order_id IN (
+          SELECT p.order_id
           FROM payments p
-          WHERE p.order_id = o.order_id
-            AND p.status = 'completed'
+          WHERE p.status = 'completed'
             AND ${paymentCreatedDateBetween('$1', '$2')}
         )
       )`
       : `(
         ${orderCreatedDateEq('$1')}
-        OR EXISTS (
-          SELECT 1
+        OR o.order_id IN (
+          SELECT p.order_id
           FROM payments p
-          WHERE p.order_id = o.order_id
-            AND p.status = 'completed'
+          WHERE p.status = 'completed'
             AND ${paymentCreatedDateEq('$1')}
         )
       )`;
@@ -159,7 +154,17 @@ async function computeOrderTodayStats(req) {
       ${whereClause}
     `;
 
-    const statsResult = await db.query(statsQuery, queryParams);
+    const statusQuery = `
+      SELECT o.status, COUNT(DISTINCT o.order_id) as count
+      FROM orders o
+      ${whereClause}
+      GROUP BY o.status
+    `;
+
+    const [statsResult, statusResult] = await Promise.all([
+      db.query(statsQuery, queryParams),
+      db.query(statusQuery, queryParams),
+    ]);
     const stats = statsResult.rows[0];
 
     const response = {
@@ -198,14 +203,6 @@ async function computeOrderTodayStats(req) {
       date: new Date().toISOString(),
     };
 
-    const statusQuery = `
-      SELECT o.status, COUNT(DISTINCT o.order_id) as count
-      FROM orders o
-      ${whereClause}
-      GROUP BY o.status
-    `;
-
-    const statusResult = await db.query(statusQuery, queryParams);
     statusResult.rows.forEach((row) => {
       response.orders_by_status[row.status] = parseInt(row.count);
     });

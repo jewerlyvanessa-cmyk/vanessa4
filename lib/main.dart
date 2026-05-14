@@ -195,6 +195,7 @@ class _AppHomeGate extends ConsumerWidget {
       'superadmin' => AppRoutes.superadmin,
       'admin_toko' => AppRoutes.adminToko,
       'admin_workshop' => AppRoutes.adminWorkshop,
+      'admin_warehouse' => AppRoutes.adminWarehouse,
       'tukang' => AppRoutes.tukang,
       'manajer' => AppRoutes.manajer,
       'stockist' => AppRoutes.stockist,

@@ -18,6 +18,7 @@ import 'package:image_picker/image_picker.dart'
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 
 class JualPage extends ConsumerStatefulWidget {
   const JualPage({super.key, this.client});
@@ -72,26 +73,6 @@ class _JualPageState extends ConsumerState<JualPage> {
   // Controller yang dipakai field Autocomplete "Kode Produk"
   // (berbeda dengan _itemCodeController yang menyimpan nilai untuk payload).
   TextEditingController? _itemAutocompleteFieldController;
-
-  List<String> _getJenisOptions(String kategori) {
-    switch (kategori) {
-      case 'PERHIASAN':
-        return ['KALUNG', 'GELANG', 'ANTING', 'CINCIN', 'LIONTIN'];
-      case 'AKSESORIES':
-        return [
-          'GELANG TALI',
-          'PAKU EMAS',
-          'KOTAK CINCIN',
-          'LIONTIN MAINAN',
-          'CINCIN AKRILIK',
-          'GELANG AKRILIK',
-        ];
-      case 'LOGAM MULIA':
-        return ['ANTAM', 'UBS', 'GALERI24', 'LOTUS ARCHI', 'LAINNYA'];
-      default:
-        return [];
-    }
-  }
 
   double _roundToNearest5000(double amount) {
     final modulo10000 = amount % 10000;
@@ -1690,7 +1671,9 @@ class _JualPageState extends ConsumerState<JualPage> {
                                 spacing: 8.0,
                                 runSpacing: 8.0,
                                 children:
-                                    _getJenisOptions(_kategoriController.text)
+                                    orderItemJenisOptionsForKategori(
+                                      _kategoriController.text,
+                                    )
                                         .map(
                                           (jenis) => ChoiceChip(
                                             label: Text(jenis),

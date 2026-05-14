@@ -7,6 +7,7 @@ import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/providers/manager_dashboard_provider.dart';
 import 'package:vanessa3/routes/app_routes.dart' as routes;
+import 'package:vanessa3/modules/stockist/pages/stock_cabang_page.dart';
 
 class ManajerMainPage extends ConsumerWidget {
   const ManajerMainPage({super.key});
@@ -160,9 +161,20 @@ class ManajerMainPage extends ConsumerWidget {
                     },
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.store,
+                    label: 'STOCK CABANG',
+                    iconColor: Colors.green,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (context) => const StockCabangPage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
                     icon: DashboardMenuIcons.stokGlobal,
                     label: 'STOK GLOBAL',
-                    iconColor: Colors.green,
+                    iconColor: Colors.purple,
                     onTap: () {
                       Navigator.pushNamed(
                         context,

@@ -21,8 +21,10 @@ String normalizeBranchTypeKey(String? raw) {
 String branchTypeLabel(String? raw) =>
     kBranchTypeLabels[normalizeBranchTypeKey(raw)] ?? 'Toko (etalase)';
 
+/// Cabang tipe gudang (`branch_type` = `warehouse`) — sumber kirim untuk permintaan stok toko → gudang.
+bool branchTypeIsWarehouse(String? raw) =>
+    normalizeBranchTypeKey(raw) == 'warehouse';
+
 /// Cabang yang dipakai sebagai sumber kirim stok (admin toko → gudang).
-bool branchTypeCanSupplyStockForTransfer(String? raw) {
-  final t = normalizeBranchTypeKey(raw);
-  return t == 'warehouse' || t == 'pusat';
-}
+bool branchTypeCanSupplyStockForTransfer(String? raw) =>
+    branchTypeIsWarehouse(raw);

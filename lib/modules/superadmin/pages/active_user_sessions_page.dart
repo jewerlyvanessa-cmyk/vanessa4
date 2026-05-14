@@ -106,6 +106,8 @@ class _ActiveUserSessionsPageState extends ConsumerState<ActiveUserSessionsPage>
         return 'Admin Workshop';
       case 'stockist':
         return 'Stockist';
+      case 'admin_warehouse':
+        return 'Admin Gudang';
       default:
         return role == null || role.isEmpty ? '—' : role;
     }

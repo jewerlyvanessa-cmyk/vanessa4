@@ -7,6 +7,7 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/widgets/workshop_cost_breakdown_sheet.dart';
 
 class WorkshopOrdersPage extends ConsumerStatefulWidget {
@@ -44,6 +45,14 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
 
     try {
       final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        setState(() {
+          _error = block;
+          _isLoading = false;
+        });
+        return;
+      }
       final baseUrl = NetworkConfig.baseUrl;
       final branch = userState.branch.trim();
       if (branch.isEmpty) {
@@ -58,9 +67,12 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
           ? ''
           : '&status=${Uri.encodeQueryComponent(_selectedStatus)}';
       final qScope = '&scope=${Uri.encodeQueryComponent(_scope)}';
+      final qUnassigned = (_selectedStatus == 'all' || _selectedStatus == 'pending')
+          ? '&unassigned_only=1'
+          : '';
       final response = await http.get(
         Uri.parse(
-          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus',
+          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus$qUnassigned',
         ),
         headers: NetworkConfig.defaultHeaders,
       );
@@ -169,6 +181,13 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
       'manajer',
     }.contains(role);
     final canTechPut = _roleCanPutTechnicianWorkshopFlow(role);
+    /// Selaras `allowedByRole` di PUT `/workshop-orders/:id/status` — tukang tidak boleh `ready_for_pickup`.
+    final canMarkReadyForPickup = {
+      'admin_workshop',
+      'admin_toko',
+      'superadmin',
+      'manajer',
+    }.contains(role);
     final options = <String>[
       if (current == 'awaiting_warehouse' && canReceiveFromWarehouse)
         'sent-to-workshop',
@@ -179,8 +198,9 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
         ...['polishing', 'done_workshop'],
       if ((current == 'polishing' || current == 'custom_work') && canTechPut)
         'done_workshop',
-      // Admin workshop: hanya terima dari gudang & kirim balik ke toko setelah selesai bengkel.
-      if (current == 'done_workshop') 'ready_for_pickup',
+      // Bengkel / toko / manajemen: kirim balik ke toko setelah selesai bengkel (bukan teknisi).
+      if (current == 'done_workshop' && canMarkReadyForPickup)
+        'ready_for_pickup',
     ];
     if (options.isEmpty) {
       if (mounted) {
@@ -401,8 +421,10 @@ const desktopW = 960.0;
                                 final cust =
                                     (order['customer_name'] ?? 'N/A')
                                         .toString();
-                                final item =
-                                    (order['nama_item'] ?? 'N/A').toString();
+                                final item = (order['item_name'] ??
+                                        order['nama_item'] ??
+                                        'N/A')
+                                    .toString();
                                 final tech = (order['technician_name'] ??
                                         'Belum diassign')
                                     .toString();
@@ -418,7 +440,13 @@ const desktopW = 960.0;
                                       onSelected: (action) =>
                                           _handleOrderAction(order, action),
                                       itemBuilder: (context) => [
-                                        if (role != 'admin_workshop')
+                                        if (role == 'tukang')
+                                          const PopupMenuItem(
+                                            value: 'start_work',
+                                            child: Text('Mulai kerja'),
+                                          ),
+                                        if (role != 'admin_workshop' &&
+                                            role != 'tukang')
                                           const PopupMenuItem(
                                             value: 'assign_technician',
                                             child: Text('Assign teknisi'),
@@ -708,6 +736,9 @@ dataRowMinHeight: narrow ? 52 : 48,
 
   void _handleOrderAction(dynamic order, String action) {
     switch (action) {
+      case 'start_work':
+        _startTechnicianWork(order);
+        break;
       case 'assign_technician':
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -734,6 +765,66 @@ dataRowMinHeight: narrow ? 52 : 48,
           SnackBar(content: Text('Melihat detail order #${order['order_id']}')),
         );
         break;
+    }
+  }
+
+  /// Sama alur «Mulai» di antrian kerja tukang: assign progres ke teknisi login.
+  Future<void> _startTechnicianWork(dynamic order) async {
+    try {
+      final userState = ref.read(userStateProvider);
+      final block = userState.workshopSessionBlockReason;
+      if (block != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(block)),
+          );
+        }
+        return;
+      }
+      final uid = userState.userId;
+      if (uid == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Sesi tidak valid. Silakan login ulang.')),
+          );
+        }
+        return;
+      }
+      final oid = int.tryParse(order['order_id']?.toString() ?? '');
+      if (oid == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ID order tidak valid')),
+          );
+        }
+        return;
+      }
+      final orderType = (order['order_type'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final startStatus = orderType == 'custom' ? 'custom_work' : 'repairing';
+
+      await ApiService.updateWorkProgress(
+        oid,
+        startStatus,
+        uid.toString(),
+        notes: 'Work started by technician',
+        branchId: userState.branch,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Memulai pekerjaan order #$oid')),
+        );
+      }
+      await _loadWorkshopOrders();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memulai pekerjaan: $e')),
+        );
+      }
     }
   }
 }

@@ -16,6 +16,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
+const { ORDER_CALENDAR_TIMEZONE } = require('./lib/business_timezone');
 const { authenticateToken, requireRoles } = require('./middleware/auth');
 const { emitNotification } = require('./websocket/emit');
 const { createWsPresenceRegistry } = require('./websocket/presence_registry');
@@ -246,10 +247,11 @@ app.use('/employees', authRequired, (req, res, next) => {
       'superadmin',
       'admin_toko',
       'admin_workshop',
+      'admin_warehouse',
       'manajer',
     )(req, res, next);
   }
-  return requireRoles('superadmin', 'admin_toko', 'admin_workshop')(
+  return requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'admin_warehouse')(
     req,
     res,
     next,
@@ -273,14 +275,14 @@ app.use('/items', authRequired);
 app.use('/item-conditions', authRequired);
 app.use('/order-items', authRequired);
 app.use('/stock-mutations', authRequired);
-app.use('/stock-history', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop'));
+app.use('/stock-history', authRequired, requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'admin_warehouse'));
 app.use('/reports', authRequired, requireRoles('superadmin', 'manajer'));
 app.use('/api', authRequired);
 registerLoginRoutes(app, { db, loginLimiter, SECRET_KEY, JWT_EXPIRES_IN });
 app.use(
   '/api/workshop',
   authRequired,
-  requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer', 'stockist')
+  requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer', 'stockist', 'admin_warehouse')
 );
 
 // Debug helper: inspect JWT payload (for troubleshooting role/branch issues)
@@ -292,10 +294,7 @@ app.get('/api/whoami', authRequired, (req, res) => {
 // Safe: requires auth; returns aggregate counts only.
 app.get('/api/debug/order-today-sanity', authRequired, async (req, res) => {
   try {
-    const tz =
-      /^[\\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-        ? String(process.env.BUSINESS_TIMEZONE).trim()
-        : 'Asia/Jakarta';
+    const tz = ORDER_CALENDAR_TIMEZONE;
     const bidRaw = String(req.query.branch_id ?? '').trim();
     const branchId = parseInt(bidRaw, 10);
     if (!Number.isFinite(branchId) || branchId <= 0) {
@@ -429,7 +428,7 @@ app.post('/api/admin/active-sessions/:userId/kick', requireRoles('superadmin'), 
 app.use(
   '/workshop-orders',
   authRequired,
-  requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'tukang', 'stockist', 'manajer')
+  requireRoles('superadmin', 'admin_toko', 'admin_workshop', 'admin_warehouse', 'tukang', 'stockist', 'manajer')
 );
 app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
 app.use('/test-db', authRequired, requireRoles('superadmin'));
@@ -474,7 +473,13 @@ app.delete('/orders/:id', (req, res) => {
 // CRUD untuk tabel orders
 app.get('/orders', async (req, res) => {
   try {
-    const { branch_id, status, order_number } = req.query;
+    const { branch_id, status, order_number: orderNumberRaw, order_id: orderIdRaw } = req.query;
+    const sn = orderNumberRaw != null ? String(orderNumberRaw).trim() : '';
+    const oidParsed = orderIdRaw != null && String(orderIdRaw).trim() !== ''
+      ? parseInt(String(orderIdRaw).trim(), 10)
+      : NaN;
+    const lookupByOrderId = Number.isFinite(oidParsed) && oidParsed > 0;
+    const singleOrderLookup = Boolean(sn || lookupByOrderId);
     console.log('GET /orders called with query:', req.query);
     const itemsPhotoCol = await getItemsPhotoColumn(db);
     const orderItemsPhotoCol = await getOrderItemsPhotoColumn(db);
@@ -520,7 +525,7 @@ app.get('/orders', async (req, res) => {
     const params = [];
     const conditions = [];
 
-    if (branch_id && !order_number) {
+    if (branch_id && !singleOrderLookup) {
       conditions.push(`o.branch_id = $${params.length + 1}`);
       params.push(branch_id);
     }
@@ -530,9 +535,12 @@ app.get('/orders', async (req, res) => {
       params.push(status);
     }
 
-    if (order_number) {
+    if (sn) {
       conditions.push(`LOWER(TRIM(o.order_number)) = $${params.length + 1}`);
-      params.push(order_number.trim().toLowerCase());
+      params.push(sn.toLowerCase());
+    } else if (lookupByOrderId) {
+      conditions.push(`o.order_id = $${params.length + 1}`);
+      params.push(oidParsed);
     }
 
     if (conditions.length > 0) {
@@ -554,11 +562,11 @@ app.get('/orders', async (req, res) => {
 
     console.log('Query result rows count:', result.rows.length);
 
-    if (order_number) {
-      // When order_number is provided, return a single order object with items array
-      console.log('Processing order_number:', order_number);
+    if (singleOrderLookup) {
+      // Satu order lengkap + items[] — sama untuk lookup by order_number atau order_id (QR faktur fallback).
+      console.log('Processing single order lookup:', sn ? `order_number=${sn}` : `order_id=${oidParsed}`);
       if (result.rows.length === 0) {
-        console.log('No rows found for order_number:', order_number);
+        console.log('No rows found for lookup');
         return res.status(200).json(null);
       }
 
@@ -972,8 +980,8 @@ app.get('/store-operational', async (req, res) => {
         SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
         FROM store_operational_entries
         WHERE branch_id = $1
-          AND created_at >= ($2::date AT TIME ZONE 'Asia/Jakarta')
-          AND created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Jakarta')
+          AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+          AND created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
         ORDER BY created_at DESC
       `,
         [branchId, fromRaw, toRaw]
@@ -981,14 +989,19 @@ app.get('/store-operational', async (req, res) => {
     } else {
       const targetDate = datePat.test(dateRaw)
         ? dateRaw
-        : new Date().toISOString().split('T')[0];
+        : new Intl.DateTimeFormat('en-CA', {
+            timeZone: ORDER_CALENDAR_TIMEZONE,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date());
       result = await db.query(
         `
         SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
         FROM store_operational_entries
         WHERE branch_id = $1
-          AND created_at >= ($2::date AT TIME ZONE 'Asia/Jakarta')
-          AND created_at < (($2::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Jakarta')
+          AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+          AND created_at < (($2::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
         ORDER BY created_at DESC
       `,
         [branchId, targetDate]
@@ -2652,6 +2665,7 @@ app.get('/items', async (req, res) => {
       search,
       limit,
       sellable_only,
+      created_by,
     } = req.query;
     const hasCreatorCol = await itemsHasCreatedByColumn();
     const fromSql = hasCreatorCol
@@ -2697,6 +2711,12 @@ app.get('/items', async (req, res) => {
         `(CAST(i.item_id AS TEXT) ILIKE $${params.length + 1} OR i.kode_produk ILIKE $${params.length + 1} OR i.name ILIKE $${params.length + 1})`
       );
       params.push(`%${search}%`);
+    }
+
+    const createdByFilter = parseInt(String(created_by ?? '').trim(), 10);
+    if (hasCreatorCol && Number.isFinite(createdByFilter) && createdByFilter > 0) {
+      conditions.push(`i.created_by = $${params.length + 1}`);
+      params.push(createdByFilter);
     }
 
     if (conditions.length > 0) {
@@ -3157,9 +3177,10 @@ app.delete('/items/:id', (req, res) => {
 });
 
 // CRUD for Order Items (untuk buyback) - diubah untuk referensi order_id
+// PENTING: jangan pernah SELECT tanpa batas — payload besar membuat app (Order Today) tampak macet.
 app.get('/order-items', async (req, res) => {
   try {
-    const query = `
+    const baseSelect = `
       SELECT
         o.order_id,
         o.order_type,
@@ -3193,11 +3214,44 @@ app.get('/order-items', async (req, res) => {
       LEFT JOIN orders o ON oi.order_id = o.order_id
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN items i ON oi.item_id = i.item_id
+    `;
+
+    const oidSingle = parseInt(String(req.query.order_id ?? '').trim(), 10);
+    if (Number.isFinite(oidSingle) && oidSingle > 0) {
+      const q = `${baseSelect}
+        WHERE o.order_id = $1 AND o.order_type = 'jual'
+        ORDER BY oi.order_item_id ASC`;
+      const result = await db.query(q, [oidSingle]);
+      return res.json(result.rows);
+    }
+
+    const idsRaw = String(req.query.order_ids ?? req.query.order_id_list ?? '')
+      .trim();
+    if (idsRaw.length > 0) {
+      const ids = idsRaw
+        .split(/[\s,]+/)
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const uniq = [...new Set(ids)].slice(0, 500);
+      if (uniq.length > 0) {
+        const q = `${baseSelect}
+          WHERE o.order_id = ANY($1::bigint[]) AND o.order_type = 'jual'
+          ORDER BY o.created_at DESC, oi.order_item_id ASC`;
+        const result = await db.query(q, [uniq]);
+        return res.json(result.rows);
+      }
+    }
+
+    let cap = parseInt(String(req.query.limit ?? '').trim(), 10);
+    if (!Number.isFinite(cap) || cap <= 0) cap = 500;
+    cap = Math.min(cap, 2000);
+
+    const q = `${baseSelect}
       WHERE o.order_type = 'jual'
       ORDER BY o.created_at DESC
-    `;
-    const result = await db.query(query);
-    res.json(result.rows);
+      LIMIT ${cap}`;
+    const result = await db.query(q);
+    return res.json(result.rows);
   } catch (error) {
     console.error('Error fetching order items:', error);
     res.status(500).json({ error: 'Failed to fetch order items' });

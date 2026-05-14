@@ -96,10 +96,11 @@ Future<Uint8List> buildStockItemsBulkQrPdf(
   return doc.save();
 }
 
-/// Dialog konfirmasi lalu membuka layar cetak PDF (paket `printing`).
+/// Buka layar cetak PDF stok (satu label). Jika [askConfirm], tampilkan dialog dulu.
 Future<void> promptPrintStockItemQr(
   BuildContext context, {
   required Map<String, dynamic> item,
+  bool askConfirm = true,
 }) async {
   final payload = stockItemQrPayload(item);
   if (payload.isEmpty) return;
@@ -107,29 +108,31 @@ Future<void> promptPrintStockItemQr(
   final name = (item['name'] ?? '').toString().trim();
   final title = name.isNotEmpty ? name : payload;
 
-  final go = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Cetak QR stok?'),
-      content: Text(
-        'QR berisi kode:\n$payload'
-        '${name.isNotEmpty ? '\n\nNama: $name' : ''}',
+  if (askConfirm) {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cetak QR stok?'),
+        content: Text(
+          'QR berisi kode:\n$payload'
+          '${name.isNotEmpty ? '\n\nNama: $name' : ''}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Tidak'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.print, size: 20),
+            label: const Text('Cetak QR'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Tidak'),
-        ),
-        FilledButton.icon(
-          onPressed: () => Navigator.pop(ctx, true),
-          icon: const Icon(Icons.print, size: 20),
-          label: const Text('Cetak QR'),
-        ),
-      ],
-    ),
-  );
+    );
 
-  if (go != true || !context.mounted) return;
+    if (go != true || !context.mounted) return;
+  }
 
   try {
     final bytes =
@@ -145,10 +148,11 @@ Future<void> promptPrintStockItemQr(
   }
 }
 
-/// Konfirmasi lalu cetak satu PDF berisi banyak label (satu halaman per item).
+/// Cetak satu PDF berisi banyak label (satu halaman per item). Jika [askConfirm], dialog dulu.
 Future<void> promptPrintStockItemsQrBulk(
   BuildContext context, {
   required List<Map<String, dynamic>> items,
+  bool askConfirm = true,
 }) async {
   final withPayload = items
       .where((i) => stockItemQrPayload(i).isNotEmpty)
@@ -156,29 +160,31 @@ Future<void> promptPrintStockItemsQrBulk(
       .toList();
   if (withPayload.isEmpty) return;
 
-  final go = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Cetak QR stok massal?'),
-      content: Text(
-        '${withPayload.length} label akan digabung dalam satu PDF '
-        '(satu halaman per item, QR 1×1 cm).',
+  if (askConfirm) {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cetak QR stok massal?'),
+        content: Text(
+          '${withPayload.length} label akan digabung dalam satu PDF '
+          '(satu halaman per item, QR 1×1 cm).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Tidak'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.print, size: 20),
+            label: const Text('Cetak QR'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Tidak'),
-        ),
-        FilledButton.icon(
-          onPressed: () => Navigator.pop(ctx, true),
-          icon: const Icon(Icons.print, size: 20),
-          label: const Text('Cetak QR'),
-        ),
-      ],
-    ),
-  );
+    );
 
-  if (go != true || !context.mounted) return;
+    if (go != true || !context.mounted) return;
+  }
 
   try {
     final bytes = await buildStockItemsBulkQrPdf(withPayload);

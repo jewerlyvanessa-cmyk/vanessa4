@@ -31,6 +31,14 @@ String _formatTime(dynamic createdAt) {
   }
 }
 
+String _paymentRowOrderLabel(Map<String, dynamic> p) {
+  final n = (p['order_number'] ?? '').toString().trim();
+  if (n.isNotEmpty) return n;
+  final id = (p['order_id'] ?? '').toString().trim();
+  if (id.isNotEmpty) return '#$id';
+  return '-';
+}
+
 /// Cetak / PDF laporan harian kasir (ringkasan order + pembayaran yang difilter sama seperti layar).
 Future<void> printKasirDailyReport(
   BuildContext context, {
@@ -120,17 +128,18 @@ Future<void> printKasirDailyReport(
           else
             pw.TableHelper.fromTextArray(
               headers: const [
-                'Order',
+                'Nomor order',
                 'Metode',
                 'Nominal',
                 'Status',
                 'Jam',
               ],
               data: tableRows.map((p) {
+                final pm = Map<String, dynamic>.from(p);
                 final amount =
                     double.tryParse(p['amount']?.toString() ?? '') ?? 0;
                 return [
-                  (p['order_id'] ?? '-').toString(),
+                  _paymentRowOrderLabel(pm),
                   _paymentMethodLabel(
                     (p['payment_method'] ?? p['method'] ?? '').toString(),
                   ),
@@ -265,17 +274,18 @@ Future<void> printKasirDailyPaymentsReport(
           else
             pw.TableHelper.fromTextArray(
               headers: const [
-                'Order',
+                'Nomor order',
                 'Jenis',
                 'Customer',
                 'Metode',
                 'Nominal',
               ],
               data: tableRows.map((p) {
+                final pm = Map<String, dynamic>.from(p);
                 final amount =
                     double.tryParse(p['amount']?.toString() ?? '') ?? 0;
                 return [
-                  (p['order_id'] ?? '-').toString(),
+                  _paymentRowOrderLabel(pm),
                   (p['order_type'] ?? '-').toString(),
                   (p['customer_name'] ?? '-').toString(),
                   _paymentMethodLabel(

@@ -16,6 +16,7 @@ import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -122,26 +123,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     '95%',
     '99%',
   ];
-
-  List<String> _getJenisOptions(String kategori) {
-    switch (kategori) {
-      case 'PERHIASAN':
-        return ['KALUNG', 'GELANG', 'ANTING', 'CINCIN', 'LIONTIN'];
-      case 'AKSESORIES':
-        return [
-          'GELANG TALI',
-          'PAKU EMAS',
-          'KOTAK CINCIN',
-          'LIONTIN MAINAN',
-          'CINCIN AKRILIK',
-          'GELANG AKRILIK',
-        ];
-      case 'LOGAM MULIA':
-        return ['ANTAM', 'UBS', 'GALERI24', 'LOTUS ARCHI', 'LAINNYA'];
-      default:
-        return [];
-    }
-  }
 
   @override
   void dispose() {
@@ -340,9 +321,16 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     _customerAddressController.clear();
   }
 
+  /// Normalisasi isi field / hasil scan (QR sering menambah newline).
+  String _normalizeNotaInput(String raw) {
+    return raw
+        .replaceAll(RegExp(r'[\r\n\t]+'), '')
+        .trim();
+  }
+
   Future<void> _lookupItem() async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final notaLama = _notaLamaController.text.trim();
+    final notaLama = _normalizeNotaInput(_notaLamaController.text);
 
     if (notaLama.isEmpty) {
       scaffoldMessenger.showSnackBar(
@@ -358,95 +346,106 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final userState = ref.read(userStateProvider);
-      final branchId = userState.branch.isNotEmpty ? userState.branch : '1';
+      final headers = NetworkConfig.defaultHeaders;
 
-      final response = await http.get(
-        Uri.parse(
-          '$baseUrl/orders?order_number=$notaLama${notaLama.isNotEmpty ? '' : '&branch_id=$branchId'}',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      Future<http.Response> getOrders(Map<String, String> qp) async {
+        final uri = Uri.parse('$baseUrl/orders').replace(queryParameters: qp);
+        final c = widget.client;
+        if (c != null) return c.get(uri, headers: headers);
+        return http.get(uri, headers: headers);
+      }
+
+      Map<String, dynamic>? decodeOrderMap(http.Response response) {
+        if (response.statusCode != 200) return null;
+        final decoded = jsonDecode(response.body);
+        if (decoded == null) return null;
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        return null;
+      }
+
+      Map<String, dynamic>? orderData = decodeOrderMap(
+        await getOrders({'order_number': notaLama}),
       );
 
-      if (response.statusCode == 200) {
-        final orderData = jsonDecode(response.body);
-        Logger.logInfo('Order data received: $orderData');
+      // QR faktur: jika nomor nota kosong saat cetak, QR berisi order_id (angka) — GET /orders?order_id=
+      if (orderData == null && RegExp(r'^\d+$').hasMatch(notaLama)) {
+        orderData = decodeOrderMap(
+          await getOrders({'order_id': notaLama}),
+        );
+      }
 
-        if (orderData == null || orderData.isEmpty) {
-          scaffoldMessenger.showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Nota lama tidak ditemukan. Silakan isi data secara manual.',
-              ),
-            ),
-          );
-          setState(() {
-            _switchToManualEntryMode();
-          });
-          return;
-        }
+      Logger.logInfo('Order data received: $orderData');
 
-        // Check if order is eligible for buyback (must be completed sale)
-        if (orderData['order_type'] != 'jual' ||
-            orderData['status'] != 'completed') {
-          scaffoldMessenger.showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Order tidak valid untuk buyback (harus order jual yang completed)',
-              ),
-            ),
-          );
-          setState(() {
-            _switchToManualEntryMode();
-          });
-          return;
-        }
-
-        // Set customer data from order
-        setState(() {
-          _selectedCustomer = {
-            'customer_id': orderData['customer_id'],
-            'name': orderData['customer_name'],
-            'phone': orderData['customer_phone'],
-            'address': orderData['customer_address'],
-          };
-          _customerController.text = orderData['customer_name'] ?? '';
-          _customerPhoneController.text = orderData['customer_phone'] ?? '';
-          _customerAddressController.text = orderData['customer_address'] ?? '';
-          _nomorNotaController.text =
-              orderData['order_number'] ?? orderData['nota_order'] ?? '';
-          _isCustomerLockedFromLookup = true;
-        });
-
-        // Get valid items from order
-        final validItems = orderData['items'] as List<dynamic>? ?? [];
-
-        if (validItems.isEmpty) {
-          scaffoldMessenger.showSnackBar(
-            const SnackBar(
-              content: Text('Order tidak memiliki item yang valid'),
-            ),
-          );
-          setState(() {
-            _switchToManualEntryMode();
-          });
-          return;
-        }
-
-        // Jika hanya 1 item, langsung isi field tanpa dialog
-        if (validItems.length == 1) {
-          await _selectItem(validItems[0]);
-        } else {
-          // Jika multiple items, tampilkan dialog untuk memilih
-          await _showItemSelectionDialog(validItems);
-        }
-      } else {
+      if (orderData == null || orderData.isEmpty) {
         scaffoldMessenger.showSnackBar(
-          SnackBar(content: Text('Error: ${response.statusCode}')),
+          const SnackBar(
+            content: Text(
+              'Nota lama tidak ditemukan. Silakan isi data secara manual.',
+            ),
+          ),
         );
         setState(() {
           _switchToManualEntryMode();
         });
+        return;
+      }
+
+      final Map<String, dynamic> resolved = orderData;
+
+      // Check if order is eligible for buyback (must be completed sale)
+      if (resolved['order_type'] != 'jual' ||
+          resolved['status'] != 'completed') {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Order tidak valid untuk buyback (harus order jual yang completed)',
+            ),
+          ),
+        );
+        setState(() {
+          _switchToManualEntryMode();
+        });
+        return;
+      }
+
+      // Set customer data from order
+      setState(() {
+        _selectedCustomer = {
+          'customer_id': resolved['customer_id'],
+          'name': resolved['customer_name'],
+          'phone': resolved['customer_phone'],
+          'address': resolved['customer_address'],
+        };
+        _customerController.text = resolved['customer_name'] ?? '';
+        _customerPhoneController.text = resolved['customer_phone'] ?? '';
+        _customerAddressController.text = resolved['customer_address'] ?? '';
+        _nomorNotaController.text =
+            resolved['order_number'] ?? resolved['nota_order'] ?? '';
+        _isCustomerLockedFromLookup = true;
+      });
+
+      // Get valid items from order
+      final validItems = resolved['items'] as List<dynamic>? ?? [];
+
+      if (validItems.isEmpty) {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text('Order tidak memiliki item yang valid'),
+          ),
+        );
+        setState(() {
+          _switchToManualEntryMode();
+        });
+        return;
+      }
+
+      // Jika hanya 1 item, langsung isi field tanpa dialog
+      if (validItems.length == 1) {
+        await _selectItem(validItems[0]);
+      } else {
+        // Jika multiple items, tampilkan dialog untuk memilih
+        await _showItemSelectionDialog(validItems);
       }
     } catch (e) {
       scaffoldMessenger.showSnackBar(
@@ -707,10 +706,18 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     }
   }
 
-  Future<void> _scanAndFill(TextEditingController controller) async {
+  Future<void> _scanAndFill(
+    TextEditingController controller, {
+    Future<void> Function(String scanned)? onScanned,
+  }) async {
     final v = await pushQrScanPage(context);
     if (!mounted || v == null) return;
-    controller.text = v;
+    final scanned = _normalizeNotaInput(v);
+    if (scanned.isEmpty) return;
+    controller.text = scanned;
+    if (onScanned != null) {
+      await onScanned(scanned);
+    }
   }
 
   Future<void> _submitBuyback() async {
@@ -1046,8 +1053,12 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                           icon: const Icon(
                                             Icons.qr_code_scanner,
                                           ),
-                                          onPressed: () =>
-                                              _scanAndFill(_notaLamaController),
+                                          onPressed: _isLookingUpItem
+                                              ? null
+                                              : () => _scanAndFill(
+                                                    _notaLamaController,
+                                                    onScanned: (_) => _lookupItem(),
+                                                  ),
                                           tooltip: 'Scan QR nota lama',
                                         ),
                                       ],
@@ -1499,7 +1510,9 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                               ? _jenisController.text
                               : null,
                           decoration: const InputDecoration(hintText: 'Jenis'),
-                          items: _getJenisOptions(_kategoriController.text)
+                          items: orderItemJenisOptionsForKategori(
+                            _kategoriController.text,
+                          )
                               .map(
                                 (jenis) => DropdownMenuItem(
                                   value: jenis,

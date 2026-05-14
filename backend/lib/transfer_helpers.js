@@ -33,8 +33,15 @@ function extractTransferSourceTypeFromNotes(notes) {
   return m ? m[1].trim().toLowerCase() : null;
 }
 
+/** Permintaan stok dari toko: kategori+jenis (bukan SKU) — selesaikan status tanpa mutasi item. */
+function transferSkipStockMovementOnComplete(notes) {
+  const n = String(notes ?? '');
+  return n.includes('[PERMINTAAN_STOK]') && n.includes('[BY_KATEGORI_JENIS]');
+}
+
 module.exports = {
   parseKodeProdukFromTransferItemLabel,
   extractKurirFromTransferNotes,
   extractTransferSourceTypeFromNotes,
+  transferSkipStockMovementOnComplete,
 };

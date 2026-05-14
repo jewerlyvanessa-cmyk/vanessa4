@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/cs/pages/order_detail_page.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
@@ -39,7 +40,7 @@ class DailyOrdersPaymentsPage extends ConsumerStatefulWidget {
 
 class _DailyOrdersPaymentsPageState
     extends ConsumerState<DailyOrdersPaymentsPage> {
-  DateTime _selectedDate = DateTime.now();
+  DateTime _selectedDate = BusinessCalendar.todayWibDateOnly();
   Map<String, dynamic> _dailyData = {};
   bool _isLoading = true;
   String _error = '';
@@ -55,7 +56,8 @@ class _DailyOrdersPaymentsPageState
   void initState() {
     super.initState();
     if (widget.serviceCustomMode) {
-      _orderFilter = _AdminOrderFilter.serviceCustom;
+      // Hanya service/custom: basis tampilan = semua order tipe itu (subfilter toko/dll. di atasnya).
+      _orderFilter = _AdminOrderFilter.all;
     }
     _loadDailyData();
   }
@@ -101,6 +103,7 @@ class _DailyOrdersPaymentsPageState
 
         setState(() {
           _dailyData = {'orders': ordersData, 'payments': paymentsData};
+          // Reset subfilter ke "semua" (di halaman Service/Custom = semua order service/custom).
           _orderFilter = _AdminOrderFilter.all;
           _isLoading = false;
         });
@@ -123,7 +126,7 @@ class _DailyOrdersPaymentsPageState
       context: context,
       initialDate: _selectedDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      lastDate: BusinessCalendar.todayWibDateOnly(),
     );
     if (picked != null && picked != _selectedDate) {
       setState(() {
@@ -253,6 +256,9 @@ class _DailyOrdersPaymentsPageState
   }
 
   bool _orderMatchesFilter(Map<String, dynamic> o) {
+    if (widget.serviceCustomMode && !_isServiceCustomOrder(o)) {
+      return false;
+    }
     switch (_orderFilter) {
       case _AdminOrderFilter.all:
         return true;
@@ -276,12 +282,16 @@ class _DailyOrdersPaymentsPageState
   List<Map<String, dynamic>> _filterDeduped(
     List<Map<String, dynamic>> deduped,
   ) {
-    if (_orderFilter == _AdminOrderFilter.all) return deduped;
+    if (_orderFilter == _AdminOrderFilter.all && !widget.serviceCustomMode) {
+      return deduped;
+    }
     return deduped.where(_orderMatchesFilter).toList();
   }
 
   List<dynamic> _rawOrdersForTable(List<dynamic> ordersRaw) {
-    if (_orderFilter == _AdminOrderFilter.all) return ordersRaw;
+    if (_orderFilter == _AdminOrderFilter.all && !widget.serviceCustomMode) {
+      return ordersRaw;
+    }
     final deduped = _dedupeOrdersById(ordersRaw);
     final allowed = _filterDeduped(deduped)
         .map((o) => o['order_id']?.toString() ?? '')
@@ -300,6 +310,47 @@ class _DailyOrdersPaymentsPageState
     setState(() {
       _orderFilter = f;
     });
+  }
+
+  Set<String> _serviceCustomOrderIdSet() {
+    final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
+    return _dedupeOrdersById(ordersRaw)
+        .where(_isServiceCustomOrder)
+        .map((o) => o['order_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  /// Tab pembayaran + nominal di strip: di halaman Service/Custom hanya order tipe itu.
+  List<Map<String, dynamic>> _paymentsTransactionsForView() {
+    final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
+    final transactions =
+        payments['transactions'] as List<dynamic>? ?? <dynamic>[];
+    if (!widget.serviceCustomMode) {
+      return transactions
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    final ids = _serviceCustomOrderIdSet();
+    final out = <Map<String, dynamic>>[];
+    for (final e in transactions) {
+      if (e is! Map) continue;
+      final p = Map<String, dynamic>.from(e);
+      final oid = p['order_id']?.toString() ?? '';
+      if (ids.contains(oid)) out.add(p);
+    }
+    return out;
+  }
+
+  int _countItemLineRowsForOrderIds(
+    List<dynamic> ordersRaw,
+    Set<String> orderIds,
+  ) {
+    if (orderIds.isEmpty) return 0;
+    return _rawOrderLineRows(ordersRaw)
+        .where((row) => orderIds.contains(row['order_id']?.toString() ?? ''))
+        .length;
   }
 
   /// Selaras backend `/api/dashboard/order-today`: online jika `mode` = online, selain itu toko.
@@ -385,133 +436,169 @@ class _DailyOrdersPaymentsPageState
 
   Widget _compactSummaryStrip(BuildContext context) {
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
-    final orders = _dedupeOrdersById(ordersRaw);
-    final totalOrders = orders.length;
-    final modeCounts = _orderModeCounts(orders);
-    final completed = orders
+    final dedupedAll = _dedupeOrdersById(ordersRaw);
+    final stripOrders = widget.serviceCustomMode
+        ? dedupedAll.where(_isServiceCustomOrder).toList()
+        : dedupedAll;
+    final totalOrders = stripOrders.length;
+    final modeCounts = _orderModeCounts(stripOrders);
+    final completed = stripOrders
         .where(
           (o) =>
-              (o['status'] ?? '').toString().trim().toLowerCase() == 'completed',
+              (o['status'] ?? '').toString().trim().toLowerCase() ==
+              'completed',
         )
         .length;
-    final pending = orders
+    final pending = stripOrders
         .where(
-          (o) => (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
+          (o) =>
+              (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
         )
         .length;
-    final svcCustom = orders.where(_isServiceCustomOrder).length;
-    final kirimBengkelCount = orders
+    final svcCustom = dedupedAll.where(_isServiceCustomOrder).length;
+    final kirimBengkelCount = dedupedAll
         .where((o) => _nextAdminTokoWorkshopStatus(o) == 'awaiting_warehouse')
         .length;
-    final lineCount = kIsWeb ? _rawOrderLineRows(ordersRaw).length : 0;
+
+    final stripIds = stripOrders
+        .map((o) => o['order_id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final lineCount = _countItemLineRowsForOrderIds(ordersRaw, stripIds);
 
     final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
     final summary = payments['summary'] as Map<String, dynamic>? ?? {};
-    final payTotal = _toNum(summary['total_amount']);
-    final payTrx = _toNum(summary['total_transactions']).toInt();
+    final payTxs = _paymentsTransactionsForView();
+    final num payTotal = widget.serviceCustomMode
+        ? payTxs.fold<num>(0, (a, p) => a + _toNum(p['amount']))
+        : _toNum(summary['total_amount']);
+    final int payTrx = widget.serviceCustomMode
+        ? payTxs.length
+        : _toNum(summary['total_transactions']).toInt();
 
     final cs = Theme.of(context).colorScheme;
+    final showModeChips = widget.serviceCustomMode || totalOrders > 0;
+    final orderChipSelected = widget.serviceCustomMode
+        ? (_orderFilter == _AdminOrderFilter.all ||
+            _orderFilter == _AdminOrderFilter.serviceCustom)
+        : _orderFilter == _AdminOrderFilter.all;
+
+    final rowChildren = <Widget>[
+      Text(
+        DateFormat('dd MMM yyyy', 'id_ID').format(_selectedDate),
+        style: Theme.of(
+          context,
+        ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(width: 8),
+      _summaryFilterChip(
+        context,
+        label: 'Order $totalOrders',
+        icon: Icons.receipt_long_outlined,
+        selected: orderChipSelected,
+        onSelected: (_) {
+          _setOrderFilter(_AdminOrderFilter.all);
+        },
+      ),
+      if (showModeChips) ...[
+        const SizedBox(width: 6),
+        _summaryFilterChip(
+          context,
+          label: 'Toko ${modeCounts.toko}',
+          icon: Icons.storefront_outlined,
+          selected: _orderFilter == _AdminOrderFilter.toko,
+          onSelected: (sel) => _setOrderFilter(
+            sel ? _AdminOrderFilter.toko : _AdminOrderFilter.all,
+          ),
+        ),
+        const SizedBox(width: 6),
+        _summaryFilterChip(
+          context,
+          label: 'Online ${modeCounts.online}',
+          icon: Icons.language_outlined,
+          selected: _orderFilter == _AdminOrderFilter.online,
+          onSelected: (sel) => _setOrderFilter(
+            sel ? _AdminOrderFilter.online : _AdminOrderFilter.all,
+          ),
+        ),
+      ],
+      if (kIsWeb || widget.serviceCustomMode) ...[
+        const SizedBox(width: 6),
+        _miniChip(
+          context,
+          '$lineCount baris item',
+          Icons.view_list_outlined,
+        ),
+      ],
+      const SizedBox(width: 6),
+      _summaryFilterChip(
+        context,
+        label: 'Selesai $completed',
+        icon: Icons.check_circle_outline,
+        selected: _orderFilter == _AdminOrderFilter.completed,
+        onSelected: (sel) => _setOrderFilter(
+          sel ? _AdminOrderFilter.completed : _AdminOrderFilter.all,
+        ),
+        iconColor: Colors.green.shade700,
+      ),
+      const SizedBox(width: 6),
+      _summaryFilterChip(
+        context,
+        label: 'Pending $pending',
+        icon: Icons.hourglass_top_outlined,
+        selected: _orderFilter == _AdminOrderFilter.pending,
+        onSelected: (sel) => _setOrderFilter(
+          sel ? _AdminOrderFilter.pending : _AdminOrderFilter.all,
+        ),
+        iconColor: Colors.orange.shade800,
+      ),
+      if (!widget.serviceCustomMode && svcCustom > 0) ...[
+        const SizedBox(width: 6),
+        _summaryFilterChip(
+          context,
+          label: 'Service/Custom $svcCustom',
+          icon: Icons.build_circle_outlined,
+          selected: _orderFilter == _AdminOrderFilter.serviceCustom,
+          onSelected: (sel) => _setOrderFilter(
+            sel ? _AdminOrderFilter.serviceCustom : _AdminOrderFilter.all,
+          ),
+          iconColor: Colors.deepOrange.shade800,
+        ),
+      ],
+      if (kirimBengkelCount > 0) ...[
+        const SizedBox(width: 6),
+        _summaryFilterChip(
+          context,
+          label: 'Kirim bengkel $kirimBengkelCount',
+          icon: Icons.local_shipping_outlined,
+          selected: _orderFilter == _AdminOrderFilter.kirimBengkel,
+          onSelected: (sel) => _setOrderFilter(
+            sel ? _AdminOrderFilter.kirimBengkel : _AdminOrderFilter.all,
+          ),
+          iconColor: Colors.brown.shade700,
+        ),
+      ],
+      const SizedBox(width: 6),
+      _miniChip(
+        context,
+        _fmtMoney(payTotal),
+        Icons.payments_outlined,
+        color: cs.primary,
+      ),
+      const SizedBox(width: 6),
+      _miniChip(context, '$payTrx trx', Icons.swap_horiz_rounded),
+    ];
 
     return Material(
       color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(
-              DateFormat('dd MMM yyyy', 'id_ID').format(_selectedDate),
-              style: Theme.of(
-                context,
-              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            _summaryFilterChip(
-              context,
-              label: 'Order $totalOrders',
-              icon: Icons.receipt_long_outlined,
-              selected: _orderFilter == _AdminOrderFilter.all,
-              onSelected: (_) {
-                _setOrderFilter(_AdminOrderFilter.all);
-              },
-            ),
-            if (totalOrders > 0) ...[
-              _summaryFilterChip(
-                context,
-                label: 'Toko ${modeCounts.toko}',
-                icon: Icons.storefront_outlined,
-                selected: _orderFilter == _AdminOrderFilter.toko,
-                onSelected: (sel) => _setOrderFilter(
-                  sel ? _AdminOrderFilter.toko : _AdminOrderFilter.all,
-                ),
-              ),
-              _summaryFilterChip(
-                context,
-                label: 'Online ${modeCounts.online}',
-                icon: Icons.language_outlined,
-                selected: _orderFilter == _AdminOrderFilter.online,
-                onSelected: (sel) => _setOrderFilter(
-                  sel ? _AdminOrderFilter.online : _AdminOrderFilter.all,
-                ),
-              ),
-            ],
-            if (kIsWeb && lineCount > 0)
-              _miniChip(
-                context,
-                '$lineCount baris item',
-                Icons.view_list_outlined,
-              ),
-            _summaryFilterChip(
-              context,
-              label: 'Selesai $completed',
-              icon: Icons.check_circle_outline,
-              selected: _orderFilter == _AdminOrderFilter.completed,
-              onSelected: (sel) => _setOrderFilter(
-                sel ? _AdminOrderFilter.completed : _AdminOrderFilter.all,
-              ),
-              iconColor: Colors.green.shade700,
-            ),
-            _summaryFilterChip(
-              context,
-              label: 'Pending $pending',
-              icon: Icons.hourglass_top_outlined,
-              selected: _orderFilter == _AdminOrderFilter.pending,
-              onSelected: (sel) => _setOrderFilter(
-                sel ? _AdminOrderFilter.pending : _AdminOrderFilter.all,
-              ),
-              iconColor: Colors.orange.shade800,
-            ),
-            if (svcCustom > 0)
-              _summaryFilterChip(
-                context,
-                label: 'Service/Custom $svcCustom',
-                icon: Icons.build_circle_outlined,
-                selected: _orderFilter == _AdminOrderFilter.serviceCustom,
-                onSelected: (sel) => _setOrderFilter(
-                  sel ? _AdminOrderFilter.serviceCustom : _AdminOrderFilter.all,
-                ),
-                iconColor: Colors.deepOrange.shade800,
-              ),
-            if (kirimBengkelCount > 0)
-              _summaryFilterChip(
-                context,
-                label: 'Kirim bengkel $kirimBengkelCount',
-                icon: Icons.local_shipping_outlined,
-                selected: _orderFilter == _AdminOrderFilter.kirimBengkel,
-                onSelected: (sel) => _setOrderFilter(
-                  sel ? _AdminOrderFilter.kirimBengkel : _AdminOrderFilter.all,
-                ),
-                iconColor: Colors.brown.shade700,
-              ),
-            _miniChip(
-              context,
-              _fmtMoney(payTotal),
-              Icons.payments_outlined,
-              color: cs.primary,
-            ),
-            _miniChip(context, '$payTrx trx', Icons.swap_horiz_rounded),
-          ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: rowChildren,
+          ),
         ),
       ),
     );
@@ -585,7 +672,9 @@ class _DailyOrdersPaymentsPageState
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'Tidak ada order untuk filter ini',
+            widget.serviceCustomMode
+                ? 'Tidak ada order Service atau Custom pada tanggal ini'
+                : 'Tidak ada order untuk filter ini',
             style: Theme.of(context).textTheme.bodyLarge,
             textAlign: TextAlign.center,
           ),
@@ -1094,11 +1183,15 @@ class _DailyOrdersPaymentsPageState
   }
 
   Widget _paymentsTable(BuildContext context) {
-    final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
-    final transactions =
-        payments['transactions'] as List<dynamic>? ?? <dynamic>[];
+    final transactions = _paymentsTransactionsForView();
     if (transactions.isEmpty) {
-      return const Center(child: Text('Tidak ada pembayaran'));
+      return Center(
+        child: Text(
+          widget.serviceCustomMode
+              ? 'Tidak ada pembayaran untuk order Service/Custom hari ini'
+              : 'Tidak ada pembayaran',
+        ),
+      );
     }
 
     final columns = <DataColumn>[
@@ -1114,8 +1207,7 @@ class _DailyOrdersPaymentsPageState
       ),
     ];
 
-    final rows = transactions.whereType<Map>().map((e) {
-      final p = Map<String, dynamic>.from(e);
+    final rows = transactions.map((p) {
       final amt = _toNum(p['amount']);
       return DataRow(
         cells: [
@@ -1186,9 +1278,7 @@ class _DailyOrdersPaymentsPageState
     final dedupedOrders = _dedupeOrdersById(ordersRaw);
     final orderCount = dedupedOrders.length;
     final svcCustomCount = dedupedOrders.where(_isServiceCustomOrder).length;
-    final payTx =
-        ((_dailyData['payments'] as Map?)?['transactions'] as List?)?.length ??
-        0;
+    final payTx = _paymentsTransactionsForView().length;
 
     return DefaultTabController(
       length: 2,

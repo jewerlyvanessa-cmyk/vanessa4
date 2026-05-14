@@ -320,6 +320,8 @@ async function paymentsHasRevenueBranchColumn(client) {
  * plus (jika kolom ada) order yang muncul di GET /orders/daily untuk cabang lewat atribusi pendapatan
  * (`payments.revenue_branch_id`) — supaya admin toko bisa "Terima" (done_workshop → ready_for_pickup)
  * walau `orders.branch_id` sudah di bengkel.
+ * Jangan pakai COALESCE(revenue, o.branch_id) saat revenue null: setelah terima bengkel `branch_id`
+ * bisa cabang bengkel sehingga admin toko salah tertaut; fallback pickup / metadata asal.
  */
 async function orderVisibleForWorkshopStatusPut(
   pool,
@@ -344,21 +346,42 @@ async function orderVisibleForWorkshopStatusPut(
   if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(oid) || oid <= 0) {
     return false;
   }
-  if (!(await paymentsHasRevenueBranchColumn(pool))) {
+
+  const orClauses = [];
+  if (hasPickupCol) {
+    orClauses.push(`o.pickup_branch_id::bigint = $1::bigint`);
+  }
+  if (hasMetadataCol) {
+    orClauses.push(`(
+      COALESCE(NULLIF(BTRIM(o.metadata->>'service_origin_branch_id'), ''), '') <> ''
+      AND (o.metadata->>'service_origin_branch_id')::bigint = $1::bigint
+    )`);
+  }
+
+  const hasRev = await paymentsHasRevenueBranchColumn(pool);
+  if (hasRev) {
+    orClauses.push(`EXISTS (
+      SELECT 1
+      FROM payments p
+      WHERE p.order_id = o.order_id
+        AND p.status::text = 'completed'
+        AND (
+          (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint)
+          OR (p.revenue_branch_id IS NULL AND o.branch_id::bigint = $1::bigint)
+        )
+    )`);
+  }
+
+  if (orClauses.length === 0) {
     return false;
   }
+
   const r = await pool.query(
     `
       SELECT 1
       FROM orders o
       WHERE o.order_id = $2
-        AND EXISTS (
-          SELECT 1
-          FROM payments p
-          WHERE p.order_id = o.order_id
-            AND p.status::text = 'completed'
-            AND COALESCE(p.revenue_branch_id, o.branch_id) = $1::bigint
-        )
+        AND (${orClauses.join('\n        OR ')})
       LIMIT 1
     `,
     [bid, oid]
@@ -375,6 +398,85 @@ function sqlWorkshopTukangQueueStatuses(alias) {
           'polishing',
           'custom_work'
         )`;
+}
+
+/**
+ * Ekspresi boolean SQL: order belum ditugaskan ke teknisi (selaras filter `unassigned_only` work-queue).
+ * Tanpa kolom metadata: legacy memakai `orders.user_id IS NULL` sebagai proxy "belum ada teknisi".
+ */
+function sqlWorkshopOrderIsUnassigned(alias, hasMetadataCol) {
+  if (!hasMetadataCol) {
+    return `${alias}.user_id IS NULL`;
+  }
+  return `NOT (
+    (
+      COALESCE(${alias}.metadata->>'assigned_technician_id', '') ~ '^[0-9]+$'
+      AND (NULLIF(BTRIM(${alias}.metadata->>'assigned_technician_id'), ''))::bigint > 0
+    )
+    OR (
+      COALESCE(${alias}.metadata->>'assigned_technician', '') ~ '^[0-9]+$'
+      AND (NULLIF(BTRIM(${alias}.metadata->>'assigned_technician'), ''))::bigint > 0
+    )
+  )`;
+}
+
+/**
+ * Ekspresi boolean SQL: penugasan workshop milik teknisi `$paramIndex` (user_id).
+ * Parameter query harus menyertakan `user_id` teknisi di indeks ini.
+ */
+function sqlWorkshopOrderAssignedToTechnician(alias, technicianParamIndex, hasMetadataCol) {
+  if (!hasMetadataCol) {
+    return `${alias}.user_id::bigint = $${technicianParamIndex}::bigint`;
+  }
+  return `(
+    COALESCE(${alias}.metadata->>'assigned_technician_id', '') = $${technicianParamIndex}::text
+    OR COALESCE(${alias}.metadata->>'assigned_technician', '') = $${technicianParamIndex}::text
+  )`;
+}
+
+/**
+ * Ekspresi boolean SQL: order workshop (service/custom) terlihat di cabang untuk PUT status
+ * (sumber kebenaran selaras `orderVisibleForWorkshopStatusPut`, tanpa filter per order_id).
+ */
+function sqlOrderVisibleAtBranchForWorkshopPut(
+  alias,
+  branchParamIndex,
+  hasPickupCol,
+  hasMetadataCol,
+  hasRevenueCol
+) {
+  const parts = [
+    `(${sqlOrdersVisibleAtWorkshopBranch(
+      alias,
+      branchParamIndex,
+      hasPickupCol,
+      hasMetadataCol
+    )})`,
+  ];
+  if (hasPickupCol) {
+    parts.push(
+      `(${alias}.pickup_branch_id::bigint = $${branchParamIndex}::bigint)`
+    );
+  }
+  if (hasMetadataCol) {
+    parts.push(`(
+      COALESCE(NULLIF(BTRIM(${alias}.metadata->>'service_origin_branch_id'), ''), '') <> ''
+      AND (${alias}.metadata->>'service_origin_branch_id')::bigint = $${branchParamIndex}::bigint
+    )`);
+  }
+  if (hasRevenueCol) {
+    parts.push(`EXISTS (
+      SELECT 1
+      FROM payments p
+      WHERE p.order_id = ${alias}.order_id
+        AND p.status::text = 'completed'
+        AND (
+          (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $${branchParamIndex}::bigint)
+          OR (p.revenue_branch_id IS NULL AND ${alias}.branch_id::bigint = $${branchParamIndex}::bigint)
+        )
+    )`);
+  }
+  return `(${parts.join('\n    OR ')})`;
 }
 
 /** Node-pg dapat mengembalikan int8 sebagai BigInt; JSON.stringify gagal tanpa ini. */
@@ -405,5 +507,8 @@ module.exports = {
   orderVisibleForWorkshopStatusPut,
   workshopMetadataBranchId,
   sqlWorkshopTukangQueueStatuses,
+  sqlWorkshopOrderIsUnassigned,
+  sqlWorkshopOrderAssignedToTechnician,
+  sqlOrderVisibleAtBranchForWorkshopPut,
   jsonSafeDbRow,
 };

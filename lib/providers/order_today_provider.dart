@@ -1,13 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
-import 'package:intl/intl.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
+import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/utils/agent_ndjson.dart';
+import 'package:vanessa3/utils/business_calendar.dart';
 
 /// Aktifkan log NDJSON hanya bila perlu debug (`--dart-define=ORDER_TODAY_NDJSON=true`).
 const bool _kOrderTodayNdjson = bool.fromEnvironment(
@@ -52,9 +53,8 @@ AsyncValue<List<Map<String, dynamic>>> _todayOrdersLoadingFrom(
   return const AsyncValue.loading();
 }
 
-/// Tanggal kalender lokal perangkat (sama dengan filter "hari ini" di backend WIB).
-String _localCalendarDateKey() =>
-    DateFormat('yyyy-MM-dd').format(DateTime.now());
+/// Tanggal kalender **WIB (GMT+7)** — selaras backend `ORDER_CALENDAR_TIMEZONE` / `Asia/Jakarta`.
+String _localCalendarDateKey() => BusinessCalendar.todayYmd();
 
 /// CS: order hari ini hanya yang dibuat user itu. Role lain: semua order cabang tersebut.
 bool _orderTodayOwnUserOnlyScope(UserState s) {
@@ -158,42 +158,6 @@ List<Map<String, dynamic>> groupOrdersWithItemsForOrderToday(
   }
 
   return ordersMap.values.toList();
-}
-
-Future<List<Map<String, dynamic>>> fetchOrderItemsForOrdersAttached(
-  List<Map<String, dynamic>> orders,
-  String baseUrl,
-  Map<String, String> queryParams,
-) async {
-  try {
-    final orderItemsUri = Uri.parse(
-      '$baseUrl/order-items',
-    ).replace(queryParameters: queryParams);
-    final orderItemsResponse =
-        await ApiClient.get(orderItemsUri.toString());
-
-    if (orderItemsResponse.statusCode == 200) {
-      final List<dynamic> orderItemsData = jsonDecode(
-        orderItemsResponse.body,
-      );
-
-      final Map<String, List<Map<String, dynamic>>> itemsByOrderId = {};
-      for (final item in orderItemsData) {
-        final orderId = item['order_id'].toString();
-        itemsByOrderId.putIfAbsent(orderId, () => []);
-        itemsByOrderId[orderId]!.add(Map<String, dynamic>.from(item as Map));
-      }
-
-      return orders.map((order) {
-        final orderId = order['order_id'].toString();
-        final orderItems = itemsByOrderId[orderId] ?? [];
-        return {...order, 'items': orderItems};
-      }).toList();
-    }
-    return orders.map((order) => {...order, 'items': []}).toList();
-  } catch (_) {
-    return orders.map((order) => {...order, 'items': []}).toList();
-  }
 }
 
 // Model untuk Order Today
@@ -783,21 +747,9 @@ class TodayOrdersNotifier
               .toList();
           mergedRawCount += rawOrders.length;
 
-          // Check if response already includes item details (from updated /orders/daily endpoint)
-          final hasItemDetails =
-              rawOrders.isNotEmpty && rawOrders.first.containsKey('nama_item');
-
-          if (hasItemDetails) {
-            mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
-          } else {
-            // Legacy behavior: fetch order items separately
-            final ordersWithItems = await _fetchOrderItemsForOrders(
-              rawOrders,
-              baseUrl,
-              queryParams,
-            );
-            mergedOrders.addAll(ordersWithItems);
-          }
+          // Selalu grup dari flat /orders/daily. Jangan GET /order-items — endpoint
+          // itu tidak memfilter cabang/tanggal dan memuat seluruh DB.
+          mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
       }
 
       _otNdjson(
@@ -854,14 +806,6 @@ class TodayOrdersNotifier
       );
       state = AsyncValue.error(error, stackTrace);
     }
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchOrderItemsForOrders(
-    List<Map<String, dynamic>> orders,
-    String baseUrl,
-    Map<String, String> queryParams,
-  ) async {
-    return fetchOrderItemsForOrdersAttached(orders, baseUrl, queryParams);
   }
 
   List<Map<String, dynamic>> _groupOrdersWithItems(
@@ -937,9 +881,13 @@ class OrderTodayBundleSync {
     statsN.bundleBeginRefresh();
     ordersN.bundleBeginRefresh();
 
+    // Satu round-trip snapshot: jangan skip hanya karena health HTTP sempat false
+    // selama WS masih terhubung ( pola sama seperti network_provider ).
+    final wsLikelyUp = ref.read(webSocketProvider.notifier).isConnected;
     final trySnapshot = branchIds.length == 1 &&
-        networkState.isOnline &&
-        networkState.isBackendReachable;
+        (networkState.isOnline ||
+            networkState.isBackendReachable ||
+            wsLikelyUp);
 
     if (trySnapshot) {
       try {
@@ -967,23 +915,20 @@ class OrderTodayBundleSync {
           final ordersCacheKey =
               'todayOrders/v5?branch_id=$bid&scope=$scopeSeg&date=$dateKey';
 
-          await statsN.bundleApplyStatsFromSnapshot(
+          final rawList = ordersRaw
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          // Jangan panggil GET /order-items untuk melengkapi baris: endpoint backend
+          // saat ini mengabaikan query dan mengembalikan seluruh order_items jual
+          // (tanpa LIMIT) → payload besar, load tampak macet.
+          final mergedOrders = groupOrdersWithItemsForOrderToday(rawList);
+
+          final statsFuture = statsN.bundleApplyStatsFromSnapshot(
             statsMap: statsMap,
             statsCacheKey: statsCacheKey,
           );
 
-          final rawList = ordersRaw
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList();
-          final hasItemDetails = rawList.isNotEmpty &&
-              rawList.first.containsKey('nama_item');
-          final mergedOrders = hasItemDetails
-              ? groupOrdersWithItemsForOrderToday(rawList)
-              : await fetchOrderItemsForOrdersAttached(
-                  rawList,
-                  NetworkConfig.baseUrl,
-                  qp,
-                );
+          await statsFuture;
 
           await ordersN.bundleApplyOrdersFromSnapshot(
             mergedOrders: mergedOrders,

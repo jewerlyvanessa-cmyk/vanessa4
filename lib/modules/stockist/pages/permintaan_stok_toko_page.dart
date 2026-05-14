@@ -120,11 +120,30 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
   }
 
   String _userNotes(String? rawNotes) {
-    final n = (rawNotes ?? '').toString().trim();
-    if (!transferNotesIsStockRequest(n)) return n;
-    var rest = n.replaceFirst(stockRequestTransferNotesTag, '').trim();
-    if (rest.startsWith(' ')) rest = rest.trim();
-    return rest.isEmpty ? '—' : rest;
+    final n = (rawNotes ?? '').toString();
+    if (!transferNotesIsStockRequest(n)) {
+      final t = n.trim();
+      return t.isEmpty ? '—' : t;
+    }
+    final lines = n
+        .split(RegExp(r'\r?\n'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final out = <String>[];
+    for (final line in lines) {
+      if (line == stockRequestTransferNotesTag ||
+          line == stockRequestByCategoryTag) {
+        continue;
+      }
+      final lower = line.toLowerCase();
+      if (lower.startsWith('kategori:') || lower.startsWith('jenis:')) {
+        continue;
+      }
+      out.add(line);
+    }
+    if (out.isEmpty) return '—';
+    return out.join('\n');
   }
 
   @override
@@ -171,7 +190,9 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                           leading: const Icon(Icons.store_mall_directory),
                           title: const Text('Menunggu tindakan gudang'),
                           subtitle: const Text(
-                            'Setujui untuk mengurangi stok gudang dan menambah stok toko tujuan.',
+                            'Permintaan per kategori & jenis: menyetujui hanya mengubah status '
+                            '(tanpa mutasi stok otomatis). Jika permintaan berupa SKU pasti, '
+                            'sistem dapat memutasi stok bila nama barang cocok di gudang.',
                           ),
                           trailing: Chip(label: Text('$pendingCount')),
                         ),

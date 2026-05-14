@@ -54,6 +54,9 @@ function mainModuleForRole(role) {
     case 'admin_workshop':
     case 'tukang':
       return 'workshop';
+    case 'stockist':
+    case 'admin_warehouse':
+      return 'warehouse';
     case 'manajer':
       return 'reporting';
     default:

@@ -11,6 +11,7 @@ const {
   ordersHasPickupBranchColumn,
   ordersSupportsWorkshopStatuses,
 } = require('../lib/orders_workshop_helpers');
+const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
 
 /** POST /payments, GET /payments */
 function registerPaymentsCoreRoutes(app, deps) {
@@ -375,25 +376,31 @@ app.get('/payments/daily-summary', async (req, res) => {
   try {
     const { branch_id, date, user_id } = req.query;
 
-    if (!branch_id) {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const jwtBranchRaw = String(req.user?.branch_id ?? '').trim();
+    const queryBranchRaw = String(branch_id ?? '').trim();
+    // Kasir: utamakan cabang di JWT (sinkron dengan switch-context), hindari branch_id query yang stale.
+    const effectiveBranchRaw =
+      role === 'kasir' && jwtBranchRaw.length > 0 ? jwtBranchRaw : queryBranchRaw;
+    if (!effectiveBranchRaw) {
       return res.status(400).json({ error: 'branch_id is required' });
     }
+    const parsedBranchId = parseInt(effectiveBranchRaw, 10);
+    if (!Number.isFinite(parsedBranchId) || parsedBranchId <= 0) {
+      return res.status(400).json({ error: 'branch_id must be a positive number' });
+    }
 
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-
-    const bizTz =
-      /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-        ? String(process.env.BUSINESS_TIMEZONE).trim()
-        : 'Asia/Jakarta';
+    const bizTz = ORDER_CALENDAR_TIMEZONE;
 
     const datePat = /^\d{4}-\d{2}-\d{2}$/;
     const dfRaw = String(req.query.date_from ?? '').trim();
     const dtRaw = String(req.query.date_to ?? '').trim();
     const MAX_PAYMENT_RANGE_DAYS = 93;
 
-    // Tanggal "hari ini" selaras zona bisnis (bukan DATE(created_at) timezone server),
-    // supaya DP yang dicatat malam hari tetap masuk Bayar Today di aplikasi.
-    let paymentDateSql = `(timezone('${bizTz}', p.created_at))::date = $2::date`;
+    // Hari transaksi: cocokkan created_at ATAU payment_date (zona bisnis), selaras perilaku /payments/daily
+    // dan menangkap row yang tanggal keduanya tidak selaras karena timezone / migrasi.
+    /** @type {string} */
+    let paymentDateSql;
     /** @type {string[]} */
     let dateArgs;
     if (datePat.test(dfRaw) && datePat.test(dtRaw)) {
@@ -408,8 +415,17 @@ app.get('/payments/daily-summary', async (req, res) => {
           error: `Rentang tanggal maksimal ${MAX_PAYMENT_RANGE_DAYS} hari`,
         });
       }
-      paymentDateSql = `(timezone('${bizTz}', p.created_at))::date BETWEEN $2::date AND $3::date`;
       dateArgs = [dfRaw, dtRaw];
+      paymentDateSql = `(
+        (timezone('${bizTz}', p.created_at))::date BETWEEN $2::date AND $3::date
+        OR (
+          p.payment_date IS NOT NULL AND (
+            (timezone('${bizTz}', p.payment_date))::date BETWEEN $2::date AND $3::date
+            OR (timezone('${bizTz}', p.payment_date AT TIME ZONE 'UTC'))::date BETWEEN $2::date AND $3::date
+            OR p.payment_date::date BETWEEN $2::date AND $3::date
+          )
+        )
+      )`;
     } else {
       const single = String(date ?? '').trim();
       const targetDate = datePat.test(single)
@@ -421,14 +437,27 @@ app.get('/payments/daily-summary', async (req, res) => {
           day: '2-digit',
         }).format(new Date());
       dateArgs = [targetDate];
+      paymentDateSql = `(
+        (timezone('${bizTz}', p.created_at))::date = $2::date
+        OR (
+          p.payment_date IS NOT NULL AND (
+            (timezone('${bizTz}', p.payment_date))::date = $2::date
+            OR (timezone('${bizTz}', p.payment_date AT TIME ZONE 'UTC'))::date = $2::date
+            OR p.payment_date::date = $2::date
+          )
+        )
+      )`;
     }
 
     const hasProofCol = await paymentsHasProofUrlColumn(db);
     const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
     const hasRevBranchColSummary = await paymentsHasRevenueBranchColumn(db);
-    const payBranchExprSummary = hasRevBranchColSummary
-      ? 'COALESCE(p.revenue_branch_id, o.branch_id)::bigint'
-      : 'o.branch_id::bigint';
+    // Jangan hanya COALESCE(revenue, order): pelunasan service/custom bisa mengisi
+    // revenue_branch_id = cabang pickup sementara order.branch_id = cabang toko.
+    // Kasir di cabang toko harus tetap melihat "Bayar Today" untuk pembayaran yang ia proses.
+    const branchScopeSqlSummary = hasRevBranchColSummary
+      ? `(o.branch_id::bigint = $1::bigint OR (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint))`
+      : `o.branch_id::bigint = $1::bigint`;
 
     const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
     const validatedOffExplicit =
@@ -483,11 +512,17 @@ app.get('/payments/daily-summary', async (req, res) => {
       }
     }
 
-    const listParams = [branch_id, ...dateArgs];
+    const listParams = [parsedBranchId, ...dateArgs];
     let listExtraWhere = '';
     listExtraWhere += ` AND p.status = 'completed'`;
     if (userIdFilter != null) {
-      listExtraWhere += ` AND p.validated_by = $${listParams.length + 1}`;
+      const pIdx = listParams.length + 1;
+      // Kasir + filter default: tampilkan juga pembayaran lama tanpa validated_by (NULL).
+      if (role === 'kasir' && validatedOnly) {
+        listExtraWhere += ` AND (p.validated_by = $${pIdx} OR p.validated_by IS NULL)`;
+      } else {
+        listExtraWhere += ` AND p.validated_by = $${pIdx}`;
+      }
       listParams.push(userIdFilter);
     }
     if (orderTypeFilter) {
@@ -515,17 +550,21 @@ app.get('/payments/daily-summary', async (req, res) => {
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
       JOIN customers c ON o.customer_id = c.customer_id
-      WHERE ${payBranchExprSummary} = $1::bigint
+      WHERE ${branchScopeSqlSummary}
         AND ${paymentDateSql}
         ${listExtraWhere}
       ORDER BY p.created_at DESC
     `, listParams);
 
-    const summaryParams = [branch_id, ...dateArgs];
+    const summaryParams = [parsedBranchId, ...dateArgs];
     let summaryExtraWhere = '';
     if (userIdFilter != null) {
-      // Keep summary consistent with list filtering rules above.
-      summaryExtraWhere += ` AND p.validated_by = $${summaryParams.length + 1}`;
+      const pIdx = summaryParams.length + 1;
+      if (role === 'kasir' && validatedOnly) {
+        summaryExtraWhere += ` AND (p.validated_by = $${pIdx} OR p.validated_by IS NULL)`;
+      } else {
+        summaryExtraWhere += ` AND p.validated_by = $${pIdx}`;
+      }
       summaryParams.push(userIdFilter);
     }
     if (orderTypeFilter) {
@@ -554,7 +593,7 @@ app.get('/payments/daily-summary', async (req, res) => {
           COALESCE(SUM(CASE WHEN method = 'e-wallet' THEN amount ELSE 0 END), 0) as ewallet_amount
         FROM payments p
         JOIN orders o ON p.order_id = o.order_id
-        WHERE ${payBranchExprSummary} = $1::bigint
+        WHERE ${branchScopeSqlSummary}
           AND ${paymentDateSql}
           AND p.status = 'completed'
           ${summaryExtraWhere}
@@ -629,23 +668,33 @@ app.get('/payments/daily', async (req, res) => {
   try {
     const { date, branch_id } = req.query;
 
-    if (!date || !branch_id) {
+    if (!date) {
       return res.status(400).json({ error: 'date and branch_id are required' });
     }
 
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const jwtBranchRawDaily = String(req.user?.branch_id ?? '').trim();
+    const queryBranchRawDaily = String(branch_id ?? '').trim();
+    const effectiveBranchDaily =
+      role === 'kasir' && jwtBranchRawDaily.length > 0
+        ? jwtBranchRawDaily
+        : queryBranchRawDaily;
+    if (!effectiveBranchDaily) {
+      return res.status(400).json({ error: 'date and branch_id are required' });
+    }
+    const parsedBranchDaily = parseInt(effectiveBranchDaily, 10);
+    if (!Number.isFinite(parsedBranchDaily) || parsedBranchDaily <= 0) {
+      return res.status(400).json({ error: 'branch_id must be a positive number' });
+    }
     const tokenUserIdRaw = req.user?.user_id ?? req.user?.id;
     const tokenUserId =
       tokenUserIdRaw != null ? parseInt(String(tokenUserIdRaw), 10) : NaN;
 
     // IMPORTANT:
     // Jangan pakai `new Date('yyyy-MM-dd')` + toISOString() untuk filter harian.
-    // JS akan menganggap string itu UTC midnight → bergeser jika bisnis pakai Asia/Jakarta
+    // JS akan menganggap string itu UTC midnight → bergeser jika bisnis pakai zona GMT+7 (ORDER_CALENDAR_TIMEZONE)
     // dan kolom DB bertipe TIMESTAMP tanpa timezone / tersimpan "waktu lokal".
-    const BUSINESS_TZ =
-      /^[\w/-]+$/.test(String(process.env.BUSINESS_TIMEZONE || '').trim())
-        ? String(process.env.BUSINESS_TIMEZONE).trim()
-        : 'Asia/Jakarta';
+    const BUSINESS_TZ = ORDER_CALENDAR_TIMEZONE;
 
     const targetDate = String(date).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
@@ -666,9 +715,9 @@ app.get('/payments/daily', async (req, res) => {
 
     const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
     const hasRevBranchColDaily = await paymentsHasRevenueBranchColumn(db);
-    const payBranchExprDaily = hasRevBranchColDaily
-      ? 'COALESCE(p.revenue_branch_id, o.branch_id)'
-      : 'o.branch_id';
+    const branchScopeSqlDaily = hasRevBranchColDaily
+      ? `(o.branch_id::bigint = $1::bigint OR (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint))`
+      : `o.branch_id::bigint = $1::bigint`;
     const kasirScope =
       role === 'kasir' &&
       hasValidatedByCol &&
@@ -684,17 +733,17 @@ app.get('/payments/daily', async (req, res) => {
         COUNT(*) as method_count
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
-      WHERE ${payBranchExprDaily} = $1
+      WHERE ${branchScopeSqlDaily}
         AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
-        ${kasirScope ? 'AND p.validated_by = $3' : ''}
+        ${kasirScope ? 'AND (p.validated_by = $3 OR p.validated_by IS NULL)' : ''}
       GROUP BY method
       ORDER BY total_amount DESC
     `;
 
     const summaryParams = kasirScope
-      ? [branch_id, targetDate, tokenUserId]
-      : [branch_id, targetDate];
+      ? [parsedBranchDaily, targetDate, tokenUserId]
+      : [parsedBranchDaily, targetDate];
     const summaryResult = await db.query(summaryQuery, summaryParams);
 
     // Query untuk detail transaksi
@@ -711,17 +760,17 @@ app.get('/payments/daily', async (req, res) => {
       JOIN orders o ON p.order_id = o.order_id
       LEFT JOIN customers c ON o.customer_id = c.customer_id
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
-      WHERE ${payBranchExprDaily} = $1
+      WHERE ${branchScopeSqlDaily}
         AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
-        ${kasirScope ? 'AND p.validated_by = $3' : ''}
+        ${kasirScope ? 'AND (p.validated_by = $3 OR p.validated_by IS NULL)' : ''}
       GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.payment_date, c.name
       ORDER BY p.payment_date DESC
     `;
 
     const detailParams = kasirScope
-      ? [branch_id, targetDate, tokenUserId]
-      : [branch_id, targetDate];
+      ? [parsedBranchDaily, targetDate, tokenUserId]
+      : [parsedBranchDaily, targetDate];
     const detailResult = await db.query(detailQuery, detailParams);
 
     // Hitung total keseluruhan

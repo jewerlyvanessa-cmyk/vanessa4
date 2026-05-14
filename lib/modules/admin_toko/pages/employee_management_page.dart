@@ -656,6 +656,8 @@ dataRowMinHeight:
         return Colors.orange;
       case 'admin_workshop':
         return Colors.purple;
+      case 'admin_warehouse':
+        return Colors.brown;
       case 'tukang':
         return Colors.red;
       case 'manajer':
@@ -675,6 +677,8 @@ dataRowMinHeight:
         return 'Admin Toko';
       case 'admin_workshop':
         return 'Admin Workshop';
+      case 'admin_warehouse':
+        return 'Admin Gudang';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -829,6 +833,7 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
     'kasir',
     'admin_toko',
     'admin_workshop',
+    'admin_warehouse',
     'tukang',
     'manajer',
   ];
@@ -902,6 +907,8 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
         return 'Admin Toko';
       case 'admin_workshop':
         return 'Admin Workshop';
+      case 'admin_warehouse':
+        return 'Admin Gudang';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -989,6 +996,7 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
     'kasir',
     'admin_toko',
     'admin_workshop',
+    'admin_warehouse',
     'tukang',
     'manajer',
   ];
@@ -1059,6 +1067,8 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
         return 'Admin Toko';
       case 'admin_workshop':
         return 'Admin Workshop';
+      case 'admin_warehouse':
+        return 'Admin Gudang';
       case 'tukang':
         return 'Tukang';
       case 'manajer':

@@ -55,9 +55,19 @@ class _MaterialUsagePageState extends ConsumerState<MaterialUsagePage> {
         });
         return;
       }
+      if (userState.userId == null) {
+        setState(() {
+          _error = 'Sesi tidak valid. Silakan login ulang.';
+          _isLoading = false;
+        });
+        return;
+      }
 
       final results = await Future.wait([
-        ApiService.getWorkQueue(userState.branch),
+        ApiService.getWorkQueue(
+          userState.branch,
+          assignedTechnicianId: userState.userId!.toString(),
+        ),
         ApiService.getMaterialStock(userState.branch),
       ]);
 

@@ -123,6 +123,10 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
         return Colors.orange;
       case 'admin_workshop':
         return Colors.purple;
+      case 'admin_warehouse':
+        return Colors.brown;
+      case 'stockist':
+        return Colors.blueGrey;
       case 'tukang':
         return Colors.red;
       case 'manajer':
@@ -144,6 +148,10 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
         return 'Admin Toko';
       case 'admin_workshop':
         return 'Admin Workshop';
+      case 'admin_warehouse':
+        return 'Admin Gudang';
+      case 'stockist':
+        return 'Stockist';
       case 'tukang':
         return 'Tukang';
       case 'manajer':

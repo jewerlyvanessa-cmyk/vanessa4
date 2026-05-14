@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS user_branch_roles (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id),
     branch_id BIGINT NOT NULL REFERENCES branches(branch_id),
-    role TEXT CHECK(role IN ('cs','kasir','admin_toko','admin_workshop','tukang','manajer','superadmin')),
+    role TEXT CHECK(role IN ('cs','kasir','admin_toko','admin_workshop','admin_warehouse','tukang','manajer','superadmin','stockist')),
     is_primary BOOLEAN DEFAULT FALSE,
     UNIQUE(user_id, branch_id, role)
 );
