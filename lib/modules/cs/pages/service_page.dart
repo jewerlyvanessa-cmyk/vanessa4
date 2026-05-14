@@ -142,7 +142,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
   Future<void> _pickFoto() async {
     if (kIsWeb) {
-      final picked = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFiles(
         type: FileType.image,
         withData: true,
       );

@@ -66,7 +66,11 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.download, color: Colors.green, size: 32),
+                        const Icon(
+                          Icons.download,
+                          color: Colors.green,
+                          size: 32,
+                        ),
                         const SizedBox(width: 16),
                         Expanded(
                           child: Column(
@@ -187,10 +191,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                     const SizedBox(height: 8),
                     Text(
                       'File akan diunduh dalam format ${_exportFormats.firstWhere((f) => f['value'] == _exportFormat)['label']}',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 14,
-                      ),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 16),
@@ -203,7 +204,9 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.download),
-                      label: Text(_isExporting ? 'Mengexport...' : 'Export Data'),
+                      label: Text(
+                        _isExporting ? 'Mengexport...' : 'Export Data',
+                      ),
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 48),
                         backgroundColor: Colors.green,
@@ -224,7 +227,9 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
               ),
               const SizedBox(height: 8),
               Card(
-                color: _exportResult?['success'] == true ? Colors.green[50] : Colors.red[50],
+                color: _exportResult?['success'] == true
+                    ? Colors.green[50]
+                    : Colors.red[50],
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -252,10 +257,13 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                           ),
                         ],
                       ),
-                      if (_exportResult != null && _exportResult!['recordCount'] != null) ...[
+                      if (_exportResult != null &&
+                          _exportResult!['recordCount'] != null) ...[
                         const SizedBox(height: 16),
                         Text('Jumlah data: ${_exportResult!['recordCount']}'),
-                        Text('Format: ${_exportFormats.firstWhere((f) => f['value'] == _exportFormat)['label']}'),
+                        Text(
+                          'Format: ${_exportFormats.firstWhere((f) => f['value'] == _exportFormat)['label']}',
+                        ),
                       ],
                     ],
                   ),
@@ -276,11 +284,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    const Icon(
-                      Icons.history,
-                      size: 32,
-                      color: Colors.grey,
-                    ),
+                    const Icon(Icons.history, size: 32, color: Colors.grey),
                     const SizedBox(height: 8),
                     const Text(
                       'Belum ada riwayat export',
@@ -289,10 +293,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
                     const SizedBox(height: 8),
                     Text(
                       'File export akan muncul di sini setelah berhasil diexport',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -342,13 +343,8 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '$title: ',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        Expanded(
-          child: Text(description),
-        ),
+        Text('$title: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+        Expanded(child: Text(description)),
       ],
     );
   }
@@ -401,11 +397,9 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
 
       setState(() {
         _isExporting = false;
-        _exportStatus = 'Export selesai. Pilih aplikasi untuk menyimpan / membagikan.';
-        _exportResult = {
-          'success': true,
-          'recordCount': rows.length,
-        };
+        _exportStatus =
+            'Export selesai. Pilih aplikasi untuk menyimpan / membagikan.';
+        _exportResult = {'success': true, 'recordCount': rows.length};
       });
     } catch (e) {
       setState(() {
@@ -445,9 +439,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
       throw Exception('Respons bukan array');
     }
 
-    var rows = decoded
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
+    var rows = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
 
     if (type == 'users') {
       rows = rows.map((r) {
@@ -472,8 +464,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
 
   String _toCsv(List<Map<String, dynamic>> rows) {
     if (rows.isEmpty) return '';
-    final keys = rows.expand((m) => m.keys).toSet().toList()
-      ..sort();
+    final keys = rows.expand((m) => m.keys).toSet().toList()..sort();
     final buf = StringBuffer();
     buf.writeln(keys.map(_cell).join(','));
     for (final r in rows) {
@@ -490,8 +481,7 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
     }
 
     final excel = Excel.createExcel();
-    final sheetName =
-        excel.getDefaultSheet() ?? excel.tables.keys.first;
+    final sheetName = excel.getDefaultSheet() ?? excel.tables.keys.first;
     final sheet = excel[sheetName];
     if (rows.isEmpty) {
       final out = excel.encode();
@@ -502,15 +492,17 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
     for (var c = 0; c < keys.length; c++) {
       sheet
           .cell(CellIndex.indexByColumnRow(columnIndex: c, rowIndex: 0))
-          .value = TextCellValue(keys[c]);
+          .value = TextCellValue(
+        keys[c],
+      );
     }
     for (var r = 0; r < rows.length; r++) {
       for (var c = 0; c < keys.length; c++) {
         sheet
-            .cell(
-              CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1),
-            )
-            .value = TextCellValue(excelCell(rows[r][keys[c]]));
+            .cell(CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1))
+            .value = TextCellValue(
+          excelCell(rows[r][keys[c]]),
+        );
       }
     }
     final out = excel.encode();
@@ -520,14 +512,18 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
 
   Future<void> _shareExportContent(String filename, String content) async {
     if (kIsWeb) {
-      await Share.share(content, subject: filename);
+      await SharePlus.instance.share(
+        ShareParams(text: content, subject: filename),
+      );
       return;
     }
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/$filename';
     final file = File(path);
     await file.writeAsString(content, flush: true);
-    await Share.shareXFiles([XFile(path)], subject: filename);
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(path)], subject: filename),
+    );
   }
 
   Future<void> _shareExportBytes(String filename, List<int> bytes) async {
@@ -538,7 +534,9 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
     final path = '${dir.path}/$filename';
     final file = File(path);
     await file.writeAsBytes(bytes, flush: true);
-    await Share.shareXFiles([XFile(path)], subject: filename);
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(path)], subject: filename),
+    );
   }
 
   void _resetExport() {

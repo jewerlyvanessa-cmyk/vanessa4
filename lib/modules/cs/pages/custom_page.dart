@@ -137,7 +137,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
   Future<void> _pickFoto() async {
     if (kIsWeb) {
       try {
-        final picked = await FilePicker.platform.pickFiles(
+        final picked = await FilePicker.pickFiles(
           type: FileType.image,
           allowMultiple: false,
           withData: true,

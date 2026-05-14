@@ -215,7 +215,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
       if (kIsWeb) {
-        final picked = await FilePicker.platform.pickFiles(
+        final picked = await FilePicker.pickFiles(
           type: FileType.image,
           withData: true,
         );

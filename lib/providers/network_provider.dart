@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../utils/network_config.dart';
 import '../utils/network_connectivity.dart';
 import '../services/offline_sync_service.dart';

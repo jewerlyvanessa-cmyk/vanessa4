@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:vanessa3/services/dio_customer_service.dart';
 import 'package:vanessa3/utils/cache_manager.dart';
 import 'package:vanessa3/utils/logger.dart';

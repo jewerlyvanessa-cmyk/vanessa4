@@ -87,8 +87,8 @@ class _OrderTodayPageState extends ConsumerState<OrderTodayPage> {
             tooltip: 'Print laporan',
             icon: const Icon(Icons.print_outlined),
             onPressed: () async {
-              final stats = ref.read(orderTodayStatsProvider).valueOrNull;
-              final orders = ref.read(todayOrdersProvider).valueOrNull;
+              final stats = ref.read(orderTodayStatsProvider).value;
+              final orders = ref.read(todayOrdersProvider).value;
               if (stats == null || orders == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(

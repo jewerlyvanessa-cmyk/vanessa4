@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'dart:convert';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
@@ -35,10 +36,9 @@ void _otNdjson({
 
 AsyncValue<OrderTodayStats> _statsLoadingFrom(AsyncValue<OrderTodayStats> cur) {
   if (cur is AsyncData<OrderTodayStats>) {
-    return const AsyncValue<OrderTodayStats>.loading().copyWithPrevious(
-      AsyncData(cur.value),
-      isRefresh: true,
-    );
+    return const AsyncValue<OrderTodayStats>.loading()
+    // ignore: invalid_use_of_internal_member
+    .copyWithPrevious(AsyncData(cur.value), isRefresh: true);
   }
   return const AsyncValue.loading();
 }
@@ -48,7 +48,8 @@ AsyncValue<List<Map<String, dynamic>>> _todayOrdersLoadingFrom(
 ) {
   if (cur is AsyncData<List<Map<String, dynamic>>>) {
     return const AsyncValue<List<Map<String, dynamic>>>.loading()
-        .copyWithPrevious(AsyncData(cur.value), isRefresh: true);
+    // ignore: invalid_use_of_internal_member
+    .copyWithPrevious(AsyncData(cur.value), isRefresh: true);
   }
   return const AsyncValue.loading();
 }

@@ -437,7 +437,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   Future<void> _pickImage() async {
     if (kIsWeb) {
       try {
-        final picked = await FilePicker.platform.pickFiles(
+        final picked = await FilePicker.pickFiles(
           type: FileType.image,
           allowMultiple: false,
           withData: true,

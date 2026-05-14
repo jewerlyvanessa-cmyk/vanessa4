@@ -356,7 +356,7 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
 
   Future<void> _pickFile() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
+      FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['csv', 'xlsx', 'xls'],
         allowMultiple: false,

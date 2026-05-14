@@ -285,7 +285,7 @@ class _JualPageState extends ConsumerState<JualPage> {
 
   Future<void> _pickFotoWebOrGallery() async {
     try {
-      final picked = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFiles(
         type: FileType.image,
         allowMultiple: false,
         withData: true,
