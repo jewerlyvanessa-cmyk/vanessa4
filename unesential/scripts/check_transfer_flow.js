@@ -1,6 +1,9 @@
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), quiet: true });
+require('dotenv').config({
+  path: require('path').join(__dirname, '../../backend/.env'),
+  quiet: true,
+});
 const jwt = require('jsonwebtoken');
-const db = require('../db');
+const db = require('../../backend/db');
 
 const BASE_URL = process.env.CHECK_API_BASE_URL || 'http://localhost:3000';
 const FROM_BRANCH_ID = parseInt(process.env.CHECK_FROM_BRANCH_ID || '1', 10);

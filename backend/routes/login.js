@@ -118,7 +118,7 @@ function registerLoginRoutes(app, deps) {
         return res.status(403).json({
           error: 'Forbidden',
           details:
-            'User belum memiliki role/branch. Tambahkan assignment di tabel user_branch_roles (atau jalankan setup_superadmin.js untuk akun superadmin).',
+            'User belum memiliki role/branch. Tambahkan assignment di tabel user_branch_roles (atau jalankan unesential/setup_superadmin.js untuk akun superadmin).',
         });
       }
       let isPasswordValid = false;

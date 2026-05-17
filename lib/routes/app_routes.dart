@@ -24,6 +24,7 @@ import '../modules/admin_toko/pages/main_page.dart';
 import '../modules/admin_toko/pages/daily_orders_payments_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
 import '../modules/admin_warehouse/pages/main_page.dart';
+import '../modules/admin_warehouse/pages/supplier_receipt_page.dart';
 import '../modules/tukang/pages/main_page.dart';
 import '../modules/manajer/pages/main_page.dart';
 import '../modules/manajer/pages/completed_orders_today_page.dart';
@@ -86,6 +87,7 @@ class AppRoutes {
   static const String warehouseToStore = '/warehouse/to_store';
   static const String warehouseEmployees = '/warehouse/employees';
   static const String warehouseStockInputReport = '/warehouse/stock_input_report';
+  static const String warehouseSupplierReceipt = '/warehouse/supplier_receipt';
   static const String adminTokoOrders = '/admin_toko/orders';
   static const String adminTokoServiceCustom = '/admin_toko/service_custom';
   static const String adminTokoWorkshopReceipt = '/admin_toko/workshop_receipt';
@@ -130,6 +132,7 @@ class AppRoutes {
     warehouseToStore: (context) => const KirimKeTokoPage(),
     warehouseEmployees: (context) => const EmployeeManagementPage(),
     warehouseStockInputReport: (context) => const StockistReportsPage(),
+    warehouseSupplierReceipt: (context) => const SupplierReceiptPage(),
     adminTokoOrders: (context) => const DailyOrdersPaymentsPage(),
     adminTokoServiceCustom: (context) => const DailyOrdersPaymentsPage(
       serviceCustomMode: true,

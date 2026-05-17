@@ -11,6 +11,7 @@ import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/modules/admin_workshop/pages/workshop_orders_page.dart';
 import 'update_progress_page.dart';
 import 'material_usage_page.dart';
+import 'produce_jewelry_page.dart';
 import 'work_history_page.dart';
 import 'reports_page.dart';
 
@@ -166,6 +167,20 @@ class TukangMainPage extends ConsumerWidget {
                         context,
                         MaterialPageRoute(
                           builder: (context) => const MaterialUsagePage(),
+                        ),
+                      );
+                    },
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.diamond_outlined,
+                    label: 'BUAT PERHIASAN',
+                    iconColor: Colors.amber,
+                    outlined: true,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ProduceJewelryPage(),
                         ),
                       );
                     },

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
 
-const { requireLoginBody } = require('../middleware/require_login_body');
+const { requireLoginBody } = require('../../backend/middleware/require_login_body');
 
 test('requireLoginBody returns 400 when username/password missing', async () => {
   const app = express();

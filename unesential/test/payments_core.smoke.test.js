@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
 
-const { registerPaymentsCoreRoutes } = require('../routes/payments_core');
+const { registerPaymentsCoreRoutes } = require('../../backend/routes/payments_core');
 
 function makeApp() {
   const app = express();

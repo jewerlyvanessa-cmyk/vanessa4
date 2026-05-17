@@ -1,14 +1,14 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '../backend/.env') });
 
 const bcrypt = require('bcryptjs');
-const db = require('./db');
+const db = require('../backend/db');
 
 /**
  * Bootstrap superadmin user with bcrypt password hash.
  *
  * Usage:
- *   SUPERADMIN_USERNAME=superadmin SUPERADMIN_PASSWORD='StrongPass123!' node backend/setup_superadmin.js
+ *   SUPERADMIN_USERNAME=superadmin SUPERADMIN_PASSWORD='StrongPass123!' node unesential/setup_superadmin.js
  */
 async function setupSuperadminUser() {
   const username = process.env.SUPERADMIN_USERNAME || 'superadmin';

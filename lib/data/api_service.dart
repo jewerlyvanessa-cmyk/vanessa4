@@ -336,6 +336,127 @@ class ApiService {
     }
   }
 
+  /// Tambah stok material workshop (non_inventory, status available).
+  static Future<Map<String, dynamic>> createWorkshopMaterialStock({
+    required String branchId,
+    required String name,
+    required String kodeProduk,
+    required String material,
+    required String purity,
+    required double weight,
+    required int quantity,
+    String kategori = 'BAHAN',
+    String jenis = 'UMUM',
+    String tipe = 'BIASA',
+    String? location,
+    String? supplier,
+  }) async {
+    final url = Uri.parse('$baseUrl/api/workshop/material-stock');
+    final body = <String, dynamic>{
+      'branch_id': branchId,
+      'name': name,
+      'kode_produk': kodeProduk,
+      'material': material,
+      'purity': purity,
+      'weight': weight,
+      'quantity': quantity,
+      'kategori': kategori,
+      'jenis': jenis,
+      'tipe': tipe,
+      if (location != null && location.trim().isNotEmpty) 'location': location.trim(),
+      if (supplier != null && supplier.trim().isNotEmpty) 'supplier': supplier.trim(),
+    };
+
+    final response = await _makeRequest(
+      () => http.post(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode(body),
+      ),
+    );
+
+    if (response.statusCode == 201 || response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      throw Exception('Invalid create material response');
+    }
+
+    String msg = response.body;
+    try {
+      final d = jsonDecode(response.body);
+      if (d is Map && d['error'] != null) msg = d['error'].toString();
+    } catch (_) {}
+    throw Exception('Gagal menambah material (${response.statusCode}): $msg');
+  }
+
+  /// Tukang: buat perhiasan dari stok material (tercatat untuk admin workshop).
+  static Future<Map<String, dynamic>> produceJewelryFromMaterial({
+    required String branchId,
+    required int orderId,
+    required int technicianId,
+    required int materialItemId,
+    required double materialQtyUsed,
+    required Map<String, dynamic> output,
+    String? notes,
+  }) async {
+    final url = Uri.parse('$baseUrl/api/workshop/produce-from-material');
+    final response = await _makeRequest(
+      () => http.post(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode({
+          'branch_id': branchId,
+          'order_id': orderId,
+          'technician_id': technicianId,
+          'material_item_id': materialItemId,
+          'material_qty_used': materialQtyUsed,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          'output': output,
+        }),
+      ),
+    );
+
+    if (response.statusCode == 201 || response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      throw Exception('Invalid produce response');
+    }
+
+    String msg = response.body;
+    try {
+      final d = jsonDecode(response.body);
+      if (d is Map && d['error'] != null) msg = d['error'].toString();
+    } catch (_) {}
+    throw Exception('Gagal produksi (${response.statusCode}): $msg');
+  }
+
+  /// Daftar hasil produksi tukang (admin workshop).
+  static Future<List<Map<String, dynamic>>> getWorkshopProductions(
+    String branchId, {
+    String period = 'month',
+    int? orderId,
+  }) async {
+    final q = StringBuffer(
+      '$baseUrl/api/workshop/productions?branch_id=$branchId&period=$period',
+    );
+    if (orderId != null) q.write('&order_id=$orderId');
+
+    final response = await _makeRequest(
+      () => http.get(Uri.parse(q.toString()), headers: NetworkConfig.defaultHeaders),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      }
+      throw Exception('Invalid productions response');
+    }
+    throw Exception('Gagal memuat produksi (${response.statusCode})');
+  }
+
   /// Get workshop reports
   static Future<Map<String, dynamic>> getWorkshopReports(
     String branchId, {

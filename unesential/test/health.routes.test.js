@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const express = require('express');
 
-const { createHealthRouter } = require('../routes/health');
+const { createHealthRouter } = require('../../backend/routes/health');
 
 function makeApp(db) {
   const app = express();

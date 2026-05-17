@@ -2707,6 +2707,7 @@ app.get('/items', async (req, res) => {
       mine,
       start_date,
       end_date,
+      source,
     } = req.query;
     const hasCreatorCol = await itemsHasCreatedByColumn();
     const fromSql = hasCreatorCol
@@ -2802,6 +2803,12 @@ app.get('/items', async (req, res) => {
     if (endDateTrim) {
       conditions.push(`DATE(i.created_at) <= $${params.length + 1}`);
       params.push(endDateTrim);
+    }
+
+    const sourceTrim = source != null ? String(source).trim() : '';
+    if (sourceTrim) {
+      conditions.push(`i.source = $${params.length + 1}`);
+      params.push(sourceTrim);
     }
 
     if (conditions.length > 0) {
@@ -2979,6 +2986,26 @@ app.post('/items', async (req, res) => {
       }
 
       const row = result.rows[0];
+      let metaForNotes = metadata;
+      if (typeof metaForNotes === 'string') {
+        try {
+          metaForNotes = JSON.parse(metaForNotes);
+        } catch {
+          metaForNotes = {};
+        }
+      }
+      if (!metaForNotes || typeof metaForNotes !== 'object') {
+        metaForNotes = {};
+      }
+      const srcNorm = String(source ?? '').trim();
+      let mutationNotes = 'Pembuatan / input stok baru';
+      if (srcNorm === 'supplier_receipt') {
+        const sup = String(metaForNotes.supplier ?? '').trim() || '—';
+        const inv = String(metaForNotes.invoice_number ?? '').trim();
+        mutationNotes = inv
+          ? `Terima dari supplier: ${sup} (Inv: ${inv})`
+          : `Terima dari supplier: ${sup}`;
+      }
       await client.query(
         `
           INSERT INTO stock_mutations (
@@ -2991,7 +3018,7 @@ app.post('/items', async (req, res) => {
           row.item_id,
           branch_id,
           qtyForMutation,
-          'Pembuatan / input stok baru',
+          mutationNotes,
           creatorOk ? creatorId : null,
         ]
       );

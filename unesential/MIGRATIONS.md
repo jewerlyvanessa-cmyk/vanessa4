@@ -11,7 +11,7 @@ Di repo ini ada **dua mekanisme**; tim deploy harus tahu mana yang dipakai di li
 ## 2. `node-pg-migrate` (`migrations_js/`)
 
 - Perintah npm di root: `npm run migrate:create`, `npm run migrate:up`, `npm run migrate:down`.
-- Konfigurasi: `backend/migrate.config.cjs`, folder `backend/migrations_js/`.
+- Konfigurasi: `backend/migrate.config.cjs`, folder `backend/migrations_js/` (tetap di `backend/`).
 
 ## Rekomendasi
 

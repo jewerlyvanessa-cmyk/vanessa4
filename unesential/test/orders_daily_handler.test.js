@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
 
-const getOrdersDaily = require('../routes/orders_daily_handler');
+const getOrdersDaily = require('../../backend/routes/orders_daily_handler');
 
 test('GET /orders/daily returns 400 when branch_id is missing', async () => {
   const app = express();

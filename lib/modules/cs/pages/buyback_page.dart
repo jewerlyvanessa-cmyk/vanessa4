@@ -6,9 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http_parser/http_parser.dart';
-import 'package:file_picker/file_picker.dart';
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
 import '../../../utils/pembulatan.dart';
@@ -19,12 +17,11 @@ import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 
-// Conditional imports for platform-specific packages
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) '../../../utils/image_picker_stub.dart';
+import 'package:cross_file/cross_file.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 class BuybackPage extends ConsumerStatefulWidget {
@@ -214,83 +211,60 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     _potonganKondisiController.addListener(_calculateNilaiResale);
   }
 
-  Future<void> _pickFotoWebOrGallery() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final f = picked?.files.single;
-    if (f == null) return;
-    final bytes = f.bytes;
-    if (bytes == null || bytes.isEmpty) return;
+  void _applyPhotoPick(CsOrderPhotoPickResult? result) {
+    if (result == null || !result.hasPhoto) return;
     setState(() {
-      _fotoBytes = bytes;
-      _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
-      _fotoXFile = null;
+      if (result.bytes != null) {
+        _fotoBytes = result.bytes;
+        _fotoName = result.fileName;
+        _fotoXFile = null;
+      } else if (result.file != null) {
+        _fotoXFile = XFile(result.file!.path);
+        _fotoBytes = null;
+        _fotoName = null;
+      }
     });
   }
 
-  Future<File> _compressFotoFile(File file) async {
-    final compressedXFile = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
-      '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      quality: 70,
-      format: CompressFormat.jpeg,
+  void _snackPhotoPickError([String? detail]) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          detail ??
+              'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+        ),
+      ),
     );
-    return File((compressedXFile ?? XFile(file.path)).path);
   }
 
   Future<void> _pickFoto() async {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
-      if (kIsWeb) {
-        await _pickFotoWebOrGallery();
+      final result = await CsOrderPhotoPicker.pickFromCamera();
+      if (!mounted) return;
+      if (result == null) return;
+      if (!result.hasPhoto) {
+        _snackPhotoPickError();
         return;
       }
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 80,
-      );
-      if (image != null) {
-        final compressed = await _compressFotoFile(File(image.path));
-        setState(() {
-          _fotoXFile = XFile(compressed.path);
-          _fotoBytes = null;
-          _fotoName = null;
-        });
-      }
+      _applyPhotoPick(result);
     } catch (e) {
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Error picking image: $e')),
-      );
+      _snackPhotoPickError('Gagal ambil foto: $e');
     }
   }
 
   Future<void> _pickFotoFromGallery() async {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
-      if (kIsWeb) {
-        await _pickFotoWebOrGallery();
+      final result = await CsOrderPhotoPicker.pickFromGallery();
+      if (!mounted) return;
+      if (result == null) return;
+      if (!result.hasPhoto) {
+        _snackPhotoPickError();
         return;
       }
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
-      );
-      if (image != null) {
-        final compressed = await _compressFotoFile(File(image.path));
-        setState(() {
-          _fotoXFile = XFile(compressed.path);
-          _fotoBytes = null;
-          _fotoName = null;
-        });
-      }
+      _applyPhotoPick(result);
     } catch (e) {
-      scaffoldMessenger.showSnackBar(
-        SnackBar(content: Text('Error picking image: $e')),
-      );
+      _snackPhotoPickError('Gagal pilih gambar: $e');
     }
   }
 

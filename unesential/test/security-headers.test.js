@@ -10,7 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 
-const { app } = require('../app');
+const { app } = require('../../backend/app');
 
 test('Permissions-Policy allows camera for same origin', async () => {
   const res = await request(app).get('/__no_such_route_for_header_check__');

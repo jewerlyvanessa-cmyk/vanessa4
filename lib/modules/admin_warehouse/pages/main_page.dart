@@ -198,6 +198,15 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                     ),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.local_shipping_outlined,
+                    label: 'TERIMA SUPPLIER',
+                    iconColor: Colors.brown,
+                    onTap: () => pushAppRoute(
+                      context,
+                      AppRoutes.warehouseSupplierReceipt,
+                    ),
+                  ),
+                  ModuleMenuEntry(
                     icon: Icons.storefront_outlined,
                     label: ModuleMenuGroupLabels.toko,
                     iconColor: Colors.deepOrange,

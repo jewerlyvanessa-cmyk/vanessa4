@@ -293,3 +293,201 @@ Future<({Map<String, dynamic>? created, String? error})> warehousePostStockItem(
     return (created: null, error: e.toString());
   }
 }
+
+/// Satu baris barang dalam penerimaan supplier (multi-item).
+class SupplierReceiptLine {
+  const SupplierReceiptLine({
+    required this.name,
+    required this.kodeBarang,
+    required this.weight,
+    required this.quantity,
+    required this.material,
+    required this.purity,
+    required this.kategori,
+    required this.jenis,
+    required this.tipe,
+  });
+
+  final String name;
+  final String kodeBarang;
+  final double weight;
+  final int quantity;
+  final String material;
+  final String purity;
+  final String kategori;
+  final String jenis;
+  final String tipe;
+
+  String get summary =>
+      '$name · $kodeBarang · ${weight}g · qty $quantity · $material $purity';
+}
+
+/// Penerimaan barang beli dari supplier (admin warehouse).
+Future<({Map<String, dynamic>? created, String? error})> warehousePostSupplierReceipt({
+  required String branchId,
+  required String supplierName,
+  required String name,
+  required String kodeBarang,
+  required double weight,
+  required int quantity,
+  required String material,
+  required String purity,
+  required String kategori,
+  required String jenis,
+  required String tipe,
+  String? invoiceNumber,
+  String? receiptNotes,
+  String? receiptBatchId,
+}) async {
+  try {
+    final baseUrl = NetworkConfig.baseUrl;
+    final metadata = <String, dynamic>{
+      'supplier': supplierName.trim(),
+      'received_at': DateTime.now().toIso8601String(),
+      if (invoiceNumber != null && invoiceNumber.trim().isNotEmpty)
+        'invoice_number': invoiceNumber.trim(),
+      if (receiptNotes != null && receiptNotes.trim().isNotEmpty)
+        'receipt_notes': receiptNotes.trim(),
+      if (receiptBatchId != null && receiptBatchId.trim().isNotEmpty)
+        'receipt_batch_id': receiptBatchId.trim(),
+    };
+
+    final payload = <String, dynamic>{
+      'name': name,
+      'item_code': kodeBarang,
+      'kode_produk': kodeBarang,
+      'weight': weight,
+      'quantity': quantity,
+      'status': 'ready',
+      'branch_id': branchId,
+      'source': 'supplier_receipt',
+      'metadata': metadata,
+      'kategori': kategori,
+      'jenis': jenis,
+      'tipe': tipe,
+      'material': material,
+      if (purity.isNotEmpty) 'purity': purity,
+    };
+
+    final resp = await http.post(
+      Uri.parse('$baseUrl/items'),
+      headers: NetworkConfig.defaultHeaders,
+      body: jsonEncode(payload),
+    );
+
+    if (resp.statusCode == 201 || resp.statusCode == 200) {
+      Map<String, dynamic>? created;
+      try {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map) {
+          created = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+      return (created: created, error: null);
+    }
+
+    String backendMsg = resp.body;
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is Map && decoded['error'] != null) {
+        backendMsg = decoded['error'].toString();
+      } else if (decoded is Map && decoded['detail'] != null) {
+        backendMsg = decoded['detail'].toString();
+      }
+    } catch (_) {}
+    return (
+      created: null,
+      error: '(${resp.statusCode}) $backendMsg',
+    );
+  } catch (e) {
+    return (created: null, error: e.toString());
+  }
+}
+
+/// Simpan banyak barang dalam satu penerimaan supplier (metadata batch sama).
+Future<
+    ({
+      List<Map<String, dynamic>> created,
+      List<({int index, String message})> failures,
+    })> warehousePostSupplierReceiptBatch({
+  required String branchId,
+  required String supplierName,
+  required List<SupplierReceiptLine> lines,
+  String? invoiceNumber,
+  String? receiptNotes,
+}) async {
+  if (lines.isEmpty) {
+    return (
+      created: <Map<String, dynamic>>[],
+      failures: <({int index, String message})>[],
+    );
+  }
+  final batchId = DateTime.now().millisecondsSinceEpoch.toString();
+  final created = <Map<String, dynamic>>[];
+  final List<({int index, String message})> failures = [];
+
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final res = await warehousePostSupplierReceipt(
+      branchId: branchId,
+      supplierName: supplierName,
+      name: line.name,
+      kodeBarang: line.kodeBarang,
+      weight: line.weight,
+      quantity: line.quantity,
+      material: line.material,
+      purity: line.purity,
+      kategori: line.kategori,
+      jenis: line.jenis,
+      tipe: line.tipe,
+      invoiceNumber: invoiceNumber,
+      receiptNotes: receiptNotes,
+      receiptBatchId: batchId,
+    );
+    if (res.created != null) {
+      created.add(res.created!);
+    } else {
+      failures.add((
+        index: i,
+        message: res.error ?? 'Gagal menyimpan ${line.kodeBarang}',
+      ));
+    }
+  }
+
+  return (created: created, failures: failures);
+}
+
+/// Riwayat penerimaan supplier terbaru di cabang.
+Future<({List<Map<String, dynamic>> items, String? error})>
+    fetchSupplierReceiptHistory({
+  required String branchId,
+  int limit = 20,
+}) async {
+  try {
+    final baseUrl = NetworkConfig.baseUrl;
+    final uri = Uri.parse(
+      '$baseUrl/items?branch_id=$branchId&source=supplier_receipt&limit=$limit',
+    );
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      return (
+        items: <Map<String, dynamic>>[],
+        error: '(${resp.statusCode}) ${resp.body}',
+      );
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) {
+      return (
+        items: <Map<String, dynamic>>[],
+        error: 'Format respons tidak valid',
+      );
+    }
+    final items = decoded
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    return (items: items, error: null);
+  } catch (e) {
+    return (items: <Map<String, dynamic>>[], error: e.toString());
+  }
+}

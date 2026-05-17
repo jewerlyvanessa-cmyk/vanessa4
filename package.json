@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "test": "node --test \"backend/test/**/*.test.js\"",
+    "test": "node --test \"unesential/test/**/*.test.js\"",
     "lint": "eslint backend --ext .js",
     "lint:fix": "eslint backend --ext .js --fix",
     "migrate:create": "node-pg-migrate create --migrations-dir backend/migrations_js",

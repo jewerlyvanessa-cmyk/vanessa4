@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Jalankan dari root repo (contoh: bash backend/scripts/ci.sh).
+# Jalankan dari root repo (contoh: bash unesential/scripts/ci.sh).
 # Dipakai GitHub Actions — dependensi Node tetap di package.json root.
 set -euo pipefail
 
@@ -16,7 +16,7 @@ echo "==> ESLint (backend)"
 npm run lint
 
 echo "==> OpenAPI"
-test -f backend/docs/openapi.yaml
+test -f unesential/docs/openapi.yaml
 
 echo "==> node --check (backend JS)"
 for f in \

@@ -1,13 +1,17 @@
 const fs = require('fs');
 const path = require('path');
-const db = require('./db');
+const db = require('../backend/db');
 
 async function runItemConditionsMigration() {
     try {
         console.log('Starting migration to create item_conditions table...');
 
         // Read migration file
-        const migrationPath = path.join(__dirname, 'migrations', '20260206_create_item_conditions_table.sql');
+        const migrationPath = path.join(
+            __dirname,
+            '../backend/migrations',
+            '20260206_create_item_conditions_table.sql',
+        );
         const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
 
         // Split SQL commands and execute them

@@ -8,8 +8,8 @@ const express = require('express');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 
-const { authenticateToken } = require('../middleware/auth');
-const { registerLoginRoutes } = require('../routes/login');
+const { authenticateToken } = require('../../backend/middleware/auth');
+const { registerLoginRoutes } = require('../../backend/routes/login');
 
 const noopLimiter = (_req, _res, next) => next();
 

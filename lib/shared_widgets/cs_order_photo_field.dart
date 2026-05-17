@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_source_sheet.dart';
 
 /// Field foto order CS — UI sama form Jual (PopupMenu + tombol Pilih Foto).
 class CsOrderPhotoField extends StatelessWidget {
@@ -45,58 +46,14 @@ class CsOrderPhotoField extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  PopupMenuButton<String>(
-                    onSelected: (value) {
-                      if (value == 'camera') {
-                        onCamera();
-                      } else if (value == 'gallery') {
-                        onGallery();
-                      }
-                    },
-                    itemBuilder: (context) => kIsWeb
-                        ? [
-                            const PopupMenuItem<String>(
-                              value: 'gallery',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.upload_file),
-                                  SizedBox(width: 8),
-                                  Text('Pilih file gambar'),
-                                ],
-                              ),
-                            ),
-                          ]
-                        : [
-                            const PopupMenuItem<String>(
-                              value: 'camera',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.camera_alt),
-                                  SizedBox(width: 8),
-                                  Text('Ambil Foto'),
-                                ],
-                              ),
-                            ),
-                            const PopupMenuItem<String>(
-                              value: 'gallery',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.photo_library),
-                                  SizedBox(width: 8),
-                                  Text('Upload dari Galeri'),
-                                ],
-                              ),
-                            ),
-                          ],
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.photo_camera),
-                      label: const Text('Pilih Foto'),
-                      onPressed: null,
-                    ),
-                  ),
-                ],
+              ElevatedButton.icon(
+                icon: Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
+                label: Text(kIsWeb ? 'Pilih file gambar' : 'Pilih Foto'),
+                onPressed: () => showCsOrderPhotoSourceSheet(
+                  context,
+                  onCamera: onCamera,
+                  onGallery: onGallery,
+                ),
               ),
               if (requiredMessage != null && !hasPhoto) ...[
                 const SizedBox(height: 8),

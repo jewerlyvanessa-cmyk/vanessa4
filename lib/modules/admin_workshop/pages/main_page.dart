@@ -4,6 +4,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'workshop_orders_page.dart';
 import '../../stockist/pages/service_incoming_page.dart';
 import 'material_stock_page.dart';
+import 'workshop_productions_page.dart';
 import 'workshop_reports_page.dart';
 import '../../admin_toko/pages/goods_transfer_page.dart';
 import 'return_to_store_page.dart';
@@ -103,6 +104,29 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
     );
   }
 
+  void _openWarehouseSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetWarehouse,
+      options: [
+        ModuleDestinationOption(
+          label: 'Pesan stok ke warehouse',
+          subtitle: 'Permintaan barang dari gudang pusat',
+          icon: Icons.warehouse_outlined,
+          iconColor: Colors.deepOrange,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoStockRequest),
+        ),
+        ModuleDestinationOption(
+          label: 'Transfer dengan gudang',
+          subtitle: 'Terima kiriman / kirim kembali ke warehouse',
+          icon: Icons.local_shipping_outlined,
+          iconColor: Colors.orange,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoGoodsTransfer),
+        ),
+      ],
+    );
+  }
+
   void _onRealtimeUpdate(Map<String, dynamic> update) {
     final type = (update['type'] ?? '').toString();
     final event = (update['event'] ?? '').toString();
@@ -112,7 +136,8 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
         event == 'workshop_approved' ||
         event == 'workshop_assigned' ||
         event == 'workshop_in_progress' ||
-        event == 'workshop_done_tukang';
+        event == 'workshop_done_tukang' ||
+        event == 'workshop_production_created';
     if (!shouldRefresh) return;
 
     ref.read(workshopDashboardProvider.notifier).refresh();
@@ -219,6 +244,18 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
                       ),
                     ),
                     ModuleMenuEntry(
+                      icon: Icons.diamond_outlined,
+                      label: 'PRODUKSI TUKANG',
+                      iconColor: Colors.amber,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              const WorkshopProductionsPage(),
+                        ),
+                      ),
+                    ),
+                    ModuleMenuEntry(
                       icon: DashboardMenuIcons.laporan,
                       label: 'LAPORAN WORKSHOP',
                       iconColor: Colors.purple,
@@ -237,6 +274,12 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
                         context,
                         AppRoutes.adminWorkshopEmployees,
                       ),
+                    ),
+                    ModuleMenuEntry(
+                      icon: Icons.warehouse_outlined,
+                      label: ModuleMenuGroupLabels.warehouse,
+                      iconColor: Colors.deepOrange,
+                      onTap: () => _openWarehouseSheet(context),
                     ),
                     ModuleMenuEntry(
                       icon: Icons.storefront_outlined,
