@@ -11,6 +11,7 @@ import 'package:vanessa3/utils/faktur_print.dart'
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:http/http.dart' as http;
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class FakturPage extends StatefulWidget {
   final Map<String, dynamic> orderData;
@@ -216,8 +217,8 @@ class _FakturPageState extends State<FakturPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+      body: ResponsiveLayout.scrollablePage(
+        context: context,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

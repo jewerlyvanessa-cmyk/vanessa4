@@ -37,8 +37,10 @@ const {
   ordersHasMetadataColumn,
   ordersEstimateColumns,
   ordersHasPickupBranchColumn,
-  orderVisibleAtWorkshopBranchSql,
+  orderAllowedForStorePickup,
+  paymentsHasRevenueBranchColumn,
 } = require('./lib/orders_workshop_helpers');
+const { ordersHasPickedUpAtColumn } = require('./lib/payments_schema_helpers');
 const { handleBranchLogoGet } = require('./lib/branch_logo_http_lazy');
 const {
   normalizeBranchType,
@@ -804,6 +806,8 @@ app.post('/orders/pickup', async (req, res) => {
 
     const hasPickupBranchCol = await ordersHasPickupBranchColumn(client);
     const hasMetadataCol = await ordersHasMetadataColumn(client);
+    const hasRevenueCol = await paymentsHasRevenueBranchColumn(client);
+    const hasPickedUpCols = await ordersHasPickedUpAtColumn(client);
     const selectParts = [
       'o.order_id',
       'o.order_number',
@@ -836,18 +840,21 @@ app.post('/orders/pickup', async (req, res) => {
     }
     const st = (ord.status ?? '').toString().trim().toLowerCase();
 
-    // Sama dengan filter GET /workshop-orders: cabang order, pickup_branch_id, atau
-    // metadata.service_workshop_branch_id (jsonb di DB — lebih andal daripada parse di Node).
-    const branchOk = await orderVisibleAtWorkshopBranchSql(
+    // Sama dengan GET /orders/ready-for-pickup-list (cabang toko + admin toko sudah «Terima»).
+    const branchOk = await orderAllowedForStorePickup(
       client,
       ord.order_id,
       branchId,
       hasPickupBranchCol,
       hasMetadataCol,
+      hasRevenueCol,
     );
     if (!branchOk) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Order bukan milik branch ini' });
+      return res.status(403).json({
+        error:
+          'Order tidak dapat diambil di cabang ini. Pastikan barang sudah «Terima» admin toko dan muncul di daftar siap ambil.',
+      });
     }
     if (st !== 'ready_for_pickup' && st !== 'completed') {
       await client.query('ROLLBACK');
@@ -875,26 +882,37 @@ app.post('/orders/pickup', async (req, res) => {
     const remaining = Math.max(total - paidAmount, 0);
     const nextStatus = remaining > 0 ? 'pending' : 'completed';
 
-    const pickedBy = req.user?.user_id ?? req.user?.id ?? null;
-    await client.query(
-      `
-        UPDATE orders
-        SET status = $1,
-            picked_up_at = COALESCE(picked_up_at, NOW()),
-            picked_up_by = $2,
-            picked_up_notes = $3,
-            picked_up_photo_url = $4,
-            updated_at = NOW()
-        WHERE order_id = $5
-      `,
-      [
-        nextStatus,
-        pickedBy,
-        (notes ?? '').toString(),
-        (photo_url ?? '').toString() || null,
-        ord.order_id,
-      ]
-    );
+    const pickedByRaw = req.user?.user_id ?? req.user?.id ?? null;
+    const pickedBy =
+      pickedByRaw != null ? parseInt(String(pickedByRaw), 10) : null;
+    const notesText = (notes ?? '').toString();
+    const photoText = (photo_url ?? '').toString() || null;
+
+    if (hasPickedUpCols) {
+      await client.query(
+        `
+          UPDATE orders
+          SET status = $1,
+              picked_up_at = COALESCE(picked_up_at, NOW()),
+              picked_up_by = $2,
+              picked_up_notes = $3,
+              picked_up_photo_url = $4,
+              updated_at = NOW()
+          WHERE order_id = $5
+        `,
+        [nextStatus, pickedBy, notesText, photoText, ord.order_id]
+      );
+    } else {
+      await client.query(
+        `
+          UPDATE orders
+          SET status = $1,
+              updated_at = NOW()
+          WHERE order_id = $2
+        `,
+        [nextStatus, ord.order_id]
+      );
+    }
 
     await client.query('COMMIT');
     sendNotificationToClients(`Order ${ord.order_id} (${ot}) telah diambil customer, status ${nextStatus}`);
@@ -910,7 +928,14 @@ app.post('/orders/pickup', async (req, res) => {
       await client.query('ROLLBACK');
     } catch (_) { }
     console.error('Error pickup order:', e);
-    return res.status(500).json({ error: 'Internal server error' });
+    const detail =
+      process.env.NODE_ENV !== 'production' && e?.message
+        ? String(e.message)
+        : undefined;
+    return res.status(500).json({
+      error: 'Internal server error',
+      ...(detail ? { detail } : {}),
+    });
   } finally {
     try {
       client.release?.();

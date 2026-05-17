@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../routes/app_routes.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class SwitchBranchRolePage extends ConsumerStatefulWidget {
   const SwitchBranchRolePage({super.key});
@@ -130,11 +132,21 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
         title: const Text('Pilih Cabang & Peran'),
         automaticallyImplyLeading: false, // Disable back button
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      body: RoleMenuBody(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              primary: false,
+              physics: ResponsiveLayout.scrollPhysics,
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: ResponsiveLayout.safeScrollPadding(context),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
             // Logo
             Center(
               child: Padding(
@@ -262,7 +274,12 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
                       ),
               ),
             ),
-          ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

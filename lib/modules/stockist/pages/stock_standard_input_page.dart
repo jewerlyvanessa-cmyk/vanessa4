@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
 /// Input stok **satu SKU** (form standar: nama, kode, berat gram, qty, kadar, kategori/jenis/tipe/material).
@@ -123,8 +124,11 @@ class _StockStandardInputPageState extends ConsumerState<StockStandardInputPage>
         controller: _scrollCtrl,
         thumbVisibility: true,
         child: SingleChildScrollView(
+          primary: false,
           controller: _scrollCtrl,
-          padding: const EdgeInsets.all(16),
+          physics: ResponsiveLayout.scrollPhysics,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: ResponsiveLayout.safeScrollPadding(context),
           child: Form(
             key: _formKey,
             child: Column(

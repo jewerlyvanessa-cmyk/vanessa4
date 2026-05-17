@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
 import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
@@ -15,6 +14,9 @@ import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -165,9 +167,6 @@ class _AdminTokoMainPageState extends ConsumerState<AdminTokoMainPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch health check status for Live indicator
-    final isServerHealthy = ref.watch(healthCheckProvider);
-
     // React to user changes outside of build (avoid modifying providers during build)
     ref.listen(userStateProvider, (previous, next) {
       ref.read(storeDashboardProvider.notifier).listenToUserStateChanges();
@@ -203,60 +202,17 @@ class _AdminTokoMainPageState extends ConsumerState<AdminTokoMainPage> {
     final pendingKey = GlobalKey<_AdminTokoPendingTransfersCardState>();
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Image.asset(
-              'assets/logo_bulat.png',
-              height: 36,
-              width: 36,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(width: 12),
-            const Text('Admin Toko'),
-          ],
-        ),
-        actions: [
-          // Real-time connection indicator
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            child: Row(
-              children: [
-                Icon(
-                  isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                  color: isServerHealthy ? Colors.green : Colors.red,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                const Text('Live', style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
-          SwitchBranchRoleWidget(),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () {
-              ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, AppRoutes.login);
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
+      appBar: const ModuleDashboardAppBar(title: 'Admin Toko'),
+      body: RoleMenuBody(
+        child: RefreshIndicator(
         onRefresh: () async {
           await pendingKey.currentState?._load();
         },
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: ResponsiveLayout.roleMenuListView(
+          context: context,
           children: [
             Padding(
-              padding: const EdgeInsets.only(
-                left: 24.0,
-                top: 24.0,
-                right: 24.0,
-                bottom: 8.0,
-              ),
+              padding: ResponsiveLayout.roleMenuHeaderPadding,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [UserBranchRoleHeader()],
@@ -336,6 +292,7 @@ class _AdminTokoMainPageState extends ConsumerState<AdminTokoMainPage> {
             ),
             const SizedBox(height: 24),
           ],
+        ),
         ),
       ),
     );

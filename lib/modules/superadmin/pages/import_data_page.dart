@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class ImportDataPage extends ConsumerStatefulWidget {
   const ImportDataPage({super.key});
@@ -40,8 +41,8 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: ResponsiveLayout.scrollablePage(
+        context: context,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

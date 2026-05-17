@@ -8,6 +8,7 @@ import 'package:vanessa3/data/offline_queue.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/utils/file_uploader.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -272,12 +273,11 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           const SizedBox(width: 16),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
+      resizeToAvoidBottomInset: true,
+      body: ResponsiveLayout.scrollableForm(
+        context: context,
+        formKey: _formKey,
+        children: [
               // Order Summary
               Card(
                 child: Padding(
@@ -477,9 +477,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                         ),
                 ),
               ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

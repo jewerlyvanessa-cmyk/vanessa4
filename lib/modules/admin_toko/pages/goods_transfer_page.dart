@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/modules/admin_toko/pages/goods_transfer_create_page.dart';
+import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class GoodsTransferPage extends ConsumerStatefulWidget {
   const GoodsTransferPage({super.key});
@@ -527,35 +529,31 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: Row(
+                      padding: ResponsiveLayout.pagePadding(context)
+                          .copyWith(bottom: 0),
+                      child: ResponsiveMetricRow(
                         children: [
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'Permintaan Masuk',
-                              _transferRequests
-                                  .where((t) =>
-                                      t['to_branch_id']?.toString() ==
-                                          currentBranchIdStr &&
-                                      t['status'] == 'pending')
-                                  .length,
-                              Icons.arrow_downward,
-                              Colors.blue,
-                            ),
+                          _buildSummaryCard(
+                            'Permintaan Masuk',
+                            _transferRequests
+                                .where((t) =>
+                                    t['to_branch_id']?.toString() ==
+                                        currentBranchIdStr &&
+                                    t['status'] == 'pending')
+                                .length,
+                            Icons.arrow_downward,
+                            Colors.blue,
                           ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildSummaryCard(
-                              'Permintaan Keluar',
-                              _transferRequests
-                                  .where((t) =>
-                                      t['from_branch_id']?.toString() ==
-                                          currentBranchIdStr &&
-                                      t['status'] == 'pending')
-                                  .length,
-                              Icons.arrow_upward,
-                              Colors.orange,
-                            ),
+                          _buildSummaryCard(
+                            'Permintaan Keluar',
+                            _transferRequests
+                                .where((t) =>
+                                    t['from_branch_id']?.toString() ==
+                                        currentBranchIdStr &&
+                                    t['status'] == 'pending')
+                                .length,
+                            Icons.arrow_upward,
+                            Colors.orange,
                           ),
                         ],
                       ),

@@ -20,6 +20,8 @@ import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 int? toInt(dynamic value) {
   if (value is int) return value;
@@ -59,6 +61,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   final TextEditingController _uangMukaController = TextEditingController();
 
   Map<String, dynamic>? _selectedCustomer;
+
   /// Referensi ke controller teks yang dipakai [Autocomplete] customer (bukan [_customerController]).
   TextEditingController? _customerAutocompleteController;
   XFile? _fotoXFile;
@@ -131,8 +134,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
     final lower = name.toLowerCase();
     for (final c in ref.read(customersProvider).customers) {
-      final cn =
-          (c['name'] ?? c['nama'] ?? '').toString().trim().toLowerCase();
+      final cn = (c['name'] ?? c['nama'] ?? '').toString().trim().toLowerCase();
       if (cn == lower) {
         final id = toInt(c['customer_id']);
         if (id != null && id > 0) return id;
@@ -141,26 +143,57 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     return null;
   }
 
-  Future<void> _pickFoto() async {
-    if (kIsWeb) {
-      final picked = await FilePicker.pickFiles(
-        type: FileType.image,
-        withData: true,
-      );
-      final f = picked?.files.single;
-      if (f == null) return;
-      final bytes = f.bytes;
-      if (bytes == null || bytes.isEmpty) return;
-      setState(() {
-        _fotoBytes = bytes;
-        _fotoName = f.name;
-        _fotoXFile = null;
-      });
+  Future<void> _pickFotoWebOrGallery() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final f = picked?.files.single;
+    if (f == null) return;
+    final bytes = f.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+            ),
+          ),
+        );
+      }
       return;
     }
+    setState(() {
+      _fotoBytes = bytes;
+      _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+      _fotoXFile = null;
+    });
+  }
 
+  Future<void> _pickFoto() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.camera);
+    if (pickedFile != null) {
+      final compressedFile = await _compressFoto(File(pickedFile.path));
+      setState(() {
+        _fotoXFile = XFile(compressedFile.path);
+        _fotoBytes = null;
+        _fotoName = null;
+      });
+    }
+  }
+
+  Future<void> _pickFotoFromGallery() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
@@ -565,9 +598,14 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       }
 
       final custName = pickStr(orderData['customer_name'], orderData['name']);
-      final custPhone = pickStr(orderData['customer_phone'], orderData['phone']);
-      final custAddr =
-          pickStr(orderData['customer_address'], orderData['address']);
+      final custPhone = pickStr(
+        orderData['customer_phone'],
+        orderData['phone'],
+      );
+      final custAddr = pickStr(
+        orderData['customer_address'],
+        orderData['address'],
+      );
 
       setState(() {
         _selectedCustomer = {
@@ -774,8 +812,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
     // Listen to user state changes to regenerate order number when branch changes
     ref.listen(userStateProvider, (previous, next) {
-      final branchChanged =
-          previous == null || previous.branch != next.branch;
+      final branchChanged = previous == null || previous.branch != next.branch;
       if (branchChanged && mounted) {
         setState(() => _pickupBranchId = null);
       }
@@ -794,13 +831,12 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('Form Order Service')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
+      body: ResponsiveLayout.scrollableForm(
+        context: context,
+        formKey: _formKey,
+        children: [
               // 1. Mode (TOKO/ONLINE)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -950,7 +986,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                           final nameStr = dn.toString();
                                           _customerController.text = nameStr;
                                           _customerAutocompleteController
-                                              ?.text = nameStr;
+                                                  ?.text =
+                                              nameStr;
                                         });
                                       },
                                       fieldViewBuilder:
@@ -1164,7 +1201,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                                             Icons.qr_code_scanner,
                                           ),
                                           onPressed: () =>
-                                              _scanAndLookupNotaLama(controller),
+                                              _scanAndLookupNotaLama(
+                                                controller,
+                                              ),
                                           tooltip: 'Scan QR nota lama',
                                         ),
                                       ],
@@ -1549,7 +1588,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                 decoration: const InputDecoration(
                   labelText: 'Keluhan / Keterangan Perbaikan',
                   border: OutlineInputBorder(),
-                  hintText: 'Contoh: Rusak, Bengkok, Gemuk, dll (boleh dikosongkan)',
+                  hintText:
+                      'Contoh: Rusak, Bengkok, Gemuk, dll (boleh dikosongkan)',
                 ),
               ),
               const SizedBox(height: 12),
@@ -1595,41 +1635,16 @@ class _ServicePageState extends ConsumerState<ServicePage> {
               ),
               const SizedBox(height: 24),
 
-              // Bagian 6: Upload Foto (WAJIB)
-              const Text(
-                'UPLOAD FOTO BARANG (WAJIB)',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: Colors.red,
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_fotoXFile != null || _fotoBytes != null)
-                Container(
-                  height: 200,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: _fotoBytes != null
-                      ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
-                      : Image.file(File(_fotoXFile!.path), fit: BoxFit.cover),
-                ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                onPressed: _pickFoto,
-                icon: const Icon(Icons.camera_alt),
-                label: Text(
-                  (_fotoXFile == null && _fotoBytes == null)
-                      ? 'Ambil Foto'
-                      : 'Ganti Foto',
-                ),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  backgroundColor: Colors.blue,
-                ),
+              CsOrderPhotoField(
+                hasPhoto: _fotoXFile != null || _fotoBytes != null,
+                imageBytes: _fotoBytes,
+                imageFile:
+                    _fotoXFile != null ? File(_fotoXFile!.path) : null,
+                onCamera: _pickFoto,
+                onGallery: _pickFotoFromGallery,
+                requiredMessage: (_fotoXFile == null && _fotoBytes == null)
+                    ? 'Foto barang WAJIB untuk service'
+                    : null,
               ),
               const SizedBox(height: 24),
 
@@ -1646,9 +1661,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                 ),
               ),
               const SizedBox(height: 12),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

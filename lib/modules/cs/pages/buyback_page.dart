@@ -24,6 +24,8 @@ import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class BuybackPage extends ConsumerStatefulWidget {
   const BuybackPage({super.key, this.client});
@@ -212,45 +214,75 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     _potonganKondisiController.addListener(_calculateNilaiResale);
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickFotoWebOrGallery() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final f = picked?.files.single;
+    if (f == null) return;
+    final bytes = f.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    setState(() {
+      _fotoBytes = bytes;
+      _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+      _fotoXFile = null;
+    });
+  }
+
+  Future<File> _compressFotoFile(File file) async {
+    final compressedXFile = await FlutterImageCompress.compressAndGetFile(
+      file.absolute.path,
+      '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      quality: 70,
+      format: CompressFormat.jpeg,
+    );
+    return File((compressedXFile ?? XFile(file.path)).path);
+  }
+
+  Future<void> _pickFoto() async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
       if (kIsWeb) {
-        final picked = await FilePicker.pickFiles(
-          type: FileType.image,
-          withData: true,
-        );
-        final f = picked?.files.single;
-        if (f == null) return;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) return;
-        setState(() {
-          _fotoBytes = bytes;
-          _fotoName = f.name;
-          _fotoXFile = null;
-        });
+        await _pickFotoWebOrGallery();
         return;
       }
-
-      final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 80,
       );
-
       if (image != null) {
-        final File file = File(image.path);
-
-        // Compress image
-        final compressedXFile = await FlutterImageCompress.compressAndGetFile(
-          file.absolute.path,
-          '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg',
-          quality: 70,
-          format: CompressFormat.jpeg,
-        );
-
+        final compressed = await _compressFotoFile(File(image.path));
         setState(() {
-          _fotoXFile = XFile((compressedXFile ?? image).path);
+          _fotoXFile = XFile(compressed.path);
+          _fotoBytes = null;
+          _fotoName = null;
+        });
+      }
+    } catch (e) {
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text('Error picking image: $e')),
+      );
+    }
+  }
+
+  Future<void> _pickFotoFromGallery() async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    try {
+      if (kIsWeb) {
+        await _pickFotoWebOrGallery();
+        return;
+      }
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
+      if (image != null) {
+        final compressed = await _compressFotoFile(File(image.path));
+        setState(() {
+          _fotoXFile = XFile(compressed.path);
           _fotoBytes = null;
           _fotoName = null;
         });
@@ -324,9 +356,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
   /// Normalisasi isi field / hasil scan (QR sering menambah newline).
   String _normalizeNotaInput(String raw) {
-    return raw
-        .replaceAll(RegExp(r'[\r\n\t]+'), '')
-        .trim();
+    return raw.replaceAll(RegExp(r'[\r\n\t]+'), '').trim();
   }
 
   Future<void> _lookupItem() async {
@@ -371,9 +401,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
       // QR faktur: jika nomor nota kosong saat cetak, QR berisi order_id (angka) — GET /orders?order_id=
       if (orderData == null && RegExp(r'^\d+$').hasMatch(notaLama)) {
-        orderData = decodeOrderMap(
-          await getOrders({'order_id': notaLama}),
-        );
+        orderData = decodeOrderMap(await getOrders({'order_id': notaLama}));
       }
 
       Logger.logInfo('Order data received: $orderData');
@@ -431,9 +459,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
       if (validItems.isEmpty) {
         scaffoldMessenger.showSnackBar(
-          const SnackBar(
-            content: Text('Order tidak memiliki item yang valid'),
-          ),
+          const SnackBar(content: Text('Order tidak memiliki item yang valid')),
         );
         setState(() {
           _switchToManualEntryMode();
@@ -919,13 +945,12 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('Form Order Buyback')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
+      body: ResponsiveLayout.scrollableForm(
+        context: context,
+        formKey: _formKey,
+        children: [
               // ==================== HEADER SECTION ====================
               // 1. Mode (TOKO/ONLINE)
               Row(
@@ -1058,9 +1083,10 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                                           onPressed: _isLookingUpItem
                                               ? null
                                               : () => _scanAndFill(
-                                                    _notaLamaController,
-                                                    onScanned: (_) => _lookupItem(),
-                                                  ),
+                                                  _notaLamaController,
+                                                  onScanned: (_) =>
+                                                      _lookupItem(),
+                                                ),
                                           tooltip: 'Scan QR nota lama',
                                         ),
                                       ],
@@ -1512,16 +1538,17 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                               ? _jenisController.text
                               : null,
                           decoration: const InputDecoration(hintText: 'Jenis'),
-                          items: orderItemJenisOptionsForKategori(
-                            _kategoriController.text,
-                          )
-                              .map(
-                                (jenis) => DropdownMenuItem(
-                                  value: jenis,
-                                  child: Text(jenis),
-                                ),
-                              )
-                              .toList(),
+                          items:
+                              orderItemJenisOptionsForKategori(
+                                    _kategoriController.text,
+                                  )
+                                  .map(
+                                    (jenis) => DropdownMenuItem(
+                                      value: jenis,
+                                      child: Text(jenis),
+                                    ),
+                                  )
+                                  .toList(),
                           onChanged: (value) {
                             _jenisController.text = value ?? '';
                           },
@@ -1976,70 +2003,18 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  // Foto Kondisi
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 100,
-                            child: Text('Foto Kondisi'),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _pickImage,
-                              icon: const Icon(Icons.camera_alt),
-                              label: const Text('Ambil Foto'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_fotoXFile != null || _fotoBytes != null) ...[
-                        const SizedBox(height: 16),
-                        Container(
-                          width: double.infinity,
-                          height: 200,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: _fotoBytes != null
-                                ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
-                                : Image.file(
-                                    File(_fotoXFile!.path),
-                                    fit: BoxFit.cover,
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.check_circle,
-                              color: Colors.green,
-                              size: 20,
-                            ),
-                            SizedBox(width: 8),
-                            Text(
-                              'Foto berhasil diambil',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
+                  CsOrderPhotoField(
+                    label: 'Foto Kondisi',
+                    hasPhoto: _fotoXFile != null || _fotoBytes != null,
+                    imageBytes: _fotoBytes,
+                    imageFile:
+                        _fotoXFile != null ? File(_fotoXFile!.path) : null,
+                    onCamera: _pickFoto,
+                    onGallery: _pickFotoFromGallery,
+                    requiredMessage:
+                        (_fotoXFile == null && _fotoBytes == null)
+                            ? 'Foto barang wajib diupload'
+                            : null,
                   ),
                 ],
               ),
@@ -2060,9 +2035,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                       : const Text('BUAT ORDER BUYBACK'),
                 ),
               ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

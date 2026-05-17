@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'workshop_orders_page.dart';
 import '../../stockist/pages/service_incoming_page.dart';
 import 'material_stock_page.dart';
@@ -18,6 +17,9 @@ import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
 import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class AdminWorkshopMainPage extends ConsumerStatefulWidget {
   const AdminWorkshopMainPage({super.key});
@@ -125,7 +127,6 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isServerHealthy = ref.watch(healthCheckProvider);
     final dashboardAsync = ref.watch(workshopDashboardProvider);
     final inProgressCount = dashboardAsync.maybeWhen(
       data: (d) => d.inProgressOrders,
@@ -154,49 +155,16 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
     });
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Admin Workshop'),
-        leading: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Image.asset('assets/logo_bulat.png', fit: BoxFit.contain),
-        ),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            child: Row(
-              children: [
-                Icon(
-                  isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                  color: isServerHealthy ? Colors.green : Colors.red,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                const Text('Live', style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
-          SwitchBranchRoleWidget(),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () {
-              ref.read(webSocketProvider.notifier).disconnect();
-              ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-          ),
-        ],
+      appBar: const ModuleDashboardAppBar(
+        title: 'Admin Workshop',
+        logoInLeading: true,
       ),
-      body: Column(
+      body: RoleMenuBody(
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(
-              left: 24.0,
-              top: 24.0,
-              right: 24.0,
-              bottom: 8.0,
-            ),
+            padding: ResponsiveLayout.roleMenuHeaderPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: const [UserBranchRoleHeader()],
@@ -204,9 +172,10 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: SingleChildScrollView(
+            child: ResponsiveLayout.roleMenuScroll(
+              context: context,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                padding: ResponsiveLayout.roleMenuHorizontalPadding,
                 child: ModuleMenuGrid(
                   minCrossAxisCount: 4,
                   entries: [
@@ -288,6 +257,7 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

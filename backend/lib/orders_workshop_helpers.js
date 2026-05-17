@@ -560,6 +560,44 @@ function sqlStoreReceiptConfirmedForPickup(alias, branchParamIndex, hasMetadataC
   )`;
 }
 
+/**
+ * CS Ambil / POST pickup: sama filter dengan GET ready-for-pickup-list (cabang toko + sudah «Terima»).
+ */
+async function orderAllowedForStorePickup(
+  pool,
+  orderId,
+  branchId,
+  hasPickupCol,
+  hasMetadataCol,
+  hasRevenueCol
+) {
+  const bid = parseInt(String(branchId ?? ''), 10);
+  const oid = parseInt(String(orderId ?? ''), 10);
+  if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(oid) || oid <= 0) {
+    return false;
+  }
+  const vis = sqlStoreReadyForPickupListVisible(
+    'o',
+    1,
+    hasPickupCol,
+    hasMetadataCol,
+    hasRevenueCol
+  );
+  const confirmed = sqlStoreReceiptConfirmedForPickup('o', 1, hasMetadataCol);
+  const r = await pool.query(
+    `
+      SELECT 1
+      FROM orders o
+      WHERE o.order_id = $2
+        AND (${vis})
+        AND (${confirmed})
+      LIMIT 1
+    `,
+    [bid, oid]
+  );
+  return r.rows.length > 0;
+}
+
 /** Node-pg dapat mengembalikan int8 sebagai BigInt; JSON.stringify gagal tanpa ini. */
 function jsonSafeDbRow(row) {
   if (row == null || typeof row !== 'object') return row;
@@ -595,5 +633,6 @@ module.exports = {
   sqlOrderVisibleAtBranchForWorkshopPut,
   sqlStoreReadyForPickupListVisible,
   sqlStoreReceiptConfirmedForPickup,
+  orderAllowedForStorePickup,
   jsonSafeDbRow,
 };

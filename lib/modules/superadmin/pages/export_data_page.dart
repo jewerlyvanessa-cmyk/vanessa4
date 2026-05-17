@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class ExportDataPage extends ConsumerStatefulWidget {
   const ExportDataPage({super.key});
@@ -52,8 +53,8 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: ResponsiveLayout.scrollablePage(
+        context: context,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

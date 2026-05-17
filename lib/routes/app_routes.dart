@@ -53,6 +53,7 @@ import '../modules/stockist/pages/stock_cabang_page.dart';
 import '../modules/stockist/pages/main_page.dart';
 import '../pages/switch_branch_role_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import '../providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
@@ -316,21 +317,20 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width > 600
-                  ? 400
-                  : MediaQuery.of(context).size.width * 0.9,
-            ),
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+      body: ResponsiveLayout.scrollableCenteredPage(
+        context: context,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width > 600
+                ? 400
+                : MediaQuery.of(context).size.width * 0.9,
+          ),
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                   // Logo di atas username
                   Padding(
                     padding: const EdgeInsets.only(bottom: 24.0),
@@ -404,8 +404,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
           ),
         ),

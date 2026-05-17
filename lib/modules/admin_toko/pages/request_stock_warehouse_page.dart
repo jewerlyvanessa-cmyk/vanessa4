@@ -8,6 +8,7 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class _CatJenisLine {
   /// Selaras form order Jual (default kategori umum).
@@ -253,7 +254,10 @@ class _RequestStockWarehousePageState
       body: _loadingBranches
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              primary: false,
+              physics: ResponsiveLayout.scrollPhysics,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: ResponsiveLayout.safeScrollPadding(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [

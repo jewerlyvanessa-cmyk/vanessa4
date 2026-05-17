@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 
 class WorkshopReportsPage extends ConsumerStatefulWidget {
@@ -64,18 +65,7 @@ class _WorkshopReportsPageState extends ConsumerState<WorkshopReportsPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            Image.asset(
-              'assets/logo_bulat.png',
-              height: 36,
-              width: 36,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(width: 12),
-            const Text('Laporan Workshop'),
-          ],
-        ),
+        title: const ModuleAppBarTitle(title: 'Laporan Workshop'),
         actions: [
           // Period selector
           PopupMenuButton<String>(

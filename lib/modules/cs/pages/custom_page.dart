@@ -19,6 +19,8 @@ import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 int? toInt(dynamic value) {
@@ -136,46 +138,66 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
   }
 
+  Future<void> _pickFotoWebOrGallery() async {
+    try {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: true,
+      );
+      final f = picked?.files.single;
+      if (f == null) return;
+      final bytes = f.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _fotoBytes = bytes;
+        _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+        _fotoFile = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+      }
+    }
+  }
+
   Future<void> _pickFoto() async {
     if (kIsWeb) {
-      try {
-        final picked = await FilePicker.pickFiles(
-          type: FileType.image,
-          allowMultiple: false,
-          withData: true,
-        );
-        final f = picked?.files.single;
-        if (f == null) return;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
-                ),
-              ),
-            );
-          }
-          return;
-        }
-        setState(() {
-          _fotoBytes = bytes;
-          _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
-          _fotoFile = null;
-        });
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
-        }
-      }
+      await _pickFotoWebOrGallery();
       return;
     }
-
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.camera);
+    if (pickedFile != null) {
+      final compressedFile = await _compressFoto(File(pickedFile.path));
+      setState(() {
+        _fotoFile = compressedFile;
+        _fotoBytes = null;
+        _fotoName = null;
+      });
+    }
+  }
+
+  Future<void> _pickFotoFromGallery() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
       final compressedFile = await _compressFoto(File(pickedFile.path));
       setState(() {
@@ -595,13 +617,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('Form Order Custom')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
+      body: ResponsiveLayout.scrollableForm(
+        context: context,
+        formKey: _formKey,
+        children: [
               // 1. Mode (TOKO/ONLINE)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -1336,41 +1357,15 @@ class _CustomPageState extends ConsumerState<CustomPage> {
               ),
               const SizedBox(height: 24),
 
-              // Bagian 3: Upload Foto (WAJIB - Referensi/Desain)
-              const Text(
-                'UPLOAD FOTO DESAIN/REFERENSI (WAJIB)',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: Colors.red,
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_hasFoto)
-                Container(
-                  height: 200,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: _fotoBytes != null
-                      ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
-                      : Image.file(_fotoFile!, fit: BoxFit.cover),
-                ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                onPressed: _pickFoto,
-                icon: Icon(kIsWeb ? Icons.upload_file : Icons.camera_alt),
-                label: Text(
-                  !_hasFoto
-                      ? (kIsWeb ? 'Pilih file gambar' : 'Ambil Foto')
-                      : (kIsWeb ? 'Ganti file gambar' : 'Ganti Foto'),
-                ),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  backgroundColor: Colors.blue,
-                ),
+              CsOrderPhotoField(
+                hasPhoto: _hasFoto,
+                imageBytes: _fotoBytes,
+                imageFile: _fotoFile,
+                onCamera: _pickFoto,
+                onGallery: _pickFotoFromGallery,
+                requiredMessage: !_hasFoto
+                    ? 'Foto desain/referensi WAJIB'
+                    : null,
               ),
               const SizedBox(height: 24),
 
@@ -1387,9 +1382,7 @@ class _CustomPageState extends ConsumerState<CustomPage> {
                 ),
               ),
               const SizedBox(height: 12),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'providers/network_provider.dart';
 import 'providers/user_state_provider.dart';
 import 'utils/network_config.dart';
 import 'utils/network_connectivity.dart';
+import 'utils/responsive_layout.dart';
 import 'providers/websocket_provider.dart';
 
 void main() async {
@@ -88,6 +89,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
     return MaterialApp(
       navigatorKey: VanessaApp.navigatorKey,
       title: 'Vanessa App',
+      scrollBehavior: const VanessaScrollBehavior(),
       theme: AppTheme.lightTheme,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -103,11 +105,20 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
       onGenerateRoute: AppRoutes.onGenerateRoute,
       home: const _AppHomeGate(),
       builder: (context, child) {
+        final mq = ResponsiveLayout.clampMediaQuery(MediaQuery.of(context));
+        Widget navigatorChild = MediaQuery(
+          data: mq,
+          child: child ?? const SizedBox.shrink(),
+        );
+        navigatorChild = ResponsiveLayout.constrainContent(
+          context,
+          navigatorChild,
+        );
+
         // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web
         // tidak tertutup banner merah/oranye.
         final showConnectionBanner =
             !networkState.isOnline || !networkState.isBackendReachable;
-        final navigatorChild = child ?? const SizedBox.shrink();
 
         if (!showConnectionBanner) return navigatorChild;
 

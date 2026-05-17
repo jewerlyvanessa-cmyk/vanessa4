@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/surat_jalan_print.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 
@@ -410,6 +412,7 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
     final available = _availableBranches;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: const Text('Kirim ke Toko'),
       ),
@@ -425,7 +428,12 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
             children: [
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
+                  ),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: ResponsiveLayout.pagePadding(context),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -556,35 +564,26 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
               ),
               SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: _submitting
-                              ? null
-                              : () => Navigator.pop(context),
-                          child: const Text('Batal'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _submitting || isLoading || error != null
-                              ? null
-                              : () => _submit(items),
-                          child: _submitting
-                              ? const SizedBox(
-                                  height: 22,
-                                  width: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text('Kirim'),
-                        ),
-                      ),
-                    ],
+                  padding: ResponsiveLayout.pagePadding(context).copyWith(top: 8),
+                  child: ResponsiveDualActions(
+                    secondary: OutlinedButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.pop(context),
+                      child: const Text('Batal'),
+                    ),
+                    primary: FilledButton(
+                      onPressed: _submitting || isLoading || error != null
+                          ? null
+                          : () => _submit(items),
+                      child: _submitting
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Kirim'),
+                    ),
                   ),
                 ),
               ),

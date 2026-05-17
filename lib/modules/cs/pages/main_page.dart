@@ -7,8 +7,10 @@ import 'package:vanessa3/modules/admin_toko/pages/stock_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -110,59 +112,14 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
   Widget build(BuildContext context) {
     return Consumer(
       builder: (context, ref, child) {
-        final isServerHealthy = ref.watch(healthCheckProvider);
-
         return Scaffold(
-          appBar: AppBar(
-            title: Row(
-              children: [
-                Image.asset(
-                  'assets/logo_bulat.png',
-                  height: 36,
-                  width: 36,
-                  fit: BoxFit.contain,
-                ),
-                const SizedBox(width: 12),
-                const Text('CS'),
-              ],
-            ),
-            actions: [
-              Container(
-                margin: const EdgeInsets.only(right: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                      color: isServerHealthy ? Colors.green : Colors.red,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 4),
-                    const Text('Live', style: TextStyle(fontSize: 12)),
-                  ],
-                ),
-              ),
-              SwitchBranchRoleWidget(),
-              IconButton(
-                icon: const Icon(Icons.logout),
-                tooltip: 'Logout',
-                onPressed: () {
-                  ref.read(webSocketProvider.notifier).disconnect();
-                  ref.read(userStateProvider.notifier).logout();
-                  Navigator.pushReplacementNamed(context, '/login');
-                },
-              ),
-            ],
-          ),
-          body: Column(
+          appBar: const ModuleDashboardAppBar(title: 'CS'),
+          body: RoleMenuBody(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.only(
-                  left: 24.0,
-                  top: 24.0,
-                  right: 24.0,
-                  bottom: 8.0,
-                ),
+                padding: ResponsiveLayout.roleMenuHeaderPadding,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: const [UserBranchRoleHeader()],
@@ -233,7 +190,12 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
               const SizedBox(height: 8),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    0,
+                    12,
+                    12 + ResponsiveLayout.scrollEndGap(context),
+                  ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: const DailyOrdersPaymentsPage(
@@ -244,6 +206,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
                 ),
               ),
             ],
+            ),
           ),
         );
       },

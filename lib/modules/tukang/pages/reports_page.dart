@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class ReportsPage extends ConsumerStatefulWidget {
   const ReportsPage({super.key});
@@ -228,7 +230,7 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       onRefresh: _loadReports,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: ResponsiveLayout.pagePadding(context).copyWith(bottom: 24),
         children: [
           Text(
             'Laporan untuk: ${userState.username.isNotEmpty ? userState.username : 'Anda'}'
@@ -273,34 +275,26 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
             ],
           ),
           const SizedBox(height: 16),
-          Row(
+          ResponsiveMetricRow(
             children: [
-              Expanded(
-                child: _StatCard(
-                  title: 'Total',
-                  value: _num(stats['total_orders']).toString(),
-                  icon: Icons.work_outline,
-                  color: cs.primary,
-                ),
+              _StatCard(
+                title: 'Total',
+                value: _num(stats['total_orders']).toString(),
+                icon: Icons.work_outline,
+                color: cs.primary,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _StatCard(
-                  title: 'Rata-rata',
-                  value:
-                      '${_num(stats['avg_duration_hours']).toStringAsFixed(1)}j',
-                  icon: Icons.schedule_outlined,
-                  color: cs.tertiary,
-                ),
+              _StatCard(
+                title: 'Rata-rata',
+                value:
+                    '${_num(stats['avg_duration_hours']).toStringAsFixed(1)}j',
+                icon: Icons.schedule_outlined,
+                color: cs.tertiary,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _StatCard(
-                  title: 'Efisiensi',
-                  value: '${_num(stats['efficiency'])}%',
-                  icon: Icons.trending_up_outlined,
-                  color: cs.secondary,
-                ),
+              _StatCard(
+                title: 'Efisiensi',
+                value: '${_num(stats['efficiency'])}%',
+                icon: Icons.trending_up_outlined,
+                color: cs.secondary,
               ),
             ],
           ),

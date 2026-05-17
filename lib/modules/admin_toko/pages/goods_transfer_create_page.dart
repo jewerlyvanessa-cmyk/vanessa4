@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Form kirim barang antar cabang (dulu dialog di [GoodsTransferPage]).
 class GoodsTransferCreatePage extends ConsumerStatefulWidget {
@@ -261,26 +263,38 @@ class _GoodsTransferCreatePageState
           style: Theme.of(context).textTheme.labelLarge,
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _SourceChoiceButton(
-                label: 'Dari stok',
-                icon: Icons.inventory_2_outlined,
-                selected: _selectedSourceType == 'stok',
-                onTap: () => _setSourceType('stok'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _SourceChoiceButton(
-                label: 'Dari buyback',
-                icon: Icons.swap_horiz_outlined,
-                selected: _selectedSourceType == 'buyback',
-                onTap: () => _setSourceType('buyback'),
-              ),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, c) {
+            final stack = c.maxWidth < 400;
+            final stok = _SourceChoiceButton(
+              label: 'Dari stok',
+              icon: Icons.inventory_2_outlined,
+              selected: _selectedSourceType == 'stok',
+              onTap: () => _setSourceType('stok'),
+            );
+            final buyback = _SourceChoiceButton(
+              label: 'Dari buyback',
+              icon: Icons.swap_horiz_outlined,
+              selected: _selectedSourceType == 'buyback',
+              onTap: () => _setSourceType('buyback'),
+            );
+            if (stack) {
+              return Column(
+                children: [
+                  stok,
+                  const SizedBox(height: 10),
+                  buyback,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: stok),
+                const SizedBox(width: 10),
+                Expanded(child: buyback),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 4),
         Text(
@@ -411,6 +425,7 @@ class _GoodsTransferCreatePageState
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: const Text('Kirim Barang'),
       ),
@@ -420,7 +435,12 @@ class _GoodsTransferCreatePageState
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: ResponsiveLayout.pagePadding(context),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -562,35 +582,24 @@ class _GoodsTransferCreatePageState
             ),
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.pop(context),
-                        child: const Text('Batal'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: _submitting || _isLoadingItems
-                            ? null
-                            : _submit,
-                        child: _submitting
-                            ? const SizedBox(
-                                height: 22,
-                                width: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Kirim'),
-                      ),
-                    ),
-                  ],
+                padding: ResponsiveLayout.pagePadding(context).copyWith(top: 8),
+                child: ResponsiveDualActions(
+                  secondary: OutlinedButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.pop(context),
+                    child: const Text('Batal'),
+                  ),
+                  primary: FilledButton(
+                    onPressed: _submitting || _isLoadingItems ? null : _submit,
+                    child: _submitting
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Kirim'),
+                  ),
                 ),
               ),
             ),

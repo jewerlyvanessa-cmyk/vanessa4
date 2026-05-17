@@ -6,15 +6,17 @@ import 'package:http/http.dart' as http;
 
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
-import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/routes/app_routes.dart';
 import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Admin warehouse: menu menggabungkan operasi stok/transfer seperti admin toko + alur warehouse (stockist).
 class AdminWarehouseMainPage extends ConsumerStatefulWidget {
@@ -125,7 +127,6 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
 
   @override
   Widget build(BuildContext context) {
-    final isServerHealthy = ref.watch(healthCheckProvider);
     final branchId = ref.watch(userStateProvider).branch.toString();
 
     final pendingOutgoingAll = _pendingTransfers.where((t) {
@@ -154,58 +155,15 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
     });
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Image.asset(
-              'assets/logo_bulat.png',
-              height: 36,
-              width: 36,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(width: 12),
-            const Text('Admin Warehouse'),
-          ],
-        ),
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            child: Row(
-              children: [
-                Icon(
-                  isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                  color: isServerHealthy ? Colors.green : Colors.red,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                const Text('Live', style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
-          SwitchBranchRoleWidget(),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () {
-              ref.read(webSocketProvider.notifier).disconnect();
-              ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, AppRoutes.login);
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
+      appBar: const ModuleDashboardAppBar(title: 'Admin Warehouse'),
+      body: RoleMenuBody(
+        child: RefreshIndicator(
         onRefresh: _loadPendingTransfers,
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: ResponsiveLayout.roleMenuListView(
+          context: context,
           children: [
             Padding(
-              padding: const EdgeInsets.only(
-                left: 24.0,
-                top: 24.0,
-                right: 24.0,
-                bottom: 8.0,
-              ),
+              padding: ResponsiveLayout.roleMenuHeaderPadding,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [UserBranchRoleHeader()],
@@ -306,6 +264,7 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
             ),
             const SizedBox(height: 24),
           ],
+        ),
         ),
       ),
     );

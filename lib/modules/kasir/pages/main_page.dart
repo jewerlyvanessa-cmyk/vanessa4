@@ -4,12 +4,14 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
 import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import '../../../utils/network_config.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
@@ -218,60 +220,16 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
           }
         });
 
-        // Watch health check status for Live indicator
-        final isServerHealthy = ref.watch(healthCheckProvider);
-
         return Scaffold(
-          appBar: AppBar(
-            title: Row(
-              children: [
-                Image.asset(
-                  'assets/logo_bulat.png',
-                  height: 36,
-                  width: 36,
-                  fit: BoxFit.contain,
-                ),
-                const SizedBox(width: 12),
-                const Text('Kasir'),
-              ],
-            ),
-            actions: [
-              Row(
-                children: [
-                  Icon(
-                    isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                    color: isServerHealthy ? Colors.green : Colors.red,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 4),
-                  const Text('Live', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-              const SizedBox(width: 16),
-              SwitchBranchRoleWidget(),
-              IconButton(
-                icon: const Icon(Icons.logout),
-                tooltip: 'Logout',
-                onPressed: () {
-                  ref.read(webSocketProvider.notifier).disconnect();
-                  ref.read(userStateProvider.notifier).logout();
-                  Navigator.pushReplacementNamed(context, AppRoutes.login);
-                },
-              ),
-            ],
-          ),
-          body: Column(
+          appBar: const ModuleDashboardAppBar(title: 'Kasir'),
+          body: RoleMenuBody(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Builder(
                 builder: (context) {
                   return Padding(
-                    padding: const EdgeInsets.only(
-                      left: 24.0,
-                      top: 24.0,
-                      right: 24.0,
-                      bottom: 8.0,
-                    ),
+                    padding: ResponsiveLayout.roleMenuHeaderPadding,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -516,7 +474,9 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                   ],
                 ),
               ),
+              SizedBox(height: ResponsiveLayout.scrollEndGap(context)),
             ],
+            ),
           ),
         );
       },

@@ -20,6 +20,9 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/faktur_print.dart'
     show printPickupServiceCustomFaktur;
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:intl/intl.dart';
 
 class AmbilPage extends ConsumerStatefulWidget {
@@ -410,7 +413,24 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
           );
         }
       } else {
-        throw Exception('Gagal proses ambil barang: ${response.body}');
+        String msg = 'Gagal proses ambil barang (${response.statusCode})';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            final err = decoded['error']?.toString();
+            final detail = decoded['detail']?.toString();
+            if (err != null && err.isNotEmpty) {
+              msg = detail != null && detail.isNotEmpty
+                  ? '$err — $detail'
+                  : err;
+            }
+          }
+        } catch (_) {
+          if (response.body.trim().isNotEmpty) {
+            msg = response.body.trim();
+          }
+        }
+        throw Exception(msg);
       }
     } catch (e) {
       if (mounted) {
@@ -459,47 +479,65 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     return true;
   }
 
-  Future<void> _pickImage() async {
-    if (kIsWeb) {
-      try {
-        final picked = await FilePicker.pickFiles(
-          type: FileType.image,
-          allowMultiple: false,
-          withData: true,
-        );
-        final f = picked?.files.single;
-        if (f == null) return;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
-                ),
-              ),
-            );
-          }
-          return;
-        }
-        setState(() {
-          _fotoBytes = bytes;
-          _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
-          _fotoFile = null;
-        });
-      } catch (e) {
+  Future<void> _pickFotoWebOrGallery() async {
+    try {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: true,
+      );
+      final f = picked?.files.single;
+      if (f == null) return;
+      final bytes = f.bytes;
+      if (bytes == null || bytes.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Tidak bisa membaca file gambar. Coba file lain (JPEG/PNG).',
+              ),
+            ),
+          );
         }
+        return;
       }
+      setState(() {
+        _fotoBytes = bytes;
+        _fotoName = f.name.isNotEmpty ? f.name : 'foto.jpg';
+        _fotoFile = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal pilih gambar: $e')));
+      }
+    }
+  }
+
+  Future<void> _pickFoto() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
       return;
     }
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.camera);
+    if (pickedFile != null) {
+      setState(() {
+        _fotoFile = File(pickedFile.path);
+        _fotoBytes = null;
+        _fotoName = null;
+      });
+    }
+  }
 
+  Future<void> _pickFotoFromGallery() async {
+    if (kIsWeb) {
+      await _pickFotoWebOrGallery();
+      return;
+    }
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
     if (pickedFile != null) {
       setState(() {
         _fotoFile = File(pickedFile.path);
@@ -523,48 +561,19 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: const Text('Ambil Barang'),
         // follow global AppBarTheme (primary background)
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // No. Order (service & custom — muat dari server)
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('No. Order'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _orderNumberController,
-                      textInputAction: TextInputAction.search,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Nomor nota service / custom',
-                      ),
-                      onFieldSubmitted: (_) {
-                        _loadOrderFromOrderNumberField();
-                      },
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'No. Order wajib diisi';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 4),
+      body: ResponsiveLayout.scrollableFormColumn(
+        context: context,
+        formKey: _formKey,
+        children: [
+              ResponsiveFormRow(
+                label: 'No. Order',
+                spacing: 8,
+                actions: [
                   IconButton(
                     onPressed: _loadingOrderLookup
                         ? null
@@ -588,15 +597,28 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                     color: cs.primary,
                   ),
                 ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 128, top: 4),
-                child: Text(
+                helper: Text(
                   'Ketik nomor nota lalu Enter atau ikon cari — data diambil dari order Service & Custom.',
                   style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
+                child: TextFormField(
+                  controller: _orderNumberController,
+                  textInputAction: TextInputAction.search,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: 'Nomor nota service / custom',
+                  ),
+                  onFieldSubmitted: (_) {
+                    _loadOrderFromOrderNumberField();
+                  },
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'No. Order wajib diisi';
+                    }
+                    return null;
+                  },
+                ),
               ),
-              const SizedBox(height: 12),
               // Customer
               Row(
                 children: [
@@ -845,46 +867,14 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              // Foto
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Foto'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _pickImage,
-                      icon: Icon(kIsWeb ? Icons.upload_file : Icons.photo),
-                      label: Text(kIsWeb ? 'Pilih file gambar' : 'Pilih Foto'),
-                    ),
-                  ),
-                ],
+              CsOrderPhotoField(
+                labelWidth: 120,
+                hasPhoto: _hasFoto,
+                imageBytes: _fotoBytes,
+                imageFile: _fotoFile,
+                onCamera: _pickFoto,
+                onGallery: _pickFotoFromGallery,
               ),
-              if (_hasFoto)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 128),
-                      Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: cs.outlineVariant),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: _fotoBytes != null
-                            ? Image.memory(_fotoBytes!, fit: BoxFit.cover)
-                            : Image.file(_fotoFile!, fit: BoxFit.cover),
-                      ),
-                    ],
-                  ),
-                ),
               const SizedBox(height: 24),
 
               SizedBox(
@@ -1077,9 +1067,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                     );
                   },
                 ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

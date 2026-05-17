@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
+import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
+import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/providers/system_dashboard_provider.dart';
 import 'user_management_page.dart';
 import './branch_management_page.dart';
@@ -36,9 +38,6 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch health check status for Live indicator
-    final isServerHealthy = ref.watch(healthCheckProvider);
-
     ref.listen(userStateProvider, (previous, next) {
       if (next.userId != null && next.role.isNotEmpty) {
         ref.read(webSocketProvider.notifier).ensureConnected(authToken: next.authToken);
@@ -62,56 +61,13 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
     });
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Image.asset(
-              'assets/logo_bulat.png',
-              height: 36,
-              width: 36,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(width: 12),
-            const Text('Superadmin'),
-          ],
-        ),
-        actions: [
-          // Real-time connection indicator
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            child: Row(
-              children: [
-                Icon(
-                  isServerHealthy ? Icons.wifi : Icons.wifi_off,
-                  color: isServerHealthy ? Colors.green : Colors.red,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                const Text('Live', style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
-          SwitchBranchRoleWidget(),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () {
-              ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-          ),
-        ],
-      ),
-      body: Column(
+      appBar: const ModuleDashboardAppBar(title: 'Superadmin'),
+      body: RoleMenuBody(
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(
-              left: 24.0,
-              top: 24.0,
-              right: 24.0,
-              bottom: 8.0,
-            ),
+            padding: ResponsiveLayout.roleMenuHeaderPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -121,9 +77,10 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: SingleChildScrollView(
+            child: ResponsiveLayout.roleMenuScroll(
+              context: context,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                padding: ResponsiveLayout.roleMenuHorizontalPadding,
                 child: ModuleMenuGrid(
                   minCrossAxisCount: 4,
                   entries: [
@@ -199,6 +156,7 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

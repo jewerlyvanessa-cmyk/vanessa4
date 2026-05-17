@@ -23,6 +23,8 @@ import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
+import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 class JualPage extends ConsumerStatefulWidget {
   const JualPage({super.key, this.client});
@@ -1015,13 +1017,12 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('Form Order Jual')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
+      body: ResponsiveLayout.scrollableForm(
+        context: context,
+        formKey: _formKey,
+        children: [
               // 1. Mode (TOKO/ONLINE)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -2197,104 +2198,15 @@ class _JualPageState extends ConsumerState<JualPage> {
               ),
               const SizedBox(height: 12.0),
 
-              // Foto (wajib untuk QSR, opsional untuk lainnya)
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Foto'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == 'camera') {
-                                  _pickFoto();
-                                } else if (value == 'gallery') {
-                                  _pickFotoFromGallery();
-                                }
-                              },
-                              itemBuilder: (BuildContext context) => kIsWeb
-                                  ? [
-                                      const PopupMenuItem<String>(
-                                        value: 'gallery',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.upload_file),
-                                            SizedBox(width: 8),
-                                            Text('Pilih file gambar'),
-                                          ],
-                                        ),
-                                      ),
-                                    ]
-                                  : [
-                                      const PopupMenuItem<String>(
-                                        value: 'camera',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.camera_alt),
-                                            SizedBox(width: 8),
-                                            Text('Ambil Foto'),
-                                          ],
-                                        ),
-                                      ),
-                                      const PopupMenuItem<String>(
-                                        value: 'gallery',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.photo_library),
-                                            SizedBox(width: 8),
-                                            Text('Upload dari Galeri'),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.photo_camera),
-                                label: const Text('Pilih Foto'),
-                                onPressed:
-                                    null, // Disabled since we use the popup
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (_saleType == 'qsr' && !_hasFoto) ...[
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Foto WAJIB untuk QSR',
-                            style: TextStyle(color: Colors.red, fontSize: 12),
-                          ),
-                        ],
-                        if (_hasFoto) ...[
-                          const SizedBox(height: 8),
-                          Center(
-                            child: _fotoBytes != null
-                                ? Image.memory(
-                                    _fotoBytes!,
-                                    width: 160,
-                                    height: 160,
-                                    fit: BoxFit.cover,
-                                  )
-                                : Image.file(
-                                    _fotoFile!,
-                                    width: 160,
-                                    height: 160,
-                                    fit: BoxFit.cover,
-                                  ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
+              CsOrderPhotoField(
+                hasPhoto: _hasFoto,
+                imageBytes: _fotoBytes,
+                imageFile: _fotoFile,
+                onCamera: _pickFoto,
+                onGallery: _pickFotoFromGallery,
+                requiredMessage: _saleType == 'qsr' && !_hasFoto
+                    ? 'Foto WAJIB untuk QSR'
+                    : null,
               ),
               const SizedBox(height: 24.0),
 
@@ -2332,9 +2244,7 @@ class _JualPageState extends ConsumerState<JualPage> {
                 ),
               ),
               const SizedBox(height: 12),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }
