@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
@@ -107,11 +108,12 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
       context,
       orderId: oid,
       branchId: branch,
+      allowAllZeroCosts: true,
       onSaved: _loadWorkQueue,
     );
   }
 
-  Future<void> _updateProgress(int orderId, String status, String notes) async {
+  Future<bool> _updateProgress(int orderId, String status, String notes) async {
     try {
       final userState = ref.read(userStateProvider);
       final block = userState.workshopSessionBlockReason;
@@ -121,7 +123,7 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
             SnackBar(content: Text(block)),
           );
         }
-        return;
+        return false;
       }
       await ApiService.updateWorkProgress(
         orderId,
@@ -131,7 +133,6 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
         branchId: userState.branch,
       );
 
-      // Reload work queue after update
       await _loadWorkQueue();
 
       if (mounted) {
@@ -139,91 +140,49 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
           const SnackBar(content: Text('Progress berhasil diperbarui')),
         );
       }
+      return true;
     } on UnauthorizedApiException {
-      // Sesi dibersihkan oleh ApiService; hindari snackbar mengambang.
+      return false;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
       }
+      return false;
     }
   }
 
-  void _showUpdateDialog(Map<String, dynamic> work) {
-    final initialStatus = _statusForProgressDropdown(
-      work['status']?.toString(),
-    );
-    final statusController = TextEditingController(text: initialStatus);
-    final notesController = TextEditingController(text: work['notes'] ?? '');
+  static double _parseCostField(String raw) {
+    final t = raw.trim().replaceAll('.', '').replaceAll(',', '.');
+    return double.tryParse(t) ?? 0;
+  }
 
-    showDialog(
+  Future<void> _showUpdateDialog(Map<String, dynamic> work) async {
+    final oid = int.tryParse(work['order_id']?.toString() ?? '');
+    if (oid == null) return;
+    final branch = ref.read(userStateProvider).branch;
+
+    if (!mounted) return;
+
+    await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Update Progress - Order #${work['order_id']}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: statusController.text,
-              decoration: const InputDecoration(labelText: 'Status'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'in_workshop',
-                  child: Text('Diterima Workshop'),
-                ),
-                DropdownMenuItem(
-                  value: 'repairing',
-                  child: Text('Dikerjakan'),
-                ),
-                DropdownMenuItem(
-                  value: 'polishing',
-                  child: Text('Poles/Finishing'),
-                ),
-                DropdownMenuItem(
-                  value: 'custom_work',
-                  child: Text('Custom Work'),
-                ),
-                DropdownMenuItem(
-                  value: 'done_workshop',
-                  child: Text('Selesai Tukang (Siap Kirim)'),
-                ),
-                DropdownMenuItem(value: 'cancelled', child: Text('Dibatalkan')),
-              ],
-              onChanged: (value) {
-                statusController.text = value ?? '';
-              },
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'Catatan',
-                hintText: 'Tambahkan catatan progress...',
-              ),
-              maxLines: 3,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final oid = int.tryParse(work['order_id']?.toString() ?? '');
-              if (oid == null) return;
-              Navigator.of(context).pop();
-              _updateProgress(
-                oid,
-                statusController.text,
-                notesController.text,
-              );
-            },
-            child: const Text('Update'),
-          ),
-        ],
+      builder: (ctx) => _UpdateProgressDialog(
+        orderId: oid,
+        branchId: branch,
+        initialStatus: _statusForProgressDropdown(work['status']?.toString()),
+        initialNotes: (work['notes'] ?? '').toString(),
+        onSave: (status, notes, material, ongkos, lain) async {
+          await ApiService.submitOrderCostBreakdown(
+            orderId: oid,
+            branchId: branch,
+            materialCost: material,
+            laborCost: ongkos,
+            otherCost: lain,
+            notes: notes,
+          );
+          return _updateProgress(oid, status, notes);
+        },
       ),
     );
   }
@@ -287,7 +246,7 @@ class _UpdateProgressPageState extends ConsumerState<UpdateProgressPage> {
                             builder: (context, constraints) {
                               final narrow = constraints.maxWidth < 560;
                               final cs = Theme.of(context).colorScheme;
-const desktopW = 920.0;
+                              const desktopW = 920.0;
                               final w = constraints.maxWidth;
                               final BoxConstraints box;
                               if (narrow) {
@@ -483,7 +442,7 @@ const desktopW = 920.0;
                                                 WidgetStateProperty.all(
                                               cs.surfaceContainerHigh,
                                             ),
-dataRowMinHeight: narrow ? 56 : 48,
+                                            dataRowMinHeight: narrow ? 56 : 48,
                                             dataRowMaxHeight:
                                                 narrow ? 72 : 56,
                                             columnSpacing: narrow ? 6 : 10,
@@ -567,5 +526,235 @@ dataRowMinHeight: narrow ? 56 : 48,
       default:
         return Icons.help;
     }
+  }
+}
+
+/// Dialog update progress + biaya — state terpisah agar dropdown/status & dispose controller benar.
+class _UpdateProgressDialog extends StatefulWidget {
+  const _UpdateProgressDialog({
+    required this.orderId,
+    required this.branchId,
+    required this.initialStatus,
+    required this.initialNotes,
+    required this.onSave,
+  });
+
+  final int orderId;
+  final String branchId;
+  final String initialStatus;
+  final String initialNotes;
+  final Future<bool> Function(
+    String status,
+    String notes,
+    double material,
+    double ongkos,
+    double lain,
+  ) onSave;
+
+  @override
+  State<_UpdateProgressDialog> createState() => _UpdateProgressDialogState();
+}
+
+class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
+  static const _statusItems = <DropdownMenuItem<String>>[
+    DropdownMenuItem(value: 'in_workshop', child: Text('Diterima Workshop')),
+    DropdownMenuItem(value: 'repairing', child: Text('Dikerjakan')),
+    DropdownMenuItem(value: 'polishing', child: Text('Poles/Finishing')),
+    DropdownMenuItem(value: 'custom_work', child: Text('Custom Work')),
+    DropdownMenuItem(
+      value: 'done_workshop',
+      child: Text('Selesai di Tukang (siap kirim ke toko)'),
+    ),
+    DropdownMenuItem(value: 'cancelled', child: Text('Dibatalkan')),
+  ];
+
+  late String _selectedStatus;
+  late final TextEditingController _notesController;
+  late final TextEditingController _materialCtrl;
+  late final TextEditingController _ongkosCtrl;
+  late final TextEditingController _lainCtrl;
+
+  bool _loadingCosts = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedStatus = widget.initialStatus;
+    _notesController = TextEditingController(text: widget.initialNotes);
+    _materialCtrl = TextEditingController();
+    _ongkosCtrl = TextEditingController();
+    _lainCtrl = TextEditingController();
+    _loadCosts();
+  }
+
+  @override
+  void dispose() {
+    _notesController.dispose();
+    _materialCtrl.dispose();
+    _ongkosCtrl.dispose();
+    _lainCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCosts() async {
+    try {
+      final data = await ApiService.getOrderCostBreakdown(
+        widget.orderId,
+        widget.branchId,
+      );
+      final latest = data['latest'];
+      if (latest is Map && mounted) {
+        _materialCtrl.text = _costFieldText(latest['material_cost']);
+        _ongkosCtrl.text = _costFieldText(latest['labor_cost']);
+        _lainCtrl.text = _costFieldText(latest['other_cost']);
+      }
+    } catch (_) {
+      // biarkan kosong (boleh 0)
+    }
+    if (mounted) setState(() => _loadingCosts = false);
+  }
+
+  static String _costFieldText(dynamic v) {
+    final n = num.tryParse(v?.toString() ?? '') ?? 0;
+    if (n == 0) return '';
+    return n.toString();
+  }
+
+  Future<void> _submit() async {
+    setState(() => _saving = true);
+    try {
+      final ok = await widget.onSave(
+        _selectedStatus,
+        _notesController.text,
+        _UpdateProgressPageState._parseCostField(_materialCtrl.text),
+        _UpdateProgressPageState._parseCostField(_ongkosCtrl.text),
+        _UpdateProgressPageState._parseCostField(_lainCtrl.text),
+      );
+      if (ok && mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Update Progress · Order #${widget.orderId}'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Status',
+                border: OutlineInputBorder(),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _selectedStatus,
+                  items: _statusItems,
+                  onChanged: _saving
+                      ? null
+                      : (v) {
+                          if (v == null) return;
+                          setState(() => _selectedStatus = v);
+                        },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (_loadingCosts)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(),
+              )
+            else ...[
+              Text(
+                'Biaya aktual (masing-masing boleh Rp 0)',
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _materialCtrl,
+                enabled: !_saving,
+                decoration: const InputDecoration(
+                  labelText: 'Material',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _ongkosCtrl,
+                enabled: !_saving,
+                decoration: const InputDecoration(
+                  labelText: 'Ongkos',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _lainCtrl,
+                enabled: !_saving,
+                decoration: const InputDecoration(
+                  labelText: 'Lain-lain',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _notesController,
+              enabled: !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Catatan',
+                hintText: 'Catatan progress...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Batal'),
+        ),
+        FilledButton(
+          onPressed: _saving || _loadingCosts ? null : _submit,
+          child: _saving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Simpan'),
+        ),
+      ],
+    );
   }
 }

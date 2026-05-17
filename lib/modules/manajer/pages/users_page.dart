@@ -149,7 +149,7 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'admin_warehouse':
-        return 'Admin Gudang';
+        return 'Admin Warehouse';
       case 'stockist':
         return 'Stockist';
       case 'tukang':

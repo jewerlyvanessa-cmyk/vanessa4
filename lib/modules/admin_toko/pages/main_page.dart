@@ -5,18 +5,15 @@ import 'package:http/http.dart' as http;
 
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
-import 'daily_orders_payments_page.dart';
-import 'service_awaiting_store_receipt_page.dart';
-import 'goods_transfer_page.dart';
-import 'request_stock_warehouse_page.dart';
-import 'stock_mutation_page.dart';
-import 'stock_page.dart';
-import 'employee_management_page.dart';
-import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/routes/app_navigator.dart';
+import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
 import 'package:vanessa3/providers/store_dashboard_provider.dart';
+import 'package:vanessa3/providers/store_workshop_receipt_count_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
+import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 String getMainModuleForRole(String role) {
@@ -81,11 +78,93 @@ void navigateToMainModule(BuildContext context, String mainModule) {
 
 // userStateProvider: package:vanessa3/providers/user_state_provider.dart
 
-class AdminTokoMainPage extends ConsumerWidget {
+class AdminTokoMainPage extends ConsumerStatefulWidget {
   const AdminTokoMainPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AdminTokoMainPage> createState() => _AdminTokoMainPageState();
+}
+
+class _AdminTokoMainPageState extends ConsumerState<AdminTokoMainPage> {
+  void _openWarehouseSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetWarehouse,
+      options: [
+        ModuleDestinationOption(
+          label: 'Pesan stok ke warehouse',
+          subtitle: 'Permintaan barang dari gudang pusat',
+          icon: Icons.warehouse_outlined,
+          iconColor: Colors.deepOrange,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoStockRequest),
+        ),
+        ModuleDestinationOption(
+          label: 'Transfer dengan gudang',
+          subtitle: 'Terima kiriman / kirim kembali ke warehouse',
+          icon: Icons.local_shipping_outlined,
+          iconColor: Colors.orange,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoGoodsTransfer),
+        ),
+      ],
+    );
+  }
+
+  void _openWorkshopSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetWorkshop,
+      options: [
+        ModuleDestinationOption(
+          label: 'Service / custom',
+          subtitle: 'Kirim order ke workshop',
+          icon: Icons.build_circle_outlined,
+          iconColor: Colors.deepOrange,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoServiceCustom),
+        ),
+        ModuleDestinationOption(
+          label: 'Terima dari workshop',
+          subtitle: 'Konfirmasi barang kembali dari bengkel',
+          icon: Icons.handyman_outlined,
+          iconColor: Colors.indigo,
+          onTap: () async {
+            await Navigator.pushNamed(
+              context,
+              AppRoutes.adminTokoWorkshopReceipt,
+            );
+            if (!context.mounted) return;
+            ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
+          },
+        ),
+      ],
+    );
+  }
+
+  void _openAntarTokoSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetAntarToko,
+      options: [
+        ModuleDestinationOption(
+          label: 'Kirim / terima barang',
+          subtitle: 'Transfer antar cabang toko (etalase)',
+          icon: Icons.hub_outlined,
+          iconColor: Colors.blueGrey,
+          onTap: () => pushAppRoute(context, AppRoutes.adminTokoGoodsTransfer),
+        ),
+      ],
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Watch health check status for Live indicator
     final isServerHealthy = ref.watch(healthCheckProvider);
 
@@ -107,15 +186,19 @@ class AdminTokoMainPage extends ConsumerWidget {
     // Listen to real-time order updates for store management
     ref.listen(realTimeOrderUpdatesProvider, (previous, next) {
       next.whenData((update) {
-        if (update['type'] == 'order_update' ||
-            update['type'] == 'store_assignment') {
-          // Refresh store dashboard when orders or transactions occur
+        final type = (update['type'] ?? '').toString();
+        final event = (update['event'] ?? '').toString();
+        if (type == 'order_update' ||
+            type == 'store_assignment' ||
+            event == 'workshop_sent_to_store') {
           ref.read(storeDashboardProvider.notifier).refresh();
-          // Show notification for new store orders or updates
+          ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
           _showStoreNotification(context, update['data']);
         }
       });
     });
+
+    final workshopReceiptPending = ref.watch(storeWorkshopReceiptCountProvider);
 
     final pendingKey = GlobalKey<_AdminTokoPendingTransfersCardState>();
 
@@ -155,7 +238,7 @@ class AdminTokoMainPage extends ConsumerWidget {
             tooltip: 'Logout',
             onPressed: () {
               ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, '/login');
+              Navigator.pushReplacementNamed(context, AppRoutes.login);
             },
           ),
         ],
@@ -187,109 +270,57 @@ class AdminTokoMainPage extends ConsumerWidget {
                 entries: [
                   ModuleMenuEntry(
                     icon: Icons.receipt_long,
-                    label: 'Order & Bayar',
+                    label: 'ORDER & BAYAR',
                     iconColor: Colors.blue,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const DailyOrdersPaymentsPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.build_circle_outlined,
-                    label: 'Service / Custom',
-                    iconColor: Colors.deepOrange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const DailyOrdersPaymentsPage(
-                          serviceCustomMode: true,
-                        ),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.handyman_outlined,
-                    label: 'Terima dari bengkel',
-                    iconColor: Colors.indigo,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            const ServiceAwaitingStoreReceiptPage(),
-                      ),
-                    ),
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.adminTokoOrders),
                   ),
                   ModuleMenuEntry(
                     icon: Icons.inventory_2,
-                    label: 'Stok',
+                    label: 'STOK ETALASE',
                     iconColor: Colors.teal,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const StockPage()),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.local_shipping,
-                    label: 'Kirim / terima',
-                    iconColor: Colors.orange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GoodsTransferPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.warehouse_outlined,
-                    label: 'Pesan stok ke gudang',
-                    iconColor: Colors.deepOrange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const RequestStockWarehousePage(),
-                      ),
-                    ),
+                    onTap: () => pushAppRoute(context, AppRoutes.adminTokoStock),
                   ),
                   ModuleMenuEntry(
                     icon: Icons.inventory,
-                    label: 'Mutasi Stok',
+                    label: 'MUTASI STOK',
                     iconColor: Colors.green,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const StockMutationPage(),
-                      ),
-                    ),
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.adminTokoStockMutation),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.warehouse_outlined,
+                    label: ModuleMenuGroupLabels.warehouse,
+                    iconColor: Colors.deepOrange,
+                    onTap: () => _openWarehouseSheet(context),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.build_circle_outlined,
+                    label: ModuleMenuGroupLabels.workshop,
+                    iconColor: Colors.indigo,
+                    badgeCount: workshopReceiptPending > 0
+                        ? workshopReceiptPending
+                        : null,
+                    onTap: () => _openWorkshopSheet(context),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.hub_outlined,
+                    label: ModuleMenuGroupLabels.antarToko,
+                    iconColor: Colors.blueGrey,
+                    onTap: () => _openAntarTokoSheet(context),
                   ),
                   ModuleMenuEntry(
                     icon: DashboardMenuIcons.kelolaPengguna,
-                    label: 'Karyawan',
+                    label: 'KARYAWAN',
                     iconColor: Colors.purple,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const EmployeeManagementPage(),
-                      ),
-                    ),
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.adminTokoEmployees),
                   ),
                   ModuleMenuEntry(
                     icon: DashboardMenuIcons.pelanggan,
-                    label: 'Pelanggan',
+                    label: 'PELANGGAN',
                     iconColor: Colors.cyan,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CustomersPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.qr_code_scanner,
-                    label: 'Cek Stok',
-                    iconColor: Colors.teal,
-                    onTap: () => Navigator.pushNamed(context, '/cek_stok'),
+                    onTap: () => pushAppRoute(context, AppRoutes.customers),
                   ),
                 ],
               ),
@@ -299,10 +330,8 @@ class AdminTokoMainPage extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _AdminTokoPendingTransfersCard(
                 key: pendingKey,
-                onSeeAll: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const GoodsTransferPage()),
-                ),
+                onSeeAll: () =>
+                    pushAppRoute(context, AppRoutes.adminTokoGoodsTransfer),
               ),
             ),
             const SizedBox(height: 24),
@@ -441,7 +470,7 @@ class _AdminTokoPendingTransfersCardState
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Transfer Pending',
+                    'TRANSFER PENDING',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
@@ -470,7 +499,7 @@ class _AdminTokoPendingTransfersCardState
                 children: [
                   Expanded(
                     child: _PendingChip(
-                      label: 'Masuk',
+                      label: 'MASUK',
                       count: incoming.length,
                       color: Colors.blue,
                       icon: Icons.arrow_downward,
@@ -479,7 +508,7 @@ class _AdminTokoPendingTransfersCardState
                   const SizedBox(width: 8),
                   Expanded(
                     child: _PendingChip(
-                      label: 'Keluar',
+                      label: 'KELUAR',
                       count: outgoing.length,
                       color: Colors.orange,
                       icon: Icons.arrow_upward,

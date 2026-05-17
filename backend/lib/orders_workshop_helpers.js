@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Cache introspection kolom/tabel orders + SQL scope bengkel (dipakai server & routes/workshop).
+ * Cache introspection kolom/tabel orders + SQL scope workshop (dipakai server & routes/workshop).
  */
 
 let _cachedOrdersMetadataColumnExists = null; // boolean | null (unknown)
@@ -27,6 +27,21 @@ async function ordersHasMetadataColumn(client) {
     _cachedOrdersMetadataColumnExists = false;
   }
   return _cachedOrdersMetadataColumnExists;
+}
+
+/** Deteksi kolom metadata langsung di DB (hindari cache salah setelah migrasi tanpa restart). */
+async function ordersHasMetadataColumnLive(client) {
+  try {
+    await client.query('SELECT metadata FROM orders WHERE false LIMIT 0');
+    _cachedOrdersMetadataColumnExists = true;
+    return true;
+  } catch (e) {
+    if (e && e.code === '42703') {
+      _cachedOrdersMetadataColumnExists = false;
+      return false;
+    }
+    return ordersHasMetadataColumn(client);
+  }
 }
 
 let _cachedOrdersSupportsWorkshopStatuses = null; // boolean | null (unknown)
@@ -195,8 +210,8 @@ async function ordersHasPickupBranchColumn(client) {
 }
 
 /**
- * Cabang tempat order service/custom dikerjakan (bengkel), bukan pickup pelanggan.
- * Diset di metadata saat gudang/bengkel terima (`sent-to-workshop`).
+ * Cabang tempat order service/custom dikerjakan (workshop), bukan pickup pelanggan.
+ * Diset di metadata saat gudang/workshop terima (`sent-to-workshop`).
  */
 function workshopMetadataBranchId(orderRow) {
   const m = orderRow?.metadata;
@@ -219,8 +234,8 @@ function workshopMetadataBranchId(orderRow) {
 }
 
 /**
- * Order terlihat di cabang bengkel: cabang order, cabang pickup, atau metadata `service_workshop_branch_id`.
- * `pickup_branch_id` = tempat ambil pelanggan setelah selesai; jangan dipakai sebagai cabang kerja bengkel.
+ * Order terlihat di cabang workshop: cabang order, cabang pickup, atau metadata `service_workshop_branch_id`.
+ * `pickup_branch_id` = tempat ambil pelanggan setelah selesai; jangan dipakai sebagai cabang kerja workshop.
  */
 function sqlOrdersVisibleAtWorkshopBranch(
   alias,
@@ -268,7 +283,7 @@ function orderVisibleAtWorkshopBranchId(
 }
 
 /**
- * Visibilitas order di cabang bengkel — **sumber kebenaran = SQL** (sama dengan GET /workshop-orders & work-queue).
+ * Visibilitas order di cabang workshop — **sumber kebenaran = SQL** (sama dengan GET /workshop-orders & work-queue).
  * Menghindari drift bentuk `metadata` dari node-pg vs logika parse di JS.
  */
 async function orderVisibleAtWorkshopBranchSql(
@@ -319,9 +334,9 @@ async function paymentsHasRevenueBranchColumn(client) {
  * Scope cabang untuk PUT status / update-progress workshop: sama logika dasar GET /workshop-orders,
  * plus (jika kolom ada) order yang muncul di GET /orders/daily untuk cabang lewat atribusi pendapatan
  * (`payments.revenue_branch_id`) — supaya admin toko bisa "Terima" (done_workshop → ready_for_pickup)
- * walau `orders.branch_id` sudah di bengkel.
- * Jangan pakai COALESCE(revenue, o.branch_id) saat revenue null: setelah terima bengkel `branch_id`
- * bisa cabang bengkel sehingga admin toko salah tertaut; fallback pickup / metadata asal.
+ * walau `orders.branch_id` sudah di workshop.
+ * Jangan pakai COALESCE(revenue, o.branch_id) saat revenue null: setelah terima workshop `branch_id`
+ * bisa cabang workshop sehingga admin toko salah tertaut; fallback pickup / metadata asal.
  */
 async function orderVisibleForWorkshopStatusPut(
   pool,
@@ -389,7 +404,7 @@ async function orderVisibleForWorkshopStatusPut(
   return r.rows.length > 0;
 }
 
-/** Sama dengan GET /api/workshop/work-queue — antrian aktif tukang (belum selesai bengkel). */
+/** Sama dengan GET /api/workshop/work-queue — antrian aktif tukang (belum selesai workshop). */
 function sqlWorkshopTukangQueueStatuses(alias) {
   return `${alias}.status::text IN (
           'sent-to-workshop',
@@ -402,22 +417,33 @@ function sqlWorkshopTukangQueueStatuses(alias) {
 
 /**
  * Ekspresi boolean SQL: order belum ditugaskan ke teknisi (selaras filter `unassigned_only` work-queue).
- * Tanpa kolom metadata: legacy memakai `orders.user_id IS NULL` sebagai proxy "belum ada teknisi".
+ * Tanpa kolom metadata: `orders.user_id` = pembuat order (CS/kasir), BUKAN tukang — anggap belum assign.
  */
 function sqlWorkshopOrderIsUnassigned(alias, hasMetadataCol) {
   if (!hasMetadataCol) {
-    return `${alias}.user_id IS NULL`;
+    return 'TRUE';
   }
+  // Hanya assigned_technician_id (angka). Jangan pakai assigned_technician (nama user)
+  // agar tidak salah dianggap sudah ditugaskan.
   return `NOT (
-    (
-      COALESCE(${alias}.metadata->>'assigned_technician_id', '') ~ '^[0-9]+$'
-      AND (NULLIF(BTRIM(${alias}.metadata->>'assigned_technician_id'), ''))::bigint > 0
-    )
-    OR (
-      COALESCE(${alias}.metadata->>'assigned_technician', '') ~ '^[0-9]+$'
-      AND (NULLIF(BTRIM(${alias}.metadata->>'assigned_technician'), ''))::bigint > 0
-    )
+    COALESCE(${alias}.metadata->>'assigned_technician_id', '') ~ '^[0-9]+$'
+    AND (NULLIF(BTRIM(${alias}.metadata->>'assigned_technician_id'), ''))::bigint > 0
   )`;
+}
+
+/**
+ * Visibilitas antrian pekerjaan: cabang kerja workshop (branch_id setelah disetujui)
+ * atau metadata.service_workshop_branch_id. Tidak memakai pickup_branch_id (bukan cabang kerja).
+ */
+function sqlWorkshopAntrianVisibleAtBranch(alias, paramIndex, hasMetadataCol) {
+  const parts = [`${alias}.branch_id::bigint = $${paramIndex}::bigint`];
+  if (hasMetadataCol) {
+    parts.push(`(
+      COALESCE(NULLIF(BTRIM(${alias}.metadata->>'service_workshop_branch_id'), ''), '') <> ''
+      AND (${alias}.metadata->>'service_workshop_branch_id')::bigint = $${paramIndex}::bigint
+    )`);
+  }
+  return `(${parts.join(' OR ')})`;
 }
 
 /**
@@ -479,6 +505,61 @@ function sqlOrderVisibleAtBranchForWorkshopPut(
   return `(${parts.join('\n    OR ')})`;
 }
 
+/**
+ * Visibilitas daftar «siap ambil» di toko (CS Ambil): cabang toko asal / branch_id / pickup / revenue.
+ */
+function sqlStoreReadyForPickupListVisible(
+  alias,
+  branchParamIndex,
+  hasPickupCol,
+  hasMetadataCol,
+  hasRevenueCol
+) {
+  const parts = [`${alias}.branch_id::bigint = $${branchParamIndex}::bigint`];
+  if (hasMetadataCol) {
+    parts.push(`(
+      COALESCE(NULLIF(BTRIM(${alias}.metadata->>'service_origin_branch_id'), ''), '') <> ''
+      AND (${alias}.metadata->>'service_origin_branch_id')::bigint = $${branchParamIndex}::bigint
+    )`);
+  }
+  if (hasPickupCol) {
+    parts.push(
+      `(${alias}.pickup_branch_id::bigint = $${branchParamIndex}::bigint)`
+    );
+  }
+  if (hasRevenueCol) {
+    parts.push(`EXISTS (
+      SELECT 1
+      FROM payments p
+      WHERE p.order_id = ${alias}.order_id
+        AND p.status::text IN ('completed', 'pending')
+        AND (
+          (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $${branchParamIndex}::bigint)
+          OR (p.revenue_branch_id IS NULL AND ${alias}.branch_id::bigint = $${branchParamIndex}::bigint)
+        )
+    )`);
+  }
+  return `(${parts.join('\n    OR ')})`;
+}
+
+/**
+ * Order sudah diterima admin toko (siap tampil di CS Ambil).
+ * Utama: metadata.store_receipt_confirmed_at; fallback: branch_id sudah dikembalikan ke cabang asal.
+ */
+function sqlStoreReceiptConfirmedForPickup(alias, branchParamIndex, hasMetadataCol) {
+  if (!hasMetadataCol) {
+    return 'TRUE';
+  }
+  return `(
+    COALESCE(NULLIF(BTRIM(${alias}.metadata->>'store_receipt_confirmed_at'), ''), '') <> ''
+    OR (
+      ${alias}.branch_id::bigint = $${branchParamIndex}::bigint
+      AND COALESCE(NULLIF(BTRIM(${alias}.metadata->>'service_origin_branch_id'), ''), '') <> ''
+      AND (NULLIF(BTRIM(${alias}.metadata->>'service_origin_branch_id'), ''))::bigint = ${alias}.branch_id::bigint
+    )
+  )`;
+}
+
 /** Node-pg dapat mengembalikan int8 sebagai BigInt; JSON.stringify gagal tanpa ini. */
 function jsonSafeDbRow(row) {
   if (row == null || typeof row !== 'object') return row;
@@ -495,12 +576,14 @@ function jsonSafeDbRow(row) {
 
 module.exports = {
   ordersHasMetadataColumn,
+  ordersHasMetadataColumnLive,
   ordersSupportsWorkshopStatuses,
   ordersEstimateColumns,
   orderCostBreakdownsTableExists,
   ensureOrderCostBreakdownsSchema,
   ordersHasPickupBranchColumn,
   sqlOrdersVisibleAtWorkshopBranch,
+  sqlWorkshopAntrianVisibleAtBranch,
   orderVisibleAtWorkshopBranchId,
   orderVisibleAtWorkshopBranchSql,
   paymentsHasRevenueBranchColumn,
@@ -510,5 +593,7 @@ module.exports = {
   sqlWorkshopOrderIsUnassigned,
   sqlWorkshopOrderAssignedToTechnician,
   sqlOrderVisibleAtBranchForWorkshopPut,
+  sqlStoreReadyForPickupListVisible,
+  sqlStoreReceiptConfirmedForPickup,
   jsonSafeDbRow,
 };

@@ -100,6 +100,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
       ],
       locale: const Locale('id', 'ID'),
       routes: AppRoutes.routes,
+      onGenerateRoute: AppRoutes.onGenerateRoute,
       home: const _AppHomeGate(),
       builder: (context, child) {
         // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web

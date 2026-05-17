@@ -12,6 +12,8 @@ const {
   sqlWorkshopTukangQueueStatuses,
   sqlWorkshopOrderIsUnassigned,
   sqlWorkshopOrderAssignedToTechnician,
+  sqlWorkshopAntrianVisibleAtBranch,
+  ordersHasMetadataColumnLive,
   jsonSafeDbRow,
 } = require('../lib/orders_workshop_helpers');
 
@@ -27,11 +29,25 @@ const ADMIN_WORKSHOP_PUT_ALLOWED_STATUSES = Object.freeze([
 ]);
 
 /**
- * Endpoint workshop / bengkel / teknisi (dipisah dari server.js).
+ * Endpoint workshop / tukang (dipisah dari server.js).
  * Auth: /api/* dan /workshop-orders / /technicians diatur di server.js.
  */
 function registerWorkshopRoutes(app, deps) {
-  const { db } = deps;
+  const { db, notifyClients } = deps;
+
+  const broadcastWorkshop = (message, wsType, extra = {}) => {
+    if (typeof notifyClients !== 'function') return;
+    try {
+      notifyClients(message, {
+        wsType,
+        branch_id: extra.branch_id ?? null,
+        event: extra.event ?? wsType,
+        payload: extra.payload ?? null,
+      });
+    } catch (e) {
+      console.error('Workshop notify failed:', e?.message || e);
+    }
+  };
 
   const workshopApi = express.Router();
   const technicianApi = express.Router();
@@ -137,7 +153,7 @@ workshopApi.get('/work-queue-diagnostics', async (req, res) => {
         : 'orders_user_id_equals_technician',
       note:
         'Jika orders_table_has_metadata_column false padahal kolom ada, restart Node; ' +
-        'jika true tapi antrian kosong, cek branch_id & visibilitas order di cabang bengkel.',
+        'jika true tapi antrian kosong, cek branch_id & visibilitas order di cabang workshop.',
     });
   } catch (e) {
     console.error('work-queue-diagnostics:', e);
@@ -145,7 +161,7 @@ workshopApi.get('/work-queue-diagnostics', async (req, res) => {
   }
 });
 
-// Service/custom: antrian di gudang/bengkel sebelum disetujui masuk workshop.
+// Service/custom: menunggu persetujuan admin workshop (bukan gudang) sebelum masuk antrian pekerjaan.
 app.get('/api/workshop/service-incoming', async (req, res) => {
   try {
     const branchId = parseInt(String(req.query.branch_id ?? ''), 10);
@@ -153,7 +169,7 @@ app.get('/api/workshop/service-incoming', async (req, res) => {
       return res.status(400).json({ error: 'branch_id is required' });
     }
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    if (!new Set(['stockist', 'admin_warehouse', 'admin_workshop', 'superadmin', 'manajer']).has(role)) {
+    if (!new Set(['admin_workshop', 'superadmin', 'manajer']).has(role)) {
       return res.status(403).json({ error: 'Role tidak diizinkan' });
     }
     const hasPickupSi = await ordersHasPickupBranchColumn(db);
@@ -278,47 +294,81 @@ workshopApi.get("/material-stock", async (req, res) => {
 
 workshopApi.get("/dashboard", async (req, res) => {
   try {
-    const { branch_id, user_id: _user_id } = req.query;
+    const branchId = parseInt(String(req.query.branch_id ?? ''), 10);
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id wajib berupa angka cabang yang valid' });
+    }
 
-    // Get workshop statistics (consistent with other role dashboards)
-    const statsResult = await db.query(`
+    const hasPickupDash = await ordersHasPickupBranchColumn(db);
+    const hasMetaDash = await ordersHasMetadataColumnLive(db);
+    const brScopeDash = sqlWorkshopAntrianVisibleAtBranch('o', 1, hasMetaDash);
+    const queueStatusesDash = sqlWorkshopTukangQueueStatuses('o');
+    const unassDash = sqlWorkshopOrderIsUnassigned('o', hasMetaDash);
+    const inProgressDash = hasMetaDash
+      ? `(
+          o.status::text IN ('repairing', 'polishing', 'custom_work')
+          OR (
+            o.status::text = 'in_workshop'
+            AND NOT (${sqlWorkshopOrderIsUnassigned('o', hasMetaDash)})
+          )
+        )`
+      : `o.status::text IN ('repairing', 'polishing', 'custom_work', 'in_workshop')`;
+
+    // Selaras GET /workshop-orders: antrian = belum assign; ON PROGRESS = sedang dikerjakan.
+    const statsResult = await db.query(
+      `
       SELECT
-        COUNT(CASE WHEN status IN ('in_workshop', 'repairing', 'polishing', 'custom_work') THEN 1 END) as pending_orders,
-        COUNT(CASE WHEN status IN ('repairing', 'polishing') THEN 1 END) as in_progress_orders,
-        COUNT(CASE WHEN status IN ('completed', 'delivered') THEN 1 END) as completed_orders
-      FROM orders
-      WHERE branch_id = $1
-        AND order_type IN ('service', 'custom')
-        AND DATE(created_at) = CURRENT_DATE
-    `, [branch_id]);
+        COUNT(*) FILTER (
+          WHERE (${queueStatusesDash}) AND (${unassDash})
+        )::int AS pending_orders,
+        COUNT(*) FILTER (
+          WHERE (${inProgressDash})
+        )::int AS in_progress_orders,
+        COUNT(*) FILTER (
+          WHERE o.status::text IN ('done_workshop', 'ready_for_pickup', 'completed', 'delivered')
+            AND DATE(o.updated_at) = CURRENT_DATE
+        )::int AS completed_orders
+      FROM orders o
+      WHERE ${brScopeDash}
+        AND o.order_type::text IN ('service', 'custom')
+    `,
+      [branchId]
+    );
 
     const stats = statsResult.rows[0];
 
     // Get recent orders
-    const recentOrdersResult = await db.query(`
+    const recentOrdersResult = await db.query(
+      `
       SELECT
         o.order_id,
         o.order_type,
         o.status,
         o.created_at,
-        i.name as item_name,
-        c.name as customer_name
+        COALESCE(oi.nama_item, i.name) AS item_name,
+        c.name AS customer_name
       FROM orders o
-      LEFT JOIN items i ON o.item_id = i.item_id
       LEFT JOIN customers c ON o.customer_id = c.customer_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
+      LEFT JOIN order_items oi ON o.order_id = oi.order_id
+      LEFT JOIN items i ON oi.item_id = i.item_id
+      WHERE ${brScopeDash}
+        AND o.order_type::text IN ('service', 'custom')
       ORDER BY o.created_at DESC
       LIMIT 5
-    `, [branch_id]);
+    `,
+      [branchId]
+    );
 
     // Get technician count (simplified - count users with technician role in this branch)
-    const technicianResult = await db.query(`
-      SELECT COUNT(*) as total_technicians
+    const technicianResult = await db.query(
+      `
+      SELECT COUNT(*)::int AS total_technicians
       FROM user_branch_roles ubr
       JOIN users u ON ubr.user_id = u.user_id
-      WHERE ubr.branch_id = $1 AND ubr.role = 'tukang'
-    `, [branch_id]);
+      WHERE ubr.branch_id = $1 AND ubr.role = 'tukang' AND u.status = 'active'
+    `,
+      [branchId]
+    );
 
     const technicianCount = technicianResult.rows[0]?.total_technicians || 0;
 
@@ -1024,6 +1074,32 @@ workshopApi.post("/update-progress", async (req, res) => {
       );
     }
 
+    if (
+      new Set(['in_workshop', 'repairing', 'polishing', 'custom_work']).has(nextStatus) &&
+      currentStatus !== nextStatus
+    ) {
+      broadcastWorkshop(
+        `Order #${orderId} sedang dikerjakan tukang (${nextStatus})`,
+        'order_update',
+        {
+          branch_id: branchId,
+          event: 'workshop_in_progress',
+          payload: { order_id: orderId, status: nextStatus, technician_id: techId },
+        }
+      );
+    }
+    if (nextStatus === 'done_workshop' && currentStatus !== 'done_workshop') {
+      broadcastWorkshop(
+        `Order #${orderId} selesai di tukang — siap kirim ke toko`,
+        'order_update',
+        {
+          branch_id: branchId,
+          event: 'workshop_done_tukang',
+          payload: { order_id: orderId, status: 'done_workshop' },
+        }
+      );
+    }
+
     res.status(200).json({ success: true, message: "Progress updated successfully" });
   } catch (error) {
     console.error("Error updating work progress:", error);
@@ -1120,10 +1196,40 @@ workshopApi.get("/work-history", async (req, res) => {
 
 workshopApi.get("/technician-reports", async (req, res) => {
   try {
-    const { technician_id: _technician_id, branch_id, period = 'month' } = req.query;
+    const branchId = (req.query.branch_id ?? '').toString().trim();
+    const periodRaw = (req.query.period ?? 'today').toString().trim().toLowerCase();
+    const period = ['today', 'week', 'month', 'quarter'].includes(periodRaw)
+      ? periodRaw
+      : 'today';
+    const technicianId = parseInt(String(req.query.technician_id ?? ''), 10);
+    const sessionUserId = parseInt(
+      String(req.user?.user_id ?? req.user?.id ?? ''),
+      10,
+    );
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+
+    if (!branchId) {
+      return res.status(400).json({ error: 'branch_id wajib diisi' });
+    }
+    if (!Number.isFinite(technicianId) || technicianId <= 0) {
+      return res.status(400).json({ error: 'technician_id wajib diisi' });
+    }
+    if (role === 'tukang' && sessionUserId !== technicianId) {
+      return res.status(403).json({
+        error: 'Tidak boleh melihat laporan tukang lain',
+      });
+    }
+
+    const hasMeta = await ordersHasMetadataColumn(db);
+    const techFilter = hasMeta
+      ? sqlWorkshopOrderAssignedToTechnician('o', 2, hasMeta)
+      : 'o.user_id::bigint = $2::bigint';
+    const params = [branchId, technicianId];
 
     let dateFilter = '';
-    if (period === 'week') {
+    if (period === 'today') {
+      dateFilter = 'AND DATE(o.created_at) = CURRENT_DATE';
+    } else if (period === 'week') {
       dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '7 days'";
     } else if (period === 'month') {
       dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '30 days'";
@@ -1131,31 +1237,44 @@ workshopApi.get("/technician-reports", async (req, res) => {
       dateFilter = "AND o.created_at >= CURRENT_DATE - INTERVAL '90 days'";
     }
 
-    // Get work statistics
-    const workStats = await db.query(`
+    const doneStatuses =
+      "('done_workshop', 'ready_for_pickup', 'completed')";
+    const inProgressStatuses =
+      "('in_workshop', 'repairing', 'polishing', 'custom_work')";
+    const pendingStatuses = "('sent-to-workshop')";
+
+    const baseWhere = `
+      WHERE o.branch_id::bigint = $1::bigint
+        AND o.order_type::text IN ('service', 'custom')
+        AND (${techFilter})
+        ${dateFilter}
+    `;
+
+    const workStats = await db.query(
+      `
       SELECT
         COUNT(*) as total_orders,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-        COUNT(CASE WHEN status IN ('repairing', 'polishing', 'custom_work') THEN 1 END) as in_progress_orders,
-        COUNT(CASE WHEN status IN ('in_workshop', 'sent-to-workshop') THEN 1 END) as pending_orders,
+        COUNT(CASE WHEN o.status::text IN ${doneStatuses} THEN 1 END) as completed_orders,
+        COUNT(CASE WHEN o.status::text IN ${inProgressStatuses} THEN 1 END) as in_progress_orders,
+        COUNT(CASE WHEN o.status::text IN ${pendingStatuses} THEN 1 END) as pending_orders,
         AVG(CASE
-          WHEN status = 'completed' THEN
-            EXTRACT(EPOCH FROM (updated_at - created_at))/3600
+          WHEN o.status::text IN ${doneStatuses} THEN
+            EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
           ELSE NULL
         END) as avg_duration_hours,
         SUM(CASE
-          WHEN status = 'completed' THEN
-            EXTRACT(EPOCH FROM (updated_at - created_at))/3600
+          WHEN o.status::text IN ${doneStatuses} THEN
+            EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
           ELSE NULL
         END) as total_work_hours
-      FROM orders
-      WHERE branch_id = $1
-        AND order_type IN ('service', 'custom')
-        ${dateFilter.replace('o.created_at', 'created_at')}
-    `, [branch_id]);
+      FROM orders o
+      ${baseWhere}
+    `,
+      params,
+    );
 
-    // Get material usage statistics
-    const materialStats = await db.query(`
+    const materialStats = await db.query(
+      `
       SELECT
         COALESCE(
           NULLIF(BTRIM(oi.jenis), ''),
@@ -1167,30 +1286,31 @@ workshopApi.get("/technician-reports", async (req, res) => {
       FROM orders o
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1 AND o.status = 'completed'
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
+      ${baseWhere}
+        AND o.status::text IN ${doneStatuses}
       GROUP BY 1
       ORDER BY total_weight_used DESC
-    `, [branch_id]);
+    `,
+      params,
+    );
 
-    // Get daily work distribution
-    const dailyStats = await db.query(`
+    const dailyStats = await db.query(
+      `
       SELECT
         DATE(o.created_at) as work_date,
         COUNT(*) as orders_count,
-        COUNT(CASE WHEN o.status = 'completed' THEN 1 END) as completed_count
+        COUNT(CASE WHEN o.status::text IN ${doneStatuses} THEN 1 END) as completed_count
       FROM orders o
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
+      ${baseWhere}
       GROUP BY DATE(o.created_at)
       ORDER BY work_date DESC
       LIMIT 30
-    `, [branch_id]);
+    `,
+      params,
+    );
 
-    // Get work type distribution
-    const workTypeStats = await db.query(`
+    const workTypeStats = await db.query(
+      `
       SELECT
         COALESCE(
           NULLIF(BTRIM(oi.kategori), ''),
@@ -1199,39 +1319,44 @@ workshopApi.get("/technician-reports", async (req, res) => {
         ) as item_type,
         SUM(COALESCE(oi.qty, 1)) as count,
         AVG(CASE
-          WHEN o.status = 'completed' THEN
+          WHEN o.status::text IN ${doneStatuses} THEN
             EXTRACT(EPOCH FROM (o.updated_at - o.created_at))/3600
           ELSE NULL
         END) as avg_duration
       FROM orders o
       LEFT JOIN order_items oi ON o.order_id = oi.order_id
       LEFT JOIN items i ON oi.item_id = i.item_id
-      WHERE o.branch_id = $1
-        AND o.order_type IN ('service', 'custom')
-        ${dateFilter}
+      ${baseWhere}
       GROUP BY 1
       ORDER BY count DESC
-    `, [branch_id]);
+    `,
+      params,
+    );
 
-    const stats = workStats.rows[0];
-    const efficiency = stats.total_orders > 0 ? (stats.completed_orders / stats.total_orders * 100) : 0;
-    const onTimeRate = stats.completed_orders > 0 ? (stats.completed_orders / stats.total_orders * 100) : 0;
+    const stats = workStats.rows[0] ?? {};
+    const totalOrders = parseInt(stats.total_orders, 10) || 0;
+    const completedOrders = parseInt(stats.completed_orders, 10) || 0;
+    const efficiency =
+      totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 0;
+    const onTimeRate = efficiency;
 
+    res.setHeader('X-Vanessa-Technician-Reports', '2026-05-17-v1');
     res.status(200).json({
-      period: period,
+      period,
+      technician_id: String(technicianId),
       work_stats: {
-        total_orders: parseInt(stats.total_orders) || 0,
-        completed_orders: parseInt(stats.completed_orders) || 0,
-        in_progress_orders: parseInt(stats.in_progress_orders) || 0,
-        pending_orders: parseInt(stats.pending_orders) || 0,
+        total_orders: totalOrders,
+        completed_orders: completedOrders,
+        in_progress_orders: parseInt(stats.in_progress_orders, 10) || 0,
+        pending_orders: parseInt(stats.pending_orders, 10) || 0,
         avg_duration_hours: parseFloat(stats.avg_duration_hours) || 0,
         total_work_hours: parseFloat(stats.total_work_hours) || 0,
         efficiency: Math.round(efficiency),
-        on_time_rate: Math.round(onTimeRate)
+        on_time_rate: Math.round(onTimeRate),
       },
       material_usage: materialStats.rows,
       daily_distribution: dailyStats.rows,
-      work_type_distribution: workTypeStats.rows
+      work_type_distribution: workTypeStats.rows,
     });
   } catch (error) {
     console.error("Error fetching technician reports:", error);
@@ -1349,12 +1474,16 @@ technicianApi.get("/dashboard", async (req, res) => {
 
   app.use('/api/technician', technicianApi);
 
-// Get workshop orders — antrian bengkel. Query `unassigned_only=1` (dipakai UI «Antrian pekerjaan»):
-// sembunyikan order yang sudah punya teknisi di metadata, supaya hanya muncul di Update Progress milik teknisi itu.
-// scope=all (default): semua order terlihat di cabang bengkel; cross_branch / local = sempitkan by cabang asal.
+// Get workshop orders — antrian workshop. Query `unassigned_only=1` (dipakai UI «Antrian pekerjaan»):
+// sembunyikan order yang sudah punya tukang di metadata, supaya hanya muncul di Update Progress milik tukang itu.
+// scope=all (default): semua order terlihat di cabang workshop; cross_branch / local = sempitkan by cabang asal.
 app.get('/workshop-orders', async (req, res) => {
   try {
     const { branch_id, status, scope: scopeRaw } = req.query;
+    const queueModeRaw = String(req.query.queue_mode ?? '')
+      .trim()
+      .toLowerCase();
+    const queueModeAntrian = queueModeRaw === 'antrian';
     const scope = String(scopeRaw ?? 'all')
       .trim()
       .toLowerCase();
@@ -1367,29 +1496,32 @@ app.get('/workshop-orders', async (req, res) => {
     }
 
     const hasPickupWo = await ordersHasPickupBranchColumn(db);
-    const hasMetaWo = await ordersHasMetadataColumn(db);
-    const brScopeWo = sqlOrdersVisibleAtWorkshopBranch('o', 1, hasPickupWo, hasMetaWo);
+    const hasMetaWo = await ordersHasMetadataColumnLive(db);
+    const brScopeWo = queueModeAntrian
+      ? sqlWorkshopAntrianVisibleAtBranch('o', 1, hasMetaWo)
+      : sqlOrdersVisibleAtWorkshopBranch('o', 1, hasPickupWo, hasMetaWo);
     const postWorkshopStatuses = `(
           'done_workshop',
           'ready_for_pickup'
         )`;
     let branchCompareSql = '';
-    if (scope === 'local') {
-      // "Cabang ini" = order dengan cabang asal = login ATAU dikerjakan di bengkel ini (metadata).
-      // Tanpa metadata di klausa ini, login cabang bengkel ≠ cabang toko membuat daftar kosong padahal order sudah disetujui.
-      if (hasMetaWo) {
-        branchCompareSql = `AND (
-          o.branch_id::bigint = $1::bigint
-          OR (
-            COALESCE(NULLIF(BTRIM(o.metadata->>'service_workshop_branch_id'), ''), '') <> ''
-            AND (o.metadata->>'service_workshop_branch_id')::bigint = $1::bigint
-          )
-        )`;
-      } else {
-        branchCompareSql = 'AND o.branch_id::bigint = $1::bigint';
+    // Antrian pekerjaan: jangan sempitkan scope (Cabang ini / Cabang lain) — cukup filter cabang workshop.
+    if (!queueModeAntrian) {
+      if (scope === 'local') {
+        if (hasMetaWo) {
+          branchCompareSql = `AND (
+            o.branch_id::bigint = $1::bigint
+            OR (
+              COALESCE(NULLIF(BTRIM(o.metadata->>'service_workshop_branch_id'), ''), '') <> ''
+              AND (o.metadata->>'service_workshop_branch_id')::bigint = $1::bigint
+            )
+          )`;
+        } else {
+          branchCompareSql = 'AND o.branch_id::bigint = $1::bigint';
+        }
+      } else if (scope === 'cross_branch') {
+        branchCompareSql = 'AND o.branch_id::bigint <> $1::bigint';
       }
-    } else if (scope === 'cross_branch') {
-      branchCompareSql = 'AND o.branch_id::bigint <> $1::bigint';
     }
 
     let innerWhere = `
@@ -1406,7 +1538,18 @@ app.get('/workshop-orders', async (req, res) => {
       if (status === 'pending') {
         conditions.push(`o.status::text IN ('sent-to-workshop', 'in_workshop')`);
       } else if (status === 'in_progress') {
-        conditions.push(`o.status::text IN ('repairing', 'polishing', 'custom_work')`);
+        // Sedang dikerjakan tukang: progres aktif + in_workshop yang sudah di-assign.
+        if (hasMetaWo) {
+          conditions.push(`(
+            o.status::text IN ('repairing', 'polishing', 'custom_work')
+            OR (
+              o.status::text = 'in_workshop'
+              AND NOT (${sqlWorkshopOrderIsUnassigned('o', hasMetaWo)})
+            )
+          )`);
+        } else {
+          conditions.push(`o.status::text IN ('repairing', 'polishing', 'custom_work', 'in_workshop')`);
+        }
       } else if (status === 'completed') {
         orderCompletedView = true;
         conditions.push(`o.status::text IN ${postWorkshopStatuses}`);
@@ -1415,21 +1558,9 @@ app.get('/workshop-orders', async (req, res) => {
         params.push(status);
       }
     } else {
-      const roleWo = (req.user?.role ?? '').toString().trim().toLowerCase();
-      const showWarehouseQueue = new Set([
-        'admin_workshop',
-        'admin_warehouse',
-        'stockist',
-        'superadmin',
-        'manajer',
-      ]).has(roleWo);
-      if (showWarehouseQueue) {
-        conditions.push(
-          `( ${sqlWorkshopTukangQueueStatuses('o')} OR o.status::text = 'awaiting_warehouse' )`
-        );
-      } else {
-        conditions.push(sqlWorkshopTukangQueueStatuses('o'));
-      }
+      // Antrian pekerjaan: hanya order yang sudah disetujui workshop (sent-to-workshop+).
+      // Menunggu persetujuan (awaiting_warehouse) hanya di menu «Service dari toko».
+      conditions.push(sqlWorkshopTukangQueueStatuses('o'));
     }
 
     if (conditions.length > 0) {
@@ -1440,12 +1571,15 @@ app.get('/workshop-orders', async (req, res) => {
       .trim()
       .toLowerCase();
     const unassignedOnlyWo =
+      queueModeAntrian ||
       unassignedOnlyWoRaw === '1' ||
       unassignedOnlyWoRaw === 'true' ||
       unassignedOnlyWoRaw === 'yes';
     if (unassignedOnlyWo) {
       innerWhere += ` AND (${sqlWorkshopOrderIsUnassigned('o', hasMetaWo)})`;
     }
+
+    res.setHeader('X-Vanessa-Workshop-Orders-Rules', '2026-05-17-antrian-v1');
 
     const innerOrderBy = orderCompletedView
       ? 'o.order_id, o.updated_at DESC, o.created_at DESC, oi.order_item_id ASC NULLS LAST'
@@ -1543,7 +1677,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     }
 
     const hasPickupPut = await ordersHasPickupBranchColumn(db);
-    const hasMetaPut = await ordersHasMetadataColumn(db);
+    const hasMetaPut = await ordersHasMetadataColumnLive(db);
     const curRes = await db.query(
       `
         SELECT order_id, order_type, branch_id, status
@@ -1563,7 +1697,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     const receivingFromWarehouse =
       currentStatus === 'awaiting_warehouse' &&
       nextStatusRaw === 'sent-to-workshop' &&
-      new Set(['stockist', 'admin_warehouse', 'admin_workshop', 'superadmin', 'manajer']).has(role);
+      new Set(['admin_workshop', 'superadmin', 'manajer']).has(role);
     // Sumber kebenaran sama GET /workshop-orders (SQL), hindari false negative dari parse metadata di Node.
     if (!receivingFromWarehouse) {
       const visiblePut = await orderVisibleForWorkshopStatusPut(
@@ -1584,9 +1718,10 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
 
     const allowedByRole = {
       admin_toko: new Set(['awaiting_warehouse', 'ready_for_pickup']),
-      stockist: new Set(['sent-to-workshop']),
-      admin_warehouse: new Set(['sent-to-workshop']),
-      admin_workshop: new Set(ADMIN_WORKSHOP_PUT_ALLOWED_STATUSES),
+      admin_workshop: new Set([
+        ...ADMIN_WORKSHOP_PUT_ALLOWED_STATUSES,
+        'sent-to-workshop',
+      ]),
       tukang: new Set([
         'in_workshop',
         'repairing',
@@ -1672,29 +1807,50 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     const bindServiceWorkshopMeta =
       hasMetaPut && awaitingToWorkshop;
     if (bindServiceWorkshopMeta) {
-      await db.query(
-        `
+      const originStoreId = order.branch_id;
+      const metaBind = {
+        service_workshop_branch_id: String(branchId),
+        service_origin_branch_id: String(originStoreId),
+      };
+      if (hasPickupPut) {
+        await db.query(
+          `
           UPDATE orders
           SET
             status = $1,
+            branch_id = $2::bigint,
+            pickup_branch_id = COALESCE(pickup_branch_id, $3::bigint),
+            updated_at = NOW(),
+            metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb
+          WHERE order_id = $5
+        `,
+          [
+            nextStatusRaw,
+            branchId,
+            originStoreId,
+            JSON.stringify(metaBind),
+            orderId,
+          ]
+        );
+      } else {
+        await db.query(
+          `
+          UPDATE orders
+          SET
+            status = $1,
+            branch_id = $2::bigint,
             updated_at = NOW(),
             metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
-          WHERE order_id = $2
+          WHERE order_id = $4
         `,
-        [
-          nextStatusRaw,
-          orderId,
-          JSON.stringify({
-            service_workshop_branch_id: String(branchId),
-            service_origin_branch_id: String(order.branch_id),
-          }),
-        ]
-      );
+          [nextStatusRaw, branchId, JSON.stringify(metaBind), orderId]
+        );
+      }
     } else if (awaitingToWorkshop && !hasMetaPut) {
       // Tanpa kolom metadata, service_workshop_branch_id tidak tersimpan — order tetap
-      // branch_id toko sehingga tidak lolos filter bengkel. Pindahkan cabang asal ke bengkel yang menerima.
+      // branch_id toko sehingga tidak lolos filter workshop. Pindahkan cabang asal ke workshop yang menerima.
       // Simpan cabang toko asal di pickup_branch_id bila kosong, supaya admin toko masih lolos
-      // `orderVisibleForWorkshopStatusPut` / GET saat `branch_id` sudah di bengkel.
+      // `orderVisibleForWorkshopStatusPut` / GET saat `branch_id` sudah di workshop.
       const originStoreId = order.branch_id;
       if (hasPickupPut) {
         await db.query(
@@ -1729,6 +1885,71 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
         [nextStatusRaw, orderId]
       );
     }
+
+    if (
+      nextStatusRaw === 'awaiting_warehouse' &&
+      currentStatus !== 'awaiting_warehouse' &&
+      role === 'admin_toko'
+    ) {
+      broadcastWorkshop(
+        `Service/custom #${orderId} dari toko menunggu persetujuan workshop`,
+        'workshop_assignment',
+        {
+          branch_id: branchId,
+          event: 'workshop_service_pending',
+          payload: { order_id: orderId, order_type: orderType, status: 'awaiting_warehouse' },
+        }
+      );
+    }
+    if (awaitingToWorkshop) {
+      broadcastWorkshop(
+        `Order #${orderId} disetujui — masuk antrian pekerjaan workshop`,
+        'order_update',
+        {
+          branch_id: branchId,
+          event: 'workshop_approved',
+          payload: { order_id: orderId, status: 'sent-to-workshop' },
+        }
+      );
+    }
+    if (
+      new Set(['in_workshop', 'repairing', 'polishing', 'custom_work']).has(nextStatusRaw) &&
+      currentStatus !== nextStatusRaw
+    ) {
+      broadcastWorkshop(
+        `Order #${orderId} sedang dikerjakan tukang (${nextStatusRaw})`,
+        'order_update',
+        {
+          branch_id: branchId,
+          event: 'workshop_in_progress',
+          payload: { order_id: orderId, status: nextStatusRaw },
+        }
+      );
+    }
+    if (
+      nextStatusRaw === 'ready_for_pickup' &&
+      currentStatus === 'done_workshop'
+    ) {
+      let storeBranchId = order.branch_id;
+      if (hasMetaPut && order.metadata && typeof order.metadata === 'object') {
+        const origin = order.metadata.service_origin_branch_id;
+        if (origin != null && String(origin).trim() !== '') {
+          storeBranchId = origin;
+        }
+      } else if (hasPickupPut && order.pickup_branch_id != null) {
+        storeBranchId = order.pickup_branch_id;
+      }
+      broadcastWorkshop(
+        `Order service/custom #${orderId} dikirim workshop — menunggu terima di toko`,
+        'store_assignment',
+        {
+          branch_id: storeBranchId,
+          event: 'workshop_sent_to_store',
+          payload: { order_id: orderId, status: 'ready_for_pickup' },
+        }
+      );
+    }
+
     return res.status(200).json({
       success: true,
       order_id: String(orderId),
@@ -1737,6 +1958,189 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating workshop order status:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin workshop: tugaskan order antrian ke tukang (metadata) tanpa alur Mulai oleh tukang.
+app.put('/workshop-orders/:id/assign-technician', async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    const branchId = parseInt(String(req.body?.branch_id ?? ''), 10);
+    const technicianId = parseInt(String(req.body?.technician_id ?? ''), 10);
+    const startImmediately =
+      req.body?.start_immediately === true ||
+      String(req.body?.start_immediately ?? '').toLowerCase() === 'true';
+
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'order_id tidak valid' });
+    }
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return res.status(400).json({ error: 'branch_id wajib diisi' });
+    }
+    if (!Number.isFinite(technicianId) || technicianId <= 0) {
+      return res.status(400).json({ error: 'technician_id wajib diisi' });
+    }
+
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    const allowedRoles = new Set(['admin_workshop', 'superadmin', 'manajer']);
+    if (!allowedRoles.has(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan menugaskan tukang' });
+    }
+
+    const techCheck = await db.query(
+      `
+        SELECT u.user_id, u.username
+        FROM users u
+        JOIN user_branch_roles ubr ON u.user_id = ubr.user_id
+        WHERE u.user_id = $1
+          AND ubr.branch_id = $2
+          AND ubr.role = 'tukang'
+          AND u.status = 'active'
+        LIMIT 1
+      `,
+      [technicianId, branchId]
+    );
+    if (techCheck.rows.length === 0) {
+      return res.status(400).json({
+        error: 'Tukang tidak ditemukan atau tidak aktif di cabang ini',
+      });
+    }
+    const techUsername = techCheck.rows[0].username;
+
+    const hasPickupAssign = await ordersHasPickupBranchColumn(db);
+    const hasMetaAssign = await ordersHasMetadataColumn(db);
+    const curRes = await db.query(
+      `
+        SELECT order_id, order_type, branch_id, status
+          ${hasPickupAssign ? ', pickup_branch_id' : ''}
+          ${hasMetaAssign ? ', metadata' : ''}
+        FROM orders
+        WHERE order_id = $1
+        LIMIT 1
+      `,
+      [orderId]
+    );
+    if (curRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    }
+    const order = curRes.rows[0];
+    const visibleAssign = await orderVisibleForWorkshopStatusPut(
+      db,
+      orderId,
+      branchId,
+      hasPickupAssign,
+      hasMetaAssign
+    );
+    if (!visibleAssign) {
+      return res.status(403).json({ error: 'Order tidak untuk cabang workshop ini' });
+    }
+
+    const orderType = (order.order_type ?? '').toString().trim().toLowerCase();
+    if (orderType !== 'service' && orderType !== 'custom') {
+      return res.status(400).json({
+        error: 'Hanya order service/custom yang bisa ditugaskan ke tukang',
+      });
+    }
+
+    const currentStatus = (order.status ?? '').toString().trim().toLowerCase();
+    const assignableStatuses = new Set([
+      'sent-to-workshop',
+      'in_workshop',
+      'repairing',
+      'polishing',
+      'custom_work',
+    ]);
+    if (!assignableStatuses.has(currentStatus)) {
+      return res.status(400).json({
+        error: `Penugasan tidak diizinkan dari status "${currentStatus}"`,
+      });
+    }
+
+    let nextStatus = currentStatus;
+    if (startImmediately) {
+      nextStatus = orderType === 'custom' ? 'custom_work' : 'repairing';
+    } else if (currentStatus === 'sent-to-workshop') {
+      nextStatus = 'in_workshop';
+    }
+
+    const metaPatch = {
+      assigned_technician_id: String(technicianId),
+      assigned_technician: techUsername,
+      assigned_by_role: role,
+      assigned_at: new Date().toISOString(),
+    };
+    if (req.user?.user_id != null) {
+      metaPatch.assigned_by_user_id = String(req.user.user_id);
+    }
+
+    if (hasMetaAssign) {
+      await db.query(
+        `
+          UPDATE orders
+          SET status = $1,
+              updated_at = NOW(),
+              metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+          WHERE order_id = $3
+        `,
+        [nextStatus, JSON.stringify(metaPatch), orderId]
+      );
+    } else {
+      await db.query(
+        `
+          UPDATE orders
+          SET status = $1,
+              updated_at = NOW(),
+              user_id = $2::bigint
+          WHERE order_id = $3
+        `,
+        [nextStatus, technicianId, orderId]
+      );
+    }
+
+    if (
+      new Set(['in_workshop', 'repairing', 'polishing', 'custom_work']).has(nextStatus) &&
+      currentStatus !== nextStatus
+    ) {
+      broadcastWorkshop(
+        `Order #${orderId} ditugaskan ke ${techUsername} (${nextStatus})`,
+        'order_update',
+        {
+          branch_id: branchId,
+          event: 'workshop_in_progress',
+          payload: {
+            order_id: orderId,
+            status: nextStatus,
+            technician_id: technicianId,
+          },
+        }
+      );
+    } else {
+      broadcastWorkshop(
+        `Order #${orderId} ditugaskan ke ${techUsername}`,
+        'workshop_assignment',
+        {
+          branch_id: branchId,
+          event: 'workshop_assigned',
+          payload: {
+            order_id: orderId,
+            technician_id: technicianId,
+            status: nextStatus,
+          },
+        }
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      order_id: String(orderId),
+      technician_id: String(technicianId),
+      technician_username: techUsername,
+      old_status: currentStatus,
+      new_status: nextStatus,
+    });
+  } catch (error) {
+    console.error('Error assigning workshop technician:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -371,6 +371,24 @@ app.put('/transfers/:id', async (req, res) => {
         } else {
         const fromBranchId = transfer.from_branch_id;
         const toBranchId = transfer.to_branch_id;
+        const branchNameRes = await client.query(
+          `
+            SELECT branch_id, name
+            FROM branches
+            WHERE branch_id = ANY($1::bigint[])
+          `,
+          [[fromBranchId, toBranchId]]
+        );
+        const branchNameById = new Map(
+          branchNameRes.rows.map((r) => [
+            String(r.branch_id),
+            String(r.name ?? '').trim() || `Cabang ${r.branch_id}`,
+          ])
+        );
+        const fromBranchLabel =
+          branchNameById.get(String(fromBranchId)) ?? `Cabang ${fromBranchId}`;
+        const toBranchLabel =
+          branchNameById.get(String(toBranchId)) ?? `Cabang ${toBranchId}`;
         const qty = parseInt(transfer.quantity, 10);
         const itemName = String(transfer.item_name ?? '').trim();
         const sourceTypeFromColumn =
@@ -583,7 +601,7 @@ app.put('/transfers/:id', async (req, res) => {
                   oldDestStatus,
                   destinationStatus,
                   approverUserId,
-                  `Transfer masuk selesai (#${transfer.transfer_id})`,
+                  `Transfer masuk dari ${fromBranchLabel} (#${transfer.transfer_id})`,
                 ]
               );
             }
@@ -658,7 +676,7 @@ app.put('/transfers/:id', async (req, res) => {
             -qty,
             sourcePrevStock,
             sourceNextStock,
-            `Transfer keluar ke branch ${toBranchId}`,
+            `Transfer keluar ke ${toBranchLabel}`,
             transfer.transfer_id,
             approverUserId,
           ]
@@ -679,7 +697,7 @@ app.put('/transfers/:id', async (req, res) => {
             qty,
             destPrevStock,
             destCurrentStock,
-            `Transfer masuk dari branch ${fromBranchId}`,
+            `Transfer masuk dari ${fromBranchLabel}`,
             transfer.transfer_id,
             approverUserId,
           ]

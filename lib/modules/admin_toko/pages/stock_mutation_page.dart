@@ -11,6 +11,164 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
+int _stockMutationQty(Map<String, dynamic> m) {
+  return int.tryParse(m['quantity']?.toString() ?? '') ?? 0;
+}
+
+String _stockMutationTypeLabel(Map<String, dynamic> m) {
+  final type = (m['type'] ?? '').toString();
+  final ref = (m['reference_type'] ?? '').toString();
+  final qty = _stockMutationQty(m);
+  final orderType =
+      (m['order_type'] ?? '').toString().trim().toLowerCase();
+
+  if (type == 'transfer') {
+    return qty >= 0 ? 'Transfer masuk' : 'Transfer keluar';
+  }
+  if (type == 'in') {
+    if (ref == 'item_create') return 'Stok baru';
+    if (ref == 'restock') return 'Restok';
+    if (ref == 'order' && orderType == 'buyback') return 'Buyback';
+    return 'Stok masuk';
+  }
+  if (type == 'out') {
+    if (ref == 'order') return 'Penjualan';
+    return 'Stok keluar';
+  }
+  if (type == 'adjustment') return 'Koreksi';
+  return 'Lainnya';
+}
+
+Color _stockMutationTypeColor(Map<String, dynamic> m) {
+  final type = (m['type'] ?? '').toString();
+  final qty = _stockMutationQty(m);
+  if (type == 'transfer') {
+    return qty >= 0 ? Colors.blue : Colors.orange;
+  }
+  switch (type) {
+    case 'in':
+      return Colors.green;
+    case 'out':
+      return Colors.red;
+    case 'adjustment':
+      return Colors.blueGrey;
+    default:
+      return Colors.blue;
+  }
+}
+
+Icon _stockMutationIcon(Map<String, dynamic> m) {
+  final color = _stockMutationTypeColor(m);
+  final qty = _stockMutationQty(m);
+  final type = (m['type'] ?? '').toString();
+  if (type == 'transfer') {
+    return Icon(
+      qty >= 0 ? Icons.arrow_downward : Icons.arrow_upward,
+      color: color,
+      size: 20,
+    );
+  }
+  switch (type) {
+    case 'in':
+      return Icon(Icons.arrow_downward, color: color, size: 20);
+    case 'out':
+      return Icon(Icons.arrow_upward, color: color, size: 20);
+    default:
+      return Icon(Icons.swap_horiz, color: color, size: 20);
+  }
+}
+
+String _humanizeBranchIdsInNotes(String note, Map<String, dynamic> m) {
+  var s = note;
+  final fromId = m['transfer_from_branch_id']?.toString().trim();
+  final toId = m['transfer_to_branch_id']?.toString().trim();
+  final fromName =
+      (m['transfer_from_branch_name'] ?? '').toString().trim();
+  final toName = (m['transfer_to_branch_name'] ?? '').toString().trim();
+  if (fromId != null && fromId.isNotEmpty && fromName.isNotEmpty) {
+    s = s.replaceAll(
+      RegExp('branch\\s*$fromId', caseSensitive: false),
+      fromName,
+    );
+  }
+  if (toId != null && toId.isNotEmpty && toName.isNotEmpty) {
+    s = s.replaceAll(
+      RegExp('branch\\s*$toId', caseSensitive: false),
+      toName,
+    );
+  }
+  return s;
+}
+
+String _stockMutationDescription(Map<String, dynamic> m) {
+  final ref = (m['reference_type'] ?? '').toString();
+  final qty = _stockMutationQty(m);
+  final from =
+      (m['transfer_from_branch_name'] ?? '').toString().trim();
+  final to = (m['transfer_to_branch_name'] ?? '').toString().trim();
+  final orderNo = (m['order_number'] ?? '').toString().trim();
+  final orderType =
+      (m['order_type'] ?? '').toString().trim().toLowerCase();
+
+  if (ref == 'transfer') {
+    if (qty >= 0) {
+      if (from.isNotEmpty) return 'Diterima dari $from';
+      return 'Barang diterima dari cabang lain';
+    }
+    if (to.isNotEmpty) return 'Dikirim ke $to';
+    return 'Barang dikirim ke cabang lain';
+  }
+  if (ref == 'item_create') return 'Input stok baru di etalase';
+  if (ref == 'restock') return 'Penambahan / restok manual';
+  if (ref == 'order') {
+    if (orderType == 'buyback') {
+      if (orderNo.isNotEmpty) return 'Buyback lunas · $orderNo';
+      return 'Buyback lunas';
+    }
+    if (orderNo.isNotEmpty) return 'Penjualan · $orderNo';
+    return 'Pengurangan stok dari order';
+  }
+
+  final note = (m['notes'] ?? '').toString().trim();
+  if (note.isNotEmpty) return _humanizeBranchIdsInNotes(note, m);
+  return '—';
+}
+
+String _stockMutationFilterLabel(String filterKey) {
+  switch (filterKey) {
+    case 'all':
+      return 'Semua';
+    case 'in':
+      return 'Penambahan stok';
+    case 'out':
+      return 'Pengurangan stok';
+    case 'transfer_in':
+      return 'Transfer masuk';
+    case 'transfer_out':
+      return 'Transfer keluar';
+    default:
+      return 'Semua';
+  }
+}
+
+bool _stockMutationMatchesFilter(Map<String, dynamic> m, String filterKey) {
+  final type = (m['type'] ?? '').toString();
+  final qty = _stockMutationQty(m);
+  switch (filterKey) {
+    case 'all':
+      return true;
+    case 'in':
+    case 'out':
+      return type == filterKey;
+    case 'transfer_in':
+      return type == 'transfer' && qty >= 0;
+    case 'transfer_out':
+      return type == 'transfer' && qty < 0;
+    default:
+      return type == filterKey;
+  }
+}
+
 class StockMutationPage extends ConsumerStatefulWidget {
   const StockMutationPage({super.key});
 
@@ -82,7 +240,25 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
 
   List<dynamic> get _filteredMutations {
     if (_selectedType == 'all') return _mutations;
-    return _mutations.where((m) => m['type'] == _selectedType).toList();
+    return _mutations
+        .where(
+          (m) => _stockMutationMatchesFilter(
+            Map<String, dynamic>.from(m as Map),
+            _selectedType,
+          ),
+        )
+        .toList();
+  }
+
+  int _countByFilter(String filterKey) {
+    return _mutations
+        .where(
+          (m) => _stockMutationMatchesFilter(
+            Map<String, dynamic>.from(m as Map),
+            filterKey,
+          ),
+        )
+        .length;
   }
 
   String _isoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
@@ -178,13 +354,13 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
           subtitles: [
             PdfLaporanHeaderSubtitleLine('Periode: $periodLabel'),
             PdfLaporanHeaderSubtitleLine(
-              'Filter tipe: ${_getTypeLabel(_selectedType)}',
+              'Filter: ${_stockMutationFilterLabel(_selectedType)}',
             ),
           ],
         ),
         build: (ctx) => [
           pw.TableHelper.fromTextArray(
-            headers: const ['No', 'Waktu', 'Item', 'Tipe', 'Qty', 'Catatan'],
+            headers: const ['No', 'Waktu', 'Item', 'Jenis', 'Qty', 'Keterangan'],
             data: [
               for (var i = 0; i < sorted.length; i++)
                 [
@@ -196,11 +372,9 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                     return d == null ? '-' : df.format(d.toLocal());
                   }(),
                   (sorted[i]['item_name'] ?? '-').toString(),
-                  _getTypeLabel((sorted[i]['type'] ?? '').toString()),
+                  _stockMutationTypeLabel(sorted[i]),
                   (sorted[i]['quantity'] ?? '-').toString(),
-                  ((sorted[i]['notes'] ?? '').toString().trim().isEmpty)
-                      ? '-'
-                      : (sorted[i]['notes'] ?? '').toString(),
+                  _stockMutationDescription(sorted[i]),
                 ],
             ],
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
@@ -294,14 +468,14 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
   }
 
   void _showMutationHistoryDetail(Map<String, dynamic> mutation) {
-    final typeStr = (mutation['type'] ?? '').toString();
+    final typeLabel = _stockMutationTypeLabel(mutation);
+    final typeColor = _stockMutationTypeColor(mutation);
+    final description = _stockMutationDescription(mutation);
     final qty = (mutation['quantity'] ?? '').toString();
     final createdAt = _formatMutationDateTime(mutation['created_at']);
     final itemName = (mutation['item_name'] ?? '-').toString();
     final branchName = (mutation['branch_name'] ?? '-').toString();
-    final note = (mutation['notes'] ?? '').toString().trim();
-    final refType = (mutation['reference_type'] ?? '-').toString();
-    final refId = (mutation['reference_id'] ?? '-').toString();
+    final systemNote = (mutation['notes'] ?? '').toString().trim();
     final prevStock = (mutation['previous_stock'] ?? '-').toString();
     final currStock = (mutation['current_stock'] ?? '-').toString();
     final createdBy =
@@ -312,7 +486,12 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
     final transferFlow = [
       mutation['transfer_from_branch_name']?.toString(),
       mutation['transfer_to_branch_name']?.toString(),
-    ].whereType<String>().where((x) => x.trim().isNotEmpty).join(' -> ');
+    ].whereType<String>().where((x) => x.trim().isNotEmpty).join(' → ');
+    final humanizedSystemNote = systemNote.isNotEmpty
+        ? _humanizeBranchIdsInNotes(systemNote, mutation)
+        : '';
+    final showSystemNote = humanizedSystemNote.isNotEmpty &&
+        humanizedSystemNote != description;
 
     showModalBottomSheet(
       context: context,
@@ -336,21 +515,21 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                   ),
                   const SizedBox(height: 12),
                   _detailRow('Item', itemName),
-                  _detailRow('Tipe Mutasi', _getTypeLabel(typeStr)),
+                  _detailRow('Jenis', typeLabel),
+                  _detailRow('Keterangan', description),
                   _detailRow('Jumlah', '$qty pcs'),
                   _detailRow('Cabang', branchName),
                   _detailRow('Waktu', createdAt),
                   _detailRow('Stok Sebelum', prevStock),
                   _detailRow('Stok Sesudah', currStock),
                   _detailRow('Dibuat Oleh', createdBy),
-                  _detailRow('Ref Type', refType),
-                  _detailRow('Ref ID', refId),
                   if (orderNo.isNotEmpty) _detailRow('No. Order', orderNo),
                   if (customerName.isNotEmpty)
-                    _detailRow('Customer', customerName),
+                    _detailRow('Pelanggan', customerName),
                   if (transferFlow.isNotEmpty)
                     _detailRow('Alur Transfer', transferFlow),
-                  if (note.isNotEmpty) _detailRow('Catatan', note),
+                  if (showSystemNote)
+                    _detailRow('Catatan sistem', humanizedSystemNote),
                   const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
@@ -363,10 +542,10 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                       ),
                     ),
                     child: Text(
-                      'Status mutasi: ${_getTypeLabel(typeStr)}',
+                      typeLabel,
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        color: _getTypeColor(typeStr),
+                        color: typeColor,
                       ),
                     ),
                   ),
@@ -389,17 +568,21 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) => setState(() => _selectedType = value),
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'all', child: Text('Semua')),
-              const PopupMenuItem(value: 'in', child: Text('Masuk')),
-              const PopupMenuItem(value: 'out', child: Text('Keluar')),
-              const PopupMenuItem(value: 'transfer', child: Text('Transfer')),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'all', child: Text('Semua')),
+              PopupMenuItem(value: 'in', child: Text('Penambahan stok')),
+              PopupMenuItem(value: 'out', child: Text('Pengurangan stok')),
+              PopupMenuItem(value: 'transfer_in', child: Text('Transfer masuk')),
+              PopupMenuItem(
+                value: 'transfer_out',
+                child: Text('Transfer keluar'),
+              ),
             ],
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  Text(_getTypeLabel(_selectedType)),
+                  Text(_stockMutationFilterLabel(_selectedType)),
                   const Icon(Icons.arrow_drop_down),
                 ],
               ),
@@ -486,8 +669,8 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                           Expanded(
                             child: _buildSummaryCard(
                               filterType: 'in',
-                              'Stok Masuk',
-                              _mutations.where((m) => m['type'] == 'in').length,
+                              'Penambahan stok',
+                              _countByFilter('in'),
                               Icons.arrow_downward,
                               Colors.green,
                             ),
@@ -500,10 +683,8 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                           Expanded(
                             child: _buildSummaryCard(
                               filterType: 'out',
-                              'Stok Keluar',
-                              _mutations
-                                  .where((m) => m['type'] == 'out')
-                                  .length,
+                              'Pengurangan stok',
+                              _countByFilter('out'),
                               Icons.arrow_upward,
                               Colors.red,
                             ),
@@ -511,12 +692,24 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                           SizedBox(width: narrowScreen ? 10 : 16),
                           Expanded(
                             child: _buildSummaryCard(
-                              filterType: 'transfer',
-                              'Transfer',
-                              _mutations
-                                  .where((m) => m['type'] == 'transfer')
-                                  .length,
-                              Icons.compare_arrows,
+                              filterType: 'transfer_in',
+                              'Transfer masuk',
+                              _countByFilter('transfer_in'),
+                              Icons.call_received,
+                              Colors.blue,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: narrowScreen ? 10 : 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSummaryCard(
+                              filterType: 'transfer_out',
+                              'Transfer keluar',
+                              _countByFilter('transfer_out'),
+                              Icons.call_made,
                               Colors.orange,
                             ),
                           ),
@@ -579,7 +772,7 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                     ),
                                     if (showNotesColumn)
                                       _tableHeadCell(
-                                        'Catatan',
+                                        'Keterangan',
                                         compact: extraCompact,
                                       ),
                                     if (showTypeColumn)
@@ -595,9 +788,15 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                 i < _filteredMutations.length;
                                 i++
                               ) {
-                                final mutation = _filteredMutations[i];
-                                final typeStr =
-                                    mutation['type']?.toString() ?? '';
+                                final mutation = Map<String, dynamic>.from(
+                                  _filteredMutations[i] as Map,
+                                );
+                                final typeLabel =
+                                    _stockMutationTypeLabel(mutation);
+                                final typeColor =
+                                    _stockMutationTypeColor(mutation);
+                                final description =
+                                    _stockMutationDescription(mutation);
                                 String dateStr = '—';
                                 try {
                                   dateStr =
@@ -611,15 +810,11 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                         ),
                                       );
                                 } catch (_) {}
-                                final notes =
-                                    mutation['notes']?.toString() ?? '';
-                                final notesShort = notes.length > 48
-                                    ? '${notes.substring(0, 45)}…'
-                                    : notes;
+                                final descShort = description.length > 48
+                                    ? '${description.substring(0, 45)}…'
+                                    : description;
                                 void onRowTap() {
-                                  _showMutationHistoryDetail(
-                                    Map<String, dynamic>.from(mutation),
-                                  );
+                                  _showMutationHistoryDetail(mutation);
                                 }
 
                                 final baseTextStyle = TextStyle(
@@ -639,7 +834,7 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                         onTap: onRowTap,
                                         child: Row(
                                           children: [
-                                            _getMutationIcon(typeStr),
+                                            _stockMutationIcon(mutation),
                                             SizedBox(
                                               width: extraCompact ? 4 : 8,
                                             ),
@@ -681,14 +876,13 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                           compact: extraCompact,
                                           onTap: onRowTap,
                                           child: Text(
-                                            notes.isEmpty ? '—' : notesShort,
-                                            maxLines: 1,
+                                            description == '—'
+                                                ? '—'
+                                                : descShort,
+                                            maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
                                             style: baseTextStyle.copyWith(
                                               color: cs.onSurfaceVariant,
-                                              fontStyle: notes.isEmpty
-                                                  ? FontStyle.normal
-                                                  : FontStyle.italic,
                                             ),
                                           ),
                                         ),
@@ -706,12 +900,12 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
                                                 vertical: extraCompact ? 2 : 4,
                                               ),
                                               decoration: BoxDecoration(
-                                                color: _getTypeColor(typeStr),
+                                                color: typeColor,
                                                 borderRadius:
                                                     BorderRadius.circular(10),
                                               ),
                                               child: Text(
-                                                _getTypeLabel(typeStr),
+                                                typeLabel,
                                                 style: TextStyle(
                                                   color: Colors.white,
                                                   fontSize: extraCompact
@@ -852,44 +1046,4 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
     );
   }
 
-  Icon _getMutationIcon(String type) {
-    switch (type) {
-      case 'in':
-        return const Icon(Icons.arrow_downward, color: Colors.green);
-      case 'out':
-        return const Icon(Icons.arrow_upward, color: Colors.red);
-      case 'transfer':
-        return const Icon(Icons.compare_arrows, color: Colors.orange);
-      default:
-        return const Icon(Icons.swap_horiz, color: Colors.blue);
-    }
-  }
-
-  Color _getTypeColor(String type) {
-    switch (type) {
-      case 'in':
-        return Colors.green;
-      case 'out':
-        return Colors.red;
-      case 'transfer':
-        return Colors.orange;
-      default:
-        return Colors.blue;
-    }
-  }
-
-  String _getTypeLabel(String type) {
-    switch (type) {
-      case 'in':
-        return 'Masuk';
-      case 'out':
-        return 'Keluar';
-      case 'transfer':
-        return 'Transfer';
-      case 'all':
-        return 'Semua';
-      default:
-        return 'Lainnya';
-    }
-  }
 }

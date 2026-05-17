@@ -281,11 +281,11 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'admin_warehouse':
-        return 'Admin Gudang';
+        return 'Admin Warehouse';
       case 'manajer':
         return 'Manajer';
       case 'tukang':
-        return 'Teknisi';
+        return 'Tukang';
       case 'stockist':
         return 'Stockist';
       default:

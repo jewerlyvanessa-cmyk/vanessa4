@@ -6,10 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
+import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
+import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockWarehousePage extends ConsumerStatefulWidget {
   const StockWarehousePage({super.key});
@@ -19,6 +22,7 @@ class StockWarehousePage extends ConsumerStatefulWidget {
 }
 
 class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
+  final _searchCtrl = TextEditingController();
   bool _isLoading = true;
   String _error = '';
   List<dynamic> _items = [];
@@ -33,6 +37,12 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   void initState() {
     super.initState();
     _loadItems();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _showAddStockDialog() async {
@@ -276,9 +286,10 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                           if (created != null) {
                             Navigator.pop(context);
                             if (shelfContext.mounted) {
-                              await promptPrintStockItemQr(
+                              await promptPrintStockItemLabel(
                                 shelfContext,
                                 item: created,
+                                afterSave: true,
                               );
                             }
                             return;
@@ -607,9 +618,10 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                             ),
                           );
                           if (createdItems.isNotEmpty && shelfContext.mounted) {
-                            await promptPrintStockItemsQrBulk(
+                            await promptPrintStockItemsLabelBulk(
                               shelfContext,
                               items: createdItems,
+                              afterSave: true,
                             );
                           }
                           if (failures.isNotEmpty && shelfContext.mounted) {
@@ -697,13 +709,33 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
               stockItemVisibleForStatusFilter(it, _selectedStatus))
           .toList();
     }
-    final q = _search.trim().toLowerCase();
-    if (q.isEmpty) return list;
-    return list.where((it) {
-      final code = (it['item_code'] ?? it['kode_produk'] ?? '').toString();
-      final name = (it['name'] ?? '').toString();
-      return code.toLowerCase().contains(q) || name.toLowerCase().contains(q);
-    }).toList();
+    if (_search.trim().isEmpty) return list;
+    return list
+        .where((it) => stockInventoryItemMatchesQuery(it, _search))
+        .toList();
+  }
+
+  void _onSearchChanged(String v) => setState(() {
+        _search = v;
+        _jenisDetailFocus = null;
+      });
+
+  Future<void> _printStockReport() async {
+    final user = ref.read(userStateProvider);
+    final branchId = user.branch.trim();
+    final branchLabel = stockBranchDisplayName(
+          branches: user.branches,
+          branchId: branchId,
+        ) ??
+        branchId;
+    await printStockInventoryReportPdf(
+      context,
+      branchLabel: branchLabel.isEmpty ? 'Cabang' : branchLabel,
+      branchIdForLogo: branchId,
+      selectedStatus: _selectedStatus,
+      filteredItems: _filteredItems,
+      searchQuery: _search,
+    );
   }
 
   @override
@@ -712,6 +744,12 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
       appBar: AppBar(
         title: const Text('Stok'),
         actions: [
+          IconButton(
+            tooltip: 'Cetak laporan stok',
+            onPressed:
+                _isLoading || _error.isNotEmpty ? null : _printStockReport,
+            icon: const Icon(Icons.print_outlined),
+          ),
           IconButton(
             tooltip: 'Tambah stok massal',
             onPressed: _showBulkAddStockDialog,
@@ -763,17 +801,10 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                      child: TextField(
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
-                          hintText: 'Cari item_code / nama',
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        onChanged: (v) => setState(() {
-                          _search = v;
-                          _jenisDetailFocus = null;
-                        }),
+                      child: StockInventorySearchFieldStateful(
+                        controller: _searchCtrl,
+                        onQueryChanged: _onSearchChanged,
+                        enabled: !_isLoading && _error.isEmpty,
                       ),
                     ),
                     Expanded(

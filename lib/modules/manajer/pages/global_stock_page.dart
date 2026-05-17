@@ -6,8 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
+import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_inventory_search.dart';
+import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class GlobalStockPage extends ConsumerStatefulWidget {
   const GlobalStockPage({super.key});
@@ -17,6 +20,7 @@ class GlobalStockPage extends ConsumerStatefulWidget {
 }
 
 class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
+  final _searchCtrl = TextEditingController();
   bool _loading = true;
   String _error = '';
 
@@ -30,6 +34,12 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   List<(String value, String label)> _branchOptions() {
@@ -114,7 +124,6 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
   }
 
   List<dynamic> get _filteredItems {
-    final q = _search.trim().toLowerCase();
     final out = <dynamic>[];
     for (final it in _items) {
       if (it is! Map) continue;
@@ -125,20 +134,43 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
         continue;
       }
 
-      if (q.isNotEmpty) {
-        final kode = (item['item_code'] ?? item['kode_produk'] ?? '')
-            .toString()
-            .toLowerCase();
-        final name = (item['name'] ?? '').toString().toLowerCase();
-        final branch = (item['branch_name'] ?? '').toString().toLowerCase();
-        if (!kode.contains(q) && !name.contains(q) && !branch.contains(q)) {
-          continue;
-        }
+      if (_search.trim().isNotEmpty &&
+          !stockInventoryItemMatchesQuery(item, _search)) {
+        continue;
       }
 
       out.add(item);
     }
     return out;
+  }
+
+  void _onSearchChanged(String v) => setState(() {
+        _search = v;
+        _jenisDetailFocus = null;
+      });
+
+  String _branchLabelForPrint() {
+    if (_selectedBranchId == 'all') return 'Semua cabang';
+    for (final e in _branchOptions()) {
+      if (e.$1 == _selectedBranchId) return e.$2;
+    }
+    return _selectedBranchId;
+  }
+
+  Future<void> _printStockReport() async {
+    final user = ref.read(userStateProvider);
+    final logoBranch = _selectedBranchId != 'all'
+        ? _selectedBranchId
+        : user.branch.trim();
+    await printStockInventoryReportPdf(
+      context,
+      branchLabel: _branchLabelForPrint(),
+      branchIdForLogo: logoBranch.isEmpty ? user.branch.trim() : logoBranch,
+      selectedStatus: _selectedStatus,
+      filteredItems: _filteredItems,
+      searchQuery: _search,
+      includeBranchColumn: _selectedBranchId == 'all',
+    );
   }
 
   @override
@@ -147,6 +179,11 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
       appBar: AppBar(
         title: const Text('Stok Global'),
         actions: [
+          IconButton(
+            tooltip: 'Cetak laporan stok',
+            onPressed: _loading || _error.isNotEmpty ? null : _printStockReport,
+            icon: const Icon(Icons.print_outlined),
+          ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _load,
@@ -221,17 +258,12 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                      child: TextField(
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
-                          hintText: 'Cari item_code / nama / cabang',
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        onChanged: (v) => setState(() {
-                          _search = v;
-                          _jenisDetailFocus = null;
-                        }),
+                      child: StockInventorySearchFieldStateful(
+                        controller: _searchCtrl,
+                        onQueryChanged: _onSearchChanged,
+                        enabled: !_loading && _error.isEmpty,
+                        hintText:
+                            'Cari kode, nama, jenis, cabang, material, status…',
                       ),
                     ),
                     Expanded(

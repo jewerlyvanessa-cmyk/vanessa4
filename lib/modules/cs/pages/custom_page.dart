@@ -11,6 +11,8 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'customers_page.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/providers/order_today_provider.dart';
+import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -501,6 +503,9 @@ class _CustomPageState extends ConsumerState<CustomPage> {
             // best-effort
           }
         }
+        ref.invalidate(todayOrdersProvider);
+        ref.invalidate(orderTodayStatsProvider);
+        bumpCsDailyOrdersListRevision(ref);
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(

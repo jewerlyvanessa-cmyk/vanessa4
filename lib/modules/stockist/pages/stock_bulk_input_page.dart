@@ -349,10 +349,10 @@ class _StockBulkInputPageState extends ConsumerState<StockBulkInputPage> {
       SnackBar(content: Text(buf.toString()), duration: const Duration(seconds: 6)),
     );
     if (createdItems.isNotEmpty) {
-      await promptPrintStockItemsQrBulk(
+      await promptPrintStockItemsLabelBulk(
         context,
         items: createdItems,
-        askConfirm: false,
+        afterSave: true,
       );
     }
     if (!mounted) return;

@@ -9,7 +9,7 @@ abstract final class DashboardMenuIcons {
   /// Daftar / kelola pelanggan (`CustomersPage`, `/customers`).
   static const IconData pelanggan = Icons.people;
 
-  /// Laporan (penjualan, stok, kasir, teknisi, workshop, …).
+  /// Laporan (penjualan, stok, kasir, tukang, workshop, …).
   static const IconData laporan = Icons.assessment;
 
   /// Karyawan cabang, user internal, manajemen user sistem (bukan pelanggan).
@@ -34,9 +34,9 @@ class ModuleMenuEntry {
   final String label;
   final Color iconColor;
   final VoidCallback? onTap;
-  /// Jika > 0, ditampilkan badge merah (mis. antrian teknisi).
+  /// Jika > 0, ditampilkan badge merah (mis. antrian tukang).
   final int? badgeCount;
-  /// Border halus seperti menu Teknisi.
+  /// Border halus seperti menu Tukang.
   final bool outlined;
 }
 

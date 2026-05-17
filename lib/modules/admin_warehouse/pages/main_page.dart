@@ -4,15 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:vanessa3/modules/admin_toko/pages/employee_management_page.dart';
-import 'package:vanessa3/modules/admin_toko/pages/goods_transfer_page.dart';
-import 'package:vanessa3/modules/admin_toko/pages/stock_mutation_page.dart';
-import 'package:vanessa3/modules/admin_toko/pages/stock_page.dart';
-import 'package:vanessa3/modules/stockist/pages/dari_toko_page.dart';
-import 'package:vanessa3/modules/stockist/pages/kirim_ke_toko_page.dart';
-import 'package:vanessa3/modules/stockist/pages/permintaan_stok_toko_page.dart';
-import 'package:vanessa3/modules/stockist/pages/reports_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/routes/app_navigator.dart';
+import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
+import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
@@ -20,7 +16,7 @@ import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 
-/// Admin gudang: menu menggabungkan operasi stok/transfer seperti admin toko + alur gudang (stockist).
+/// Admin warehouse: menu menggabungkan operasi stok/transfer seperti admin toko + alur warehouse (stockist).
 class AdminWarehouseMainPage extends ConsumerStatefulWidget {
   const AdminWarehouseMainPage({super.key});
 
@@ -30,6 +26,52 @@ class AdminWarehouseMainPage extends ConsumerStatefulWidget {
 }
 
 class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage> {
+  void _openTokoSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetToko,
+      options: [
+        ModuleDestinationOption(
+          label: 'Permintaan stok toko',
+          subtitle: 'Toko minta barang — setujui / tolak',
+          icon: Icons.move_to_inbox,
+          iconColor: Colors.deepOrange,
+          onTap: () => pushAppRoute(context, AppRoutes.warehouseStockRequests),
+        ),
+        ModuleDestinationOption(
+          label: 'Kirim ke toko',
+          subtitle: 'Pengiriman gudang ke etalase toko',
+          icon: Icons.local_shipping_outlined,
+          iconColor: Colors.teal,
+          onTap: () => pushAppRoute(context, AppRoutes.warehouseToStore),
+        ),
+        ModuleDestinationOption(
+          label: 'Dari toko',
+          subtitle: 'Barang masuk dari toko ke gudang',
+          icon: Icons.call_received,
+          iconColor: Colors.orange,
+          onTap: () => pushAppRoute(context, AppRoutes.warehouseFromStore),
+        ),
+      ],
+    );
+  }
+
+  void _openAntarWarehouseSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetAntarWarehouse,
+      options: [
+        ModuleDestinationOption(
+          label: 'Kirim / terima barang',
+          subtitle: 'Transfer antar cabang warehouse (gudang)',
+          icon: Icons.hub_outlined,
+          iconColor: Colors.blueGrey,
+          onTap: () => pushAppRoute(context, AppRoutes.warehouseGoodsTransfer),
+        ),
+      ],
+    );
+  }
+
   bool _loadingPending = true;
   String? _pendingError;
   List<Map<String, dynamic>> _pendingTransfers = const [];
@@ -98,6 +140,9 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
     final pendingOutgoing = pendingOutgoingAll.where((t) {
       return !transferNotesIsStockRequest((t['notes'] ?? '').toString());
     }).toList();
+    final tokoPendingBadge = stockRequestOutgoing.length +
+        pendingOutgoing.length +
+        pendingIncoming.length;
 
     ref.listen(userStateProvider, (previous, next) {
       if (next.userId != null && next.role.isNotEmpty) {
@@ -119,7 +164,7 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
               fit: BoxFit.contain,
             ),
             const SizedBox(width: 12),
-            const Text('Admin Gudang'),
+            const Text('Admin Warehouse'),
           ],
         ),
         actions: [
@@ -144,7 +189,7 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
             onPressed: () {
               ref.read(webSocketProvider.notifier).disconnect();
               ref.read(userStateProvider.notifier).logout();
-              Navigator.pushReplacementNamed(context, '/login');
+              Navigator.pushReplacementNamed(context, AppRoutes.login);
             },
           ),
         ],
@@ -174,95 +219,45 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                 entries: [
                   ModuleMenuEntry(
                     icon: Icons.inventory_2,
-                    label: 'Stok',
+                    label: 'STOK GUDANG',
                     iconColor: Colors.teal,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const StockPage()),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.local_shipping,
-                    label: 'Kirim / terima',
-                    iconColor: Colors.orange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const GoodsTransferPage(),
-                      ),
-                    ),
+                    onTap: () => pushAppRoute(context, AppRoutes.warehouseStock),
                   ),
                   ModuleMenuEntry(
                     icon: Icons.inventory,
-                    label: 'Mutasi Stok',
+                    label: 'MUTASI STOK',
                     iconColor: Colors.green,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const StockMutationPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.move_to_inbox,
-                    label: 'Permintaan stok toko',
-                    iconColor: Colors.deepOrange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PermintaanStokTokoPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.call_received,
-                    label: 'Dari toko',
-                    iconColor: Colors.orange,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const DariTokoPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.local_shipping_outlined,
-                    label: 'Kirim ke toko',
-                    iconColor: Colors.teal,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const KirimKeTokoPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: DashboardMenuIcons.kelolaPengguna,
-                    label: 'Karyawan',
-                    iconColor: Colors.purple,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const EmployeeManagementPage(),
-                      ),
-                    ),
-                  ),
-                  ModuleMenuEntry(
-                    icon: Icons.qr_code_scanner,
-                    label: 'Cek Stok',
-                    iconColor: Colors.teal,
-                    onTap: () => Navigator.pushNamed(context, '/cek_stok'),
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.warehouseStockMutation),
                   ),
                   ModuleMenuEntry(
                     icon: DashboardMenuIcons.laporan,
-                    label: 'Laporan Input Stok',
+                    label: 'LAPORAN INPUT',
                     iconColor: Colors.indigo,
-                    onTap: () => Navigator.push(
+                    onTap: () => pushAppRoute(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) => const StockistReportsPage(),
-                      ),
+                      AppRoutes.warehouseStockInputReport,
                     ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.storefront_outlined,
+                    label: ModuleMenuGroupLabels.toko,
+                    iconColor: Colors.deepOrange,
+                    badgeCount: tokoPendingBadge > 0 ? tokoPendingBadge : null,
+                    onTap: () => _openTokoSheet(context),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.hub_outlined,
+                    label: ModuleMenuGroupLabels.antarWarehouse,
+                    iconColor: Colors.blueGrey,
+                    onTap: () => _openAntarWarehouseSheet(context),
+                  ),
+                  ModuleMenuEntry(
+                    icon: DashboardMenuIcons.kelolaPengguna,
+                    label: 'KARYAWAN',
+                    iconColor: Colors.purple,
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.warehouseEmployees),
                   ),
                 ],
               ),
@@ -277,12 +272,8 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                 loading: _loadingPending,
                 error: _pendingError,
                 transfers: pendingOutgoing,
-                onSeeAll: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const KirimKeTokoPage(),
-                  ),
-                ),
+                onSeeAll: () =>
+                    pushAppRoute(context, AppRoutes.warehouseToStore),
               ),
             ),
             const SizedBox(height: 12),
@@ -295,12 +286,8 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                 loading: _loadingPending,
                 error: _pendingError,
                 transfers: stockRequestOutgoing,
-                onSeeAll: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const PermintaanStokTokoPage(),
-                  ),
-                ),
+                onSeeAll: () =>
+                    pushAppRoute(context, AppRoutes.warehouseStockRequests),
               ),
             ),
             const SizedBox(height: 12),
@@ -313,10 +300,8 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                 loading: _loadingPending,
                 error: _pendingError,
                 transfers: pendingIncoming,
-                onSeeAll: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const DariTokoPage()),
-                ),
+                onSeeAll: () =>
+                    pushAppRoute(context, AppRoutes.warehouseFromStore),
               ),
             ),
             const SizedBox(height: 24),

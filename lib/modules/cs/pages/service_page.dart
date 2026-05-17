@@ -16,6 +16,7 @@ import 'package:image_picker/image_picker.dart'
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
+import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
@@ -354,7 +355,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     final weightVal = double.tryParse(_beratController.text.trim()) ?? 0;
     final totalBiayaVal = _parseMoney(_totalBiayaController.text);
     final uangMukaVal = _parseMoney(_uangMukaController.text);
-    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → bengkel → workshop.
+    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → workshop.
     final initialServiceStatus = 'pending';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
@@ -473,6 +474,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         // Refresh "order hari ini" list + stats
         ref.invalidate(todayOrdersProvider);
         ref.invalidate(orderTodayStatsProvider);
+        bumpCsDailyOrdersListRevision(ref);
         if (mounted) {
           Navigator.of(context).push(
             MaterialPageRoute(

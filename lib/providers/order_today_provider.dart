@@ -270,7 +270,6 @@ class OrderTodayStatsNotifier
   String _lastAuthToken = '';
 
   OrderTodayStatsNotifier(this._ref) : super(const AsyncValue.loading()) {
-    // Check if user is already logged in and load data
     _checkAndFetch();
   }
 
@@ -587,7 +586,6 @@ class TodayOrdersNotifier
   String _lastAuthToken = '';
 
   TodayOrdersNotifier(this._ref) : super(const AsyncValue.loading()) {
-    // Check if user is already logged in and load data
     _checkAndFetch();
   }
 
@@ -871,11 +869,13 @@ class TodayOrdersNotifier
 class OrderTodayBundleSync {
   OrderTodayBundleSync._();
 
-  static Future<void>? _lock;
+  /// Satu flight aktif: panggilan paralel (stats + orders notifier, UI refresh)
+  /// berbagi `Future` yang sama — data tidak saling timpa, refresh tetap jalan.
+  static Future<void>? _inFlight;
 
   static Future<void> run(Ref ref) {
-    _lock ??= _runBody(ref).whenComplete(() => _lock = null);
-    return _lock!;
+    _inFlight ??= _runBody(ref).whenComplete(() => _inFlight = null);
+    return _inFlight!;
   }
 
   static Future<void> _runBody(Ref ref) async {
@@ -948,13 +948,10 @@ class OrderTodayBundleSync {
           // (tanpa LIMIT) → payload besar, load tampak macet.
           final mergedOrders = groupOrdersWithItemsForOrderToday(rawList);
 
-          final statsFuture = statsN.bundleApplyStatsFromSnapshot(
+          await statsN.bundleApplyStatsFromSnapshot(
             statsMap: statsMap,
             statsCacheKey: statsCacheKey,
           );
-
-          await statsFuture;
-
           await ordersN.bundleApplyOrdersFromSnapshot(
             mergedOrders: mergedOrders,
             ordersCacheKey: ordersCacheKey,

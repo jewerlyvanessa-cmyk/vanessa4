@@ -322,3 +322,169 @@ Future<void> printKasirDailyPaymentsReport(
     }
   }
 }
+
+bool _opsEntryIsIncome(Map<String, dynamic> e) =>
+    e['entry_kind']?.toString() == 'income';
+
+/// PDF gabungan: pembayaran order + catatan keuangan toko (non-order).
+Future<void> printKasirCombinedFinanceReport(
+  BuildContext context, {
+  required String periodTitle,
+  required String periodSlug,
+  required String branchLabel,
+  required String branchIdForLogo,
+  required String cashierLabel,
+  required int paymentTransactionCount,
+  required double paymentIncome,
+  required double paymentExpense,
+  required double paymentNet,
+  required int operationalEntryCount,
+  required double operationalIncome,
+  required double operationalExpense,
+  required double operationalNet,
+  required List<Map<String, dynamic>> paymentRows,
+  required List<Map<String, dynamic>> operationalRows,
+}) async {
+  if (!context.mounted) return;
+  final money = NumberFormat('#,###', 'id_ID');
+  final grandIncome = paymentIncome + operationalIncome;
+  final grandExpense = paymentExpense + operationalExpense;
+  final grandNet = paymentNet + operationalNet;
+
+  try {
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
+    final doc = pw.Document();
+    final paySlice =
+        paymentRows.length > 80 ? paymentRows.sublist(0, 80) : paymentRows;
+    final opsSlice = operationalRows.length > 80
+        ? operationalRows.sublist(0, 80)
+        : operationalRows;
+    final df = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
+
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(40),
+        header: pdfMultiPageHeaderLaporanCabang(
+          title: 'LAPORAN KEUANGAN KASIR',
+          leftLogoBytes: logoBytes,
+          subtitles: [
+            PdfLaporanHeaderSubtitleLine(periodTitle),
+            PdfLaporanHeaderSubtitleLine(
+              'Pembayaran order + keuangan toko (non-order)',
+              fontSize: 9,
+              color: PdfColors.grey700,
+            ),
+          ],
+        ),
+        build: (ctx) => [
+          pw.Text('Cabang: $branchLabel'),
+          pw.Text('Kasir: $cashierLabel'),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'Ringkasan gabungan',
+            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Text('Total masuk: Rp ${money.format(grandIncome)}'),
+          pw.Text('Total keluar: Rp ${money.format(grandExpense)}'),
+          pw.Text(
+            'Saldo bersih: Rp ${money.format(grandNet)}',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'Pembayaran order ($paymentTransactionCount transaksi)',
+            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Text('Masuk: Rp ${money.format(paymentIncome)}'),
+          pw.Text('Keluar: Rp ${money.format(paymentExpense)}'),
+          pw.Text('Net: Rp ${money.format(paymentNet)}'),
+          pw.SizedBox(height: 14),
+          pw.Text(
+            'Keuangan toko — non-order ($operationalEntryCount catatan)',
+            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Text('Pemasukan: Rp ${money.format(operationalIncome)}'),
+          pw.Text('Pengeluaran: Rp ${money.format(operationalExpense)}'),
+          pw.Text('Net: Rp ${money.format(operationalNet)}'),
+          pw.SizedBox(height: 16),
+          pw.Text(
+            'Detail pembayaran order',
+            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 6),
+          if (paySlice.isEmpty)
+            pw.Text('Tidak ada data.')
+          else
+            pw.TableHelper.fromTextArray(
+              headers: const ['Nota', 'Jenis', 'Metode', 'Nominal'],
+              data: paySlice.map((p) {
+                final amount =
+                    double.tryParse(p['amount']?.toString() ?? '') ?? 0;
+                return [
+                  _paymentRowOrderLabel(p),
+                  (p['order_type'] ?? '-').toString(),
+                  _paymentMethodLabel(
+                    (p['payment_method'] ?? p['method'] ?? '').toString(),
+                  ),
+                  'Rp ${money.format(amount)}',
+                ];
+              }).toList(),
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.grey300),
+            ),
+          pw.SizedBox(height: 16),
+          pw.Text(
+            'Detail keuangan toko (non-order)',
+            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 6),
+          if (opsSlice.isEmpty)
+            pw.Text('Tidak ada data.')
+          else
+            pw.TableHelper.fromTextArray(
+              headers: const ['Waktu', 'Jenis', 'Kategori', 'Nominal'],
+              data: opsSlice.map((e) {
+                final created =
+                    DateTime.tryParse(e['created_at']?.toString() ?? '');
+                final amt =
+                    double.tryParse(e['amount']?.toString() ?? '') ?? 0;
+                return [
+                  created != null ? df.format(created.toLocal()) : '-',
+                  _opsEntryIsIncome(e) ? 'Masuk' : 'Keluar',
+                  (e['category'] ?? '-').toString(),
+                  'Rp ${money.format(amt)}',
+                ];
+              }).toList(),
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.grey300),
+            ),
+          if (paymentRows.length > 80 || operationalRows.length > 80)
+            pw.Padding(
+              padding: const pw.EdgeInsets.only(top: 8),
+              child: pw.Text(
+                'Catatan: PDF memuat hingga 80 baris per bagian.',
+                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    await Printing.layoutPdf(
+      name: 'laporan_keuangan_kasir_$periodSlug.pdf',
+      onLayout: (format) async => doc.save(),
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal mencetak laporan: $e')),
+      );
+    }
+  }
+}

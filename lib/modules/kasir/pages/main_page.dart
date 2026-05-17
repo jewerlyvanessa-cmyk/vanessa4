@@ -2,17 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:math' as math;
+import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
-import 'payment_queue_page.dart';
-import 'daily_payments_page.dart';
-import 'keuangan_toko_page.dart';
-import 'payment_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/routes/app_navigator.dart';
+import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
-import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import '../../../utils/network_config.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
@@ -157,14 +154,33 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
     if (raw is! Map) return;
     final order = Map<String, dynamic>.from(raw);
     normalizeKasirOrderMap(order);
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => PaymentPage(order: order),
-      ),
-    ).then((_) {
+    pushKasirPayment(context, order).then((_) {
       if (mounted) _loadPendingOrders();
     });
+  }
+
+  String _queueNota(Map<String, dynamic> order) {
+    final n = order['order_number']?.toString().trim() ?? '';
+    return n.isEmpty ? '—' : n;
+  }
+
+  String _queueFmtMoney(num n) => NumberFormat.currency(
+    locale: 'id_ID',
+    symbol: 'Rp ',
+    decimalDigits: 0,
+  ).format(n);
+
+  num _queueAmountDue(Map<String, dynamic> order) {
+    for (final k in const ['remaining_amount', 'amount']) {
+      final v = order[k];
+      if (v == null) continue;
+      if (v is num) return v;
+      final parsed = num.tryParse(v.toString());
+      if (parsed != null) return parsed;
+    }
+    final t = order['total'];
+    if (t is num) return t;
+    return num.tryParse(t?.toString() ?? '0') ?? 0;
   }
 
   @override
@@ -239,7 +255,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                 onPressed: () {
                   ref.read(webSocketProvider.notifier).disconnect();
                   ref.read(userStateProvider.notifier).logout();
-                  Navigator.pushReplacementNamed(context, '/login');
+                  Navigator.pushReplacementNamed(context, AppRoutes.login);
                 },
               ),
             ],
@@ -273,53 +289,35 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                   entries: [
                     ModuleMenuEntry(
                       icon: Icons.queue,
-                      label: 'Antri Bayar',
+                      label: 'ANTRI BAYAR',
                       iconColor: Colors.orange,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const PaymentQueuePage(),
-                        ),
-                      ),
+                      onTap: () =>
+                          pushAppRoute(context, AppRoutes.kasirPaymentQueue),
                     ),
                     ModuleMenuEntry(
                       icon: Icons.receipt_long,
-                      label: 'Bayar Today',
+                      label: 'BAYAR TODAY',
                       iconColor: Colors.green,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const DailyPaymentsPage(),
-                        ),
-                      ),
+                      onTap: () =>
+                          pushAppRoute(context, AppRoutes.kasirDailyPayments),
+                    ),
+                    ModuleMenuEntry(
+                      icon: DashboardMenuIcons.laporan,
+                      label: 'LAPORAN',
+                      iconColor: Colors.indigo,
+                      onTap: () => pushAppRoute(context, AppRoutes.kasirReports),
                     ),
                     ModuleMenuEntry(
                       icon: Icons.storefront_outlined,
-                      label: 'Keuangan Toko',
+                      label: 'KEUANGAN TOKO',
                       iconColor: Colors.deepOrange,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const KeuanganTokoPage(),
-                        ),
-                      ),
+                      onTap: () => pushAppRoute(context, AppRoutes.kasirKeuangan),
                     ),
                     ModuleMenuEntry(
                       icon: DashboardMenuIcons.pelanggan,
-                      label: 'Pelanggan',
+                      label: 'PELANGGAN',
                       iconColor: Colors.purple,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const CustomersPage(),
-                        ),
-                      ),
-                    ),
-                    ModuleMenuEntry(
-                      icon: Icons.qr_code_scanner,
-                      label: 'Cek Stok',
-                      iconColor: Colors.teal,
-                      onTap: () => Navigator.pushNamed(context, '/cek_stok'),
+                      onTap: () => pushAppRoute(context, AppRoutes.customers),
                     ),
                   ],
                 ),
@@ -335,7 +333,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Antri Bayar',
+                          'ANTRI BAYAR',
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),
@@ -366,19 +364,23 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                           : _pendingOrders.isEmpty
                           ? const Center(
                               child: Text(
-                                'Tidak ada order draft',
+                                'Tidak ada order yang perlu dibayar',
                                 style: TextStyle(color: Colors.grey),
                               ),
                             )
                           : LayoutBuilder(
                               builder: (context, c) {
                                 final cs = Theme.of(context).colorScheme;
-final minW = math.max(c.maxWidth, 520.0);
+                                final w = c.maxWidth;
+                                final h = c.maxHeight;
                                 final rows = <DataRow>[];
                                 for (var i = 0;
                                     i < _pendingOrders.length;
                                     i++) {
-                                  final order = _pendingOrders[i];
+                                  final raw = _pendingOrders[i];
+                                  if (raw is! Map) continue;
+                                  final order = Map<String, dynamic>.from(raw);
+                                  normalizeKasirOrderMap(order);
                                   rows.add(
                                     DataRow(
                                       color: WidgetStateProperty.resolveWith(
@@ -403,10 +405,12 @@ final minW = math.max(c.maxWidth, 520.0);
                                       cells: [
                                         DataCell(
                                           Text(
-                                            '#${order['order_id']}',
+                                            _queueNota(order),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
                                               fontWeight: FontWeight.w600,
-                                              fontSize: 13,
+                                              fontSize: AppTypography.tableCell,
                                             ),
                                           ),
                                           onTap: () =>
@@ -414,9 +418,11 @@ final minW = math.max(c.maxWidth, 520.0);
                                         ),
                                         DataCell(
                                           Text(
-                                            '${order['customer_name'] ?? 'N/A'}',
+                                            '${order['order_type'] ?? '—'}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
-                                              fontSize: 12,
+                                              fontSize: AppTypography.tableCell,
                                             ),
                                           ),
                                           onTap: () =>
@@ -428,7 +434,7 @@ final minW = math.max(c.maxWidth, 520.0);
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
-                                              fontSize: 11,
+                                              fontSize: AppTypography.tableCell,
                                             ),
                                           ),
                                           onTap: () =>
@@ -436,9 +442,11 @@ final minW = math.max(c.maxWidth, 520.0);
                                         ),
                                         DataCell(
                                           Text(
-                                            'Rp ${order['total']?.toString() ?? '0'}',
+                                            _queueFmtMoney(
+                                              _queueAmountDue(order),
+                                            ),
                                             style: TextStyle(
-                                              fontSize: 12,
+                                              fontSize: AppTypography.tableCell,
                                               fontWeight: FontWeight.w700,
                                               color: cs.primary,
                                             ),
@@ -446,59 +454,57 @@ final minW = math.max(c.maxWidth, 520.0);
                                           onTap: () =>
                                               _openPaymentPageForQueue(order),
                                         ),
-                                        DataCell(
-                                          FilledButton.tonal(
-                                            style: FilledButton.styleFrom(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 10,
-                                                vertical: 4,
-                                              ),
-                                              minimumSize: Size.zero,
-                                              tapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                            ),
-                                            onPressed: () =>
-                                                _openPaymentPageForQueue(order),
-                                            child: const Text(
-                                              'Bayar',
-                                              style: TextStyle(fontSize: 11),
-                                            ),
-                                          ),
-                                        ),
                                       ],
                                     ),
                                   );
                                 }
                                 return Scrollbar(
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: ConstrainedBox(
-                                      constraints: BoxConstraints(
-                                        minWidth: minW,
-                                      ),
-                                      child: SingleChildScrollView(
-                                        child: DataTable(
-                                          headingRowHeight: 34,
-                                          dataRowMinHeight: 40,
-                                          dataRowMaxHeight: 56,
-                                          headingRowColor:
-                                              WidgetStateProperty.all(
-                                            cs.surfaceContainerHigh,
+                                  child: SizedBox(
+                                    width: w,
+                                    height: h,
+                                    child: ClipRect(
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.topLeft,
+                                        child: SingleChildScrollView(
+                                          scrollDirection: Axis.vertical,
+                                          child: DataTable(
+                                            headingRowHeight: 32,
+                                            dataRowMinHeight: 36,
+                                            dataRowMaxHeight: 52,
+                                            headingRowColor:
+                                                WidgetStateProperty.all(
+                                              cs.surfaceContainerHigh,
+                                            ),
+                                            columnSpacing: 6,
+                                            horizontalMargin: 6,
+                                            showCheckboxColumn: false,
+                                            dividerThickness: 0.5,
+                                            columns: [
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'No. Nota',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Order',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Item',
+                                                ),
+                                              ),
+                                              DataColumn(
+                                                label: dataTableColumnLabel(
+                                                  'Jumlah',
+                                                ),
+                                                numeric: true,
+                                              ),
+                                            ],
+                                            rows: rows,
                                           ),
-columnSpacing: 8,
-                                          horizontalMargin: 8,
-                                          showCheckboxColumn: false,
-                                          dividerThickness: 0.5,
-                                          columns: [
-                                            DataColumn(label: dataTableColumnLabel('Order')),
-                                            DataColumn(label: dataTableColumnLabel('Customer')),
-                                            DataColumn(label: dataTableColumnLabel('Item')),
-                                            DataColumn(label: dataTableColumnLabel('Total')),
-                                            DataColumn(label: dataTableColumnLabel('Aksi')),
-                                          ],
-                                          rows: rows,
                                         ),
                                       ),
                                     ),

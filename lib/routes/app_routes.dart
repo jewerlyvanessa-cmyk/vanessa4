@@ -20,8 +20,8 @@ import '../modules/cs/pages/custom_page.dart';
 import '../modules/cs/pages/customers_page.dart';
 import '../modules/kasir/pages/main_page.dart';
 import '../modules/superadmin/pages/main_page.dart';
-// Order Today lives under CS module (shared view)
 import '../modules/admin_toko/pages/main_page.dart';
+import '../modules/admin_toko/pages/daily_orders_payments_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
 import '../modules/admin_warehouse/pages/main_page.dart';
 import '../modules/tukang/pages/main_page.dart';
@@ -34,13 +34,27 @@ import '../modules/manajer/pages/global_stock_page.dart';
 import '../modules/manajer/pages/stock_report_page.dart';
 import '../modules/manajer/pages/simple_protected_page.dart';
 import '../modules/manajer/pages/users_page.dart';
+import '../modules/admin_toko/pages/goods_transfer_page.dart';
+import '../modules/admin_toko/pages/request_stock_warehouse_page.dart';
+import '../modules/admin_toko/pages/service_awaiting_store_receipt_page.dart';
+import '../modules/admin_toko/pages/stock_mutation_page.dart';
+import '../modules/admin_toko/pages/stock_page.dart';
+import '../modules/admin_toko/pages/employee_management_page.dart';
+import '../modules/kasir/pages/payment_queue_page.dart';
+import '../modules/kasir/pages/daily_payments_page.dart';
+import '../modules/kasir/pages/keuangan_toko_page.dart';
+import '../modules/kasir/pages/kasir_reports_page.dart';
+import '../modules/kasir/pages/payment_page.dart' as kasir_payment;
+import '../modules/stockist/pages/dari_toko_page.dart';
+import '../modules/stockist/pages/kirim_ke_toko_page.dart';
+import '../modules/stockist/pages/permintaan_stok_toko_page.dart';
+import '../modules/stockist/pages/reports_page.dart';
+import '../modules/stockist/pages/stock_cabang_page.dart';
 import '../modules/stockist/pages/main_page.dart';
 import '../pages/switch_branch_role_page.dart';
-import '../pages/stock_check_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import '../providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
-import '../modules/cs/pages/order_today_page.dart';
 
 class AppRoutes {
   static const String cs = '/cs';
@@ -60,16 +74,37 @@ class AppRoutes {
   static const String manajerSalesToday = '/manager/sales_today';
   static const String manajerBuybackReport = '/manager/buyback_report';
   static const String manajerGlobalStock = '/manager/global_stock';
+  static const String manajerStockCabang = '/manager/stock_cabang';
   static const String manajerStockReport = '/manager/stock_report';
   static const String manajerEmployees = '/manager/employees';
+  static const String warehouseStock = '/warehouse/stock';
+  static const String warehouseGoodsTransfer = '/warehouse/goods_transfer';
+  static const String warehouseStockMutation = '/warehouse/stock_mutation';
+  static const String warehouseStockRequests = '/warehouse/stock_requests';
+  static const String warehouseFromStore = '/warehouse/from_store';
+  static const String warehouseToStore = '/warehouse/to_store';
+  static const String warehouseEmployees = '/warehouse/employees';
+  static const String warehouseStockInputReport = '/warehouse/stock_input_report';
+  static const String adminTokoOrders = '/admin_toko/orders';
+  static const String adminTokoServiceCustom = '/admin_toko/service_custom';
+  static const String adminTokoWorkshopReceipt = '/admin_toko/workshop_receipt';
+  static const String adminTokoStock = '/admin_toko/stock';
+  static const String adminTokoGoodsTransfer = '/admin_toko/goods_transfer';
+  static const String adminTokoStockRequest = '/admin_toko/stock_request';
+  static const String adminTokoStockMutation = '/admin_toko/stock_mutation';
+  static const String adminTokoEmployees = '/admin_toko/employees';
+  static const String adminWorkshopEmployees = '/admin_workshop/employees';
+  static const String kasirPaymentQueue = '/kasir/payment_queue';
+  static const String kasirDailyPayments = '/kasir/daily_payments';
+  static const String kasirKeuangan = '/kasir/keuangan';
+  static const String kasirReports = '/kasir/reports';
+  static const String kasirPayment = '/kasir/payment';
   static const String manajerSystemSettings = '/manager/system_settings';
   static const String stockist = '/stockist';
   static const String switchBranchRole = '/switch_branch_role';
-  static const String orderDetail = '/order_detail';
-  static const String stockCheck = '/cek_stok';
   static Map<String, WidgetBuilder> get routes => {
     login: (context) => const LoginPage(),
-    dashboard: (context) => const OrderTodayPage(),
+    dashboard: (context) => const DailyOrdersPaymentsPage(),
     cs: (context) => const CSMainPage(),
     kasir: (context) => const KasirMainPage(),
     superadmin: (context) => const SuperadminMainPage(),
@@ -83,8 +118,33 @@ class AppRoutes {
     manajerSalesToday: (context) => const SalesReportTodayPage(),
     manajerBuybackReport: (context) => const BuybackReportTodayPage(),
     manajerGlobalStock: (context) => const GlobalStockPage(),
+    manajerStockCabang: (context) => const StockCabangPage(),
     manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
+    warehouseStock: (context) => const StockPage(),
+    warehouseGoodsTransfer: (context) => const GoodsTransferPage(),
+    warehouseStockMutation: (context) => const StockMutationPage(),
+    warehouseStockRequests: (context) => const PermintaanStokTokoPage(),
+    warehouseFromStore: (context) => const DariTokoPage(),
+    warehouseToStore: (context) => const KirimKeTokoPage(),
+    warehouseEmployees: (context) => const EmployeeManagementPage(),
+    warehouseStockInputReport: (context) => const StockistReportsPage(),
+    adminTokoOrders: (context) => const DailyOrdersPaymentsPage(),
+    adminTokoServiceCustom: (context) => const DailyOrdersPaymentsPage(
+      serviceCustomMode: true,
+    ),
+    adminTokoWorkshopReceipt: (context) =>
+        const ServiceAwaitingStoreReceiptPage(),
+    adminTokoStock: (context) => const StockPage(),
+    adminTokoGoodsTransfer: (context) => const GoodsTransferPage(),
+    adminTokoStockRequest: (context) => const RequestStockWarehousePage(),
+    adminTokoStockMutation: (context) => const StockMutationPage(),
+    adminTokoEmployees: (context) => const EmployeeManagementPage(),
+    adminWorkshopEmployees: (context) => const EmployeeManagementPage(),
+    kasirPaymentQueue: (context) => const PaymentQueuePage(),
+    kasirDailyPayments: (context) => const DailyPaymentsPage(),
+    kasirKeuangan: (context) => const KeuanganTokoPage(),
+    kasirReports: (context) => const KasirReportsPage(),
     manajerSystemSettings: (context) => const SimpleProtectedPage(
       title: 'Pengaturan Sistem',
       description:
@@ -98,8 +158,36 @@ class AppRoutes {
     '/service': (context) => const ServicePage(),
     '/custom': (context) => const CustomPage(),
     '/ambil': (context) => const AmbilPage(),
-    stockCheck: (context) => const StockCheckPage(),
   };
+
+  /// Rute yang membutuhkan [RouteSettings.arguments].
+  static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
+    switch (settings.name) {
+      case kasirPayment:
+        final args = settings.arguments;
+        if (args is! Map<String, dynamic>) {
+          return _missingArgsRoute(settings);
+        }
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (context) => kasir_payment.PaymentPage(order: args),
+        );
+      default:
+        return null;
+    }
+  }
+
+  static MaterialPageRoute<void> _missingArgsRoute(RouteSettings settings) {
+    return MaterialPageRoute<void>(
+      settings: settings,
+      builder: (context) => Scaffold(
+        appBar: AppBar(title: const Text('Navigasi gagal')),
+        body: const Center(
+          child: Text('Argumen halaman tidak valid.'),
+        ),
+      ),
+    );
+  }
 }
 
 class LoginPage extends ConsumerStatefulWidget {

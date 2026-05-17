@@ -13,7 +13,9 @@ import 'package:vanessa3/widgets/qr_scan_route.dart';
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
+import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/faktur_print.dart'
     show printPickupServiceCustomFaktur;
@@ -51,6 +53,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   bool _loadingOrderLookup = false;
   List<dynamic> _readyItems = [];
   bool _isLoadingItems = false;
+  String? _readyItemsError;
   int? _selectedOrderId;
 
   static const Set<String> _allowedReadyPickupOrderTypes = {
@@ -98,33 +101,39 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
   }
 
   Future<void> _loadReadyItems() async {
-    setState(() => _isLoadingItems = true);
+    setState(() {
+      _isLoadingItems = true;
+      _readyItemsError = null;
+    });
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
-
-      final response = await (widget.client ?? http.Client()).get(
-        Uri.parse(
-          '$baseUrl/orders?branch_id=${userState.branch}&status=ready_for_pickup',
-        ),
-        headers: NetworkConfig.defaultHeaders,
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      final branch = userState.branch.trim();
+      if (branch.isEmpty) {
         setState(() {
-          final rows = data is List ? data : const [];
-          _readyItems = rows.where((row) {
-            if (row is! Map) return false;
-            final type = (row['order_type'] ?? '').toString().toLowerCase();
-            return _allowedReadyPickupOrderTypes.contains(type);
-          }).toList();
+          _readyItems = [];
+          _readyItemsError = 'Cabang belum dipilih.';
         });
+        return;
       }
+
+      final rows = await ApiService.getReadyForPickupList(branch);
+      if (!mounted) return;
+      setState(() {
+        _readyItems = rows.where((row) {
+          final type = (row['order_type'] ?? '').toString().toLowerCase();
+          return _allowedReadyPickupOrderTypes.contains(type);
+        }).toList();
+      });
     } catch (e) {
       debugPrint('Error loading ready items: $e');
+      if (mounted) {
+        setState(() {
+          _readyItems = [];
+          _readyItemsError = e.toString();
+        });
+      }
     } finally {
-      setState(() => _isLoadingItems = false);
+      if (mounted) setState(() => _isLoadingItems = false);
     }
   }
 
@@ -388,8 +397,16 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
       if (response.statusCode == 200) {
         await _loadReadyItems();
         if (mounted) {
+          final printed = await _printPickupFaktur(showSnackbars: false);
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Barang berhasil diambil')),
+            SnackBar(
+              content: Text(
+                printed
+                    ? 'Barang berhasil diambil. Faktur pengambilan dicetak.'
+                    : 'Barang berhasil diambil. Faktur tidak dapat dicetak — periksa nomor nota.',
+              ),
+            ),
           );
         }
       } else {
@@ -412,26 +429,34 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     return _fetchOrderByOrderNumber(_orderNumberController.text);
   }
 
-  Future<void> _printPickupFaktur() async {
+  /// Cetak faktur pengambilan (AMBIL). Dipanggil otomatis setelah [ _submitForm] berhasil.
+  Future<bool> _printPickupFaktur({bool showSnackbars = true}) async {
     final data = await _fetchFullOrderForPickupFaktur();
-    if (!mounted) return;
+    if (!mounted) return false;
     if (data == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order tidak ditemukan — periksa nomor nota / scan QR'),
-        ),
-      );
-      return;
+      if (showSnackbars) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Order tidak ditemukan — periksa nomor nota / scan QR',
+            ),
+          ),
+        );
+      }
+      return false;
     }
     final type = (data['order_type'] ?? '').toString().toLowerCase();
     if (type != 'service' && type != 'custom') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Hanya untuk order service atau custom')),
-      );
-      return;
+      if (showSnackbars) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hanya untuk order service atau custom')),
+        );
+      }
+      return false;
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     await printPickupServiceCustomFaktur(context, data);
+    return true;
   }
 
   Future<void> _pickImage() async {
@@ -486,6 +511,16 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(realTimeOrderUpdatesProvider, (previous, next) {
+      next.whenData((update) {
+        final event = (update['event'] ?? '').toString();
+        if (event == 'store_receipt_confirmed' ||
+            update['type'] == 'order_update') {
+          _loadReadyItems();
+        }
+      });
+    });
+
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -852,22 +887,17 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                 ),
               const SizedBox(height: 24),
 
-              OutlinedButton.icon(
-                onPressed: _isLoading ? null : _printPickupFaktur,
-                icon: const Icon(Icons.print_outlined),
-                label: const Text('Cetak faktur pengambilan (AMBIL)'),
-              ),
-              const SizedBox(height: 12),
-
-              // Submit Button
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
+                child: FilledButton.icon(
                   onPressed: _isLoading ? null : _submitForm,
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
-                  child: _isLoading
+                  icon: _isLoading
+                      ? null
+                      : const Icon(Icons.print_outlined),
+                  label: _isLoading
                       ? SizedBox(
                           width: 18,
                           height: 18,
@@ -877,7 +907,7 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                           ),
                         )
                       : Text(
-                          'SIMPAN',
+                          'SIMPAN & CETAK FAKTUR',
                           style: TextStyle(
                             fontSize: AppTypography.section,
                             fontWeight: FontWeight.bold,
@@ -896,14 +926,57 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
                   color: cs.primary,
                 ),
               ),
+              const SizedBox(height: 8),
+              Text(
+                'Order service/custom yang sudah diterima admin toko (Terima dari workshop).',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+              ),
               const SizedBox(height: 12),
               if (_isLoadingItems)
                 const Center(child: CircularProgressIndicator())
+              else if (_readyItemsError != null)
+                Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        _readyItemsError!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: cs.error),
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: _loadReadyItems,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Coba lagi'),
+                      ),
+                    ],
+                  ),
+                )
               else if (_readyItems.isEmpty)
                 Center(
-                  child: Text(
-                    'Tidak ada barang siap ambil',
-                    style: TextStyle(color: cs.onSurfaceVariant),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Tidak ada barang siap ambil',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Pastikan admin toko sudah menekan «Terima» di menu Workshop.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant,
+                            ),
+                      ),
+                      const SizedBox(height: 8),
+                      IconButton(
+                        onPressed: _loadReadyItems,
+                        icon: const Icon(Icons.refresh),
+                        tooltip: 'Muat ulang',
+                      ),
+                    ],
                   ),
                 )
               else

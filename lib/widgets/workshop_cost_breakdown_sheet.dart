@@ -11,6 +11,8 @@ Future<void> showWorkshopCostBreakdownSheet(
   required int orderId,
   required String branchId,
   VoidCallback? onSaved,
+  /// Jika true, material / ongkos / lain-lain boleh semuanya 0.
+  bool allowAllZeroCosts = false,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -24,6 +26,7 @@ Future<void> showWorkshopCostBreakdownSheet(
         child: _WorkshopCostBreakdownBody(
           orderId: orderId,
           branchId: branchId,
+          allowAllZeroCosts: allowAllZeroCosts,
           onSaved: () {
             Navigator.of(ctx).pop();
             onSaved?.call();
@@ -39,11 +42,13 @@ class _WorkshopCostBreakdownBody extends StatefulWidget {
     required this.orderId,
     required this.branchId,
     required this.onSaved,
+    this.allowAllZeroCosts = false,
   });
 
   final int orderId;
   final String branchId;
   final VoidCallback onSaved;
+  final bool allowAllZeroCosts;
 
   @override
   State<_WorkshopCostBreakdownBody> createState() =>
@@ -124,7 +129,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
       );
       return;
     }
-    if (m + l + o <= 0) {
+    if (!widget.allowAllZeroCosts && m + l + o <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Isi minimal satu komponen biaya > 0')),
       );
@@ -183,7 +188,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
             ),
             const SizedBox(height: 4),
             Text(
-              'Ini biaya final bengkel (bukan estimasi). Total tagihan di kasir diperbarui; sisa bayar = total − DP.',
+              'Ini biaya final workshop (bukan estimasi). Total tagihan di kasir diperbarui; sisa bayar = total − DP.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant,
                   ),
@@ -216,7 +221,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
               TextField(
                 controller: _materialCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Biaya material',
+                  labelText: 'Material',
                   prefixText: 'Rp ',
                   border: OutlineInputBorder(),
                 ),
@@ -229,7 +234,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
               TextField(
                 controller: _laborCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Biaya jasa',
+                  labelText: 'Ongkos',
                   prefixText: 'Rp ',
                   border: OutlineInputBorder(),
                 ),
@@ -242,7 +247,7 @@ class _WorkshopCostBreakdownBodyState extends State<_WorkshopCostBreakdownBody> 
               TextField(
                 controller: _otherCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Biaya lain-lain',
+                  labelText: 'Lain-lain',
                   prefixText: 'Rp ',
                   border: OutlineInputBorder(),
                 ),

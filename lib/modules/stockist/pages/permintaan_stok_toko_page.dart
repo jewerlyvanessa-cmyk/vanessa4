@@ -9,7 +9,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 
-/// Stockist di gudang: respon permintaan stok dari toko (transfer keluar pending).
+/// Stockist di warehouse: respon permintaan stok dari toko (transfer keluar pending).
 class PermintaanStokTokoPage extends ConsumerStatefulWidget {
   const PermintaanStokTokoPage({super.key});
 
@@ -188,11 +188,11 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                       child: Card(
                         child: ListTile(
                           leading: const Icon(Icons.store_mall_directory),
-                          title: const Text('Menunggu tindakan gudang'),
+                          title: const Text('Menunggu tindakan warehouse'),
                           subtitle: const Text(
                             'Permintaan per kategori & jenis: menyetujui hanya mengubah status '
                             '(tanpa mutasi stok otomatis). Jika permintaan berupa SKU pasti, '
-                            'sistem dapat memutasi stok bila nama barang cocok di gudang.',
+                            'sistem dapat memutasi stok bila nama barang cocok di warehouse.',
                           ),
                           trailing: Chip(label: Text('$pendingCount')),
                         ),

@@ -6,7 +6,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
 /// Input stok **satu SKU** (form standar: nama, kode, berat gram, qty, kadar, kategori/jenis/tipe/material).
-/// Halaman penuh — pola sama dengan tambah stok di gudang, tanpa dialog.
+/// Halaman penuh — pola sama dengan tambah stok di warehouse, tanpa dialog.
 class StockStandardInputPage extends ConsumerStatefulWidget {
   const StockStandardInputPage({super.key});
 
@@ -99,10 +99,10 @@ class _StockStandardInputPageState extends ConsumerState<StockStandardInputPage>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Stok berhasil ditambahkan')),
       );
-      await promptPrintStockItemQr(
+      await promptPrintStockItemLabel(
         context,
         item: res.created!,
-        askConfirm: false,
+        afterSave: true,
       );
       if (mounted) _resetFormForNextEntry();
       return;

@@ -6,8 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
+import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_inventory_search.dart';
+import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockCabangPage extends ConsumerStatefulWidget {
   const StockCabangPage({super.key});
@@ -17,6 +20,7 @@ class StockCabangPage extends ConsumerStatefulWidget {
 }
 
 class _StockCabangPageState extends ConsumerState<StockCabangPage> {
+  final _searchCtrl = TextEditingController();
   bool _isLoading = true;
   String _error = '';
   List<dynamic> _items = [];
@@ -35,6 +39,12 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
             ? userState.branches[0]['branch_id']?.toString()
             : null;
     _loadItems();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadItems() async {
@@ -88,13 +98,27 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
               stockItemVisibleForStatusFilter(it, _selectedStatus))
           .toList();
     }
-    final q = _search.trim().toLowerCase();
-    if (q.isEmpty) return list;
-    return list.where((it) {
-      final code = (it['item_code'] ?? it['kode_produk'] ?? '').toString();
-      final name = (it['name'] ?? '').toString();
-      return code.toLowerCase().contains(q) || name.toLowerCase().contains(q);
-    }).toList();
+    if (_search.trim().isEmpty) return list;
+    return list
+        .where((it) => stockInventoryItemMatchesQuery(it, _search))
+        .toList();
+  }
+
+  void _onSearchChanged(String v) => setState(() {
+        _search = v;
+        _jenisDetailFocus = null;
+      });
+
+  Future<void> _printStockReport(String branchName) async {
+    final branchId = (_selectedBranchId ?? '').trim();
+    await printStockInventoryReportPdf(
+      context,
+      branchLabel: branchName.isEmpty ? branchId : branchName,
+      branchIdForLogo: branchId,
+      selectedStatus: _selectedStatus,
+      filteredItems: _filteredItems,
+      searchQuery: _search,
+    );
   }
 
   @override
@@ -119,6 +143,13 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
       appBar: AppBar(
         title: const Text('Stock Cabang'),
         actions: [
+          IconButton(
+            tooltip: 'Cetak laporan stok',
+            onPressed: _isLoading || _error.isNotEmpty
+                ? null
+                : () => _printStockReport(branchName),
+            icon: const Icon(Icons.print_outlined),
+          ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loadItems,
@@ -206,17 +237,10 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
                             summaryItems: _filteredItems,
                           ),
                           const SizedBox(height: 10),
-                          TextField(
-                            decoration: const InputDecoration(
-                              prefixIcon: Icon(Icons.search),
-                              hintText: 'Cari item_code / nama',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            onChanged: (v) => setState(() {
-                              _search = v;
-                              _jenisDetailFocus = null;
-                            }),
+                          StockInventorySearchFieldStateful(
+                            controller: _searchCtrl,
+                            onQueryChanged: _onSearchChanged,
+                            enabled: !_isLoading && _error.isEmpty,
                           ),
                         ],
                       ),

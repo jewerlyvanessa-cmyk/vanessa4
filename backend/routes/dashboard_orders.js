@@ -11,8 +11,11 @@ const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
 const {
   ordersHasPickupBranchColumn,
   ordersHasMetadataColumn,
+  ordersHasMetadataColumnLive,
   paymentsHasRevenueBranchColumn,
   sqlOrderVisibleAtBranchForWorkshopPut,
+  sqlStoreReadyForPickupListVisible,
+  sqlStoreReceiptConfirmedForPickup,
   jsonSafeDbRow,
 } = require('../lib/orders_workshop_helpers');
 const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
@@ -20,7 +23,8 @@ const multer = require('multer');
 const _path = require('path');
 const crypto = require('crypto');
 
-const router = express.Router();
+function createDashboardOrdersRouter(notifyClients) {
+  const router = express.Router();
 
 // Configure multer for file uploads
 const allowedUploadMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -538,8 +542,7 @@ router.post('/upload', upload.single('photo'), async (req, res) => {
 router.get('/orders/daily', getOrdersDaily);
 
 // GET /api/orders/service-awaiting-store-receipt
-// Service/custom status done_workshop: menunggu admin toko konfirmasi terima (→ ready_for_pickup).
-// Tidak memakai filter tanggal pembuatan; scope cabang selaras PUT /workshop-orders/:id/status (admin_toko).
+// Service/custom status ready_for_pickup dari workshop, belum dikonfirmasi admin toko (metadata.store_receipt_confirmed_at).
 router.get('/orders/service-awaiting-store-receipt', async (req, res) => {
   try {
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
@@ -552,9 +555,12 @@ router.get('/orders/service-awaiting-store-receipt', async (req, res) => {
     }
     const bid = scope.branchId;
     const hasPickup = await ordersHasPickupBranchColumn(db);
-    const hasMeta = await ordersHasMetadataColumn(db);
+    const hasMeta = await ordersHasMetadataColumnLive(db);
     const hasRev = await paymentsHasRevenueBranchColumn(db);
     const vis = sqlOrderVisibleAtBranchForWorkshopPut('o', 1, hasPickup, hasMeta, hasRev);
+    const metaNotConfirmed = hasMeta
+      ? `AND COALESCE(NULLIF(BTRIM(o.metadata->>'store_receipt_confirmed_at'), ''), '') = ''`
+      : '';
     const sql = `
       SELECT * FROM (
         SELECT DISTINCT ON (o.order_id)
@@ -573,7 +579,8 @@ router.get('/orders/service-awaiting-store-receipt', async (req, res) => {
         LEFT JOIN order_items oi ON o.order_id = oi.order_id
         LEFT JOIN items i ON oi.item_id = i.item_id
         WHERE o.order_type::text IN ('service', 'custom')
-          AND o.status::text = 'done_workshop'
+          AND o.status::text = 'ready_for_pickup'
+          ${metaNotConfirmed}
           AND ${vis}
         ORDER BY o.order_id, o.created_at ASC, oi.order_item_id ASC NULLS LAST
       ) x
@@ -588,4 +595,184 @@ router.get('/orders/service-awaiting-store-receipt', async (req, res) => {
   }
 });
 
-module.exports = router;
+// POST /api/orders/confirm-workshop-store-receipt
+// Admin toko konfirmasi barang service/custom sudah diterima di toko (setelah workshop kirim → ready_for_pickup).
+router.post('/orders/confirm-workshop-store-receipt', async (req, res) => {
+  try {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    if (!['admin_toko', 'superadmin', 'manajer'].includes(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan' });
+    }
+    const scope = await assertUserCanAccessBranchForOrders(req, req.body?.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
+    }
+    const bid = scope.branchId;
+    const orderId = parseInt(String(req.body?.order_id ?? ''), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'order_id tidak valid' });
+    }
+
+    const hasPickup = await ordersHasPickupBranchColumn(db);
+    const hasMeta = await ordersHasMetadataColumnLive(db);
+    if (!hasMeta) {
+      return res.status(503).json({
+        error: 'Kolom metadata tidak tersedia — jalankan migrasi orders.metadata',
+      });
+    }
+    const hasRev = await paymentsHasRevenueBranchColumn(db);
+    const vis = sqlOrderVisibleAtBranchForWorkshopPut('o', 1, hasPickup, hasMeta, hasRev);
+
+    const cur = await db.query(
+      `
+        SELECT o.order_id, o.order_type, o.status, o.metadata
+        FROM orders o
+        WHERE o.order_type::text IN ('service', 'custom')
+          AND o.order_id = $2
+          AND (${vis})
+        LIMIT 1
+      `,
+      [bid, orderId]
+    );
+    if (cur.rows.length === 0) {
+      return res.status(404).json({ error: 'Order tidak ditemukan untuk cabang ini' });
+    }
+    const row = cur.rows[0];
+    const st = (row.status ?? '').toString().trim().toLowerCase();
+    if (st !== 'ready_for_pickup') {
+      return res.status(400).json({
+        error: `Hanya order status ready_for_pickup yang bisa dikonfirmasi (saat ini: ${st})`,
+      });
+    }
+    const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    if (meta.store_receipt_confirmed_at) {
+      return res.status(400).json({ error: 'Order sudah dikonfirmasi terima di toko' });
+    }
+
+    const confirmedAt = new Date().toISOString();
+    const patch = {
+      ...meta,
+      store_receipt_confirmed_at: confirmedAt,
+      store_receipt_confirmed_by: String(req.user?.user_id ?? ''),
+    };
+
+    const originRaw = meta.service_origin_branch_id ?? meta.serviceOriginBranchId;
+    const originBid = parseInt(String(originRaw ?? ''), 10);
+    const storeBranchId =
+      Number.isFinite(originBid) && originBid > 0 ? originBid : bid;
+
+    await db.query(
+      `
+        UPDATE orders
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+            branch_id = $2::bigint,
+            updated_at = NOW()
+        WHERE order_id = $3
+      `,
+      [JSON.stringify(patch), storeBranchId, orderId]
+    );
+
+    if (typeof notifyClients === 'function') {
+      try {
+        notifyClients(
+          `Order service/custom #${orderId} dikonfirmasi di toko — siap proses Ambil CS`,
+          {
+            wsType: 'order_update',
+            branch_id: storeBranchId,
+            event: 'store_receipt_confirmed',
+            payload: { order_id: orderId, status: 'ready_for_pickup' },
+          }
+        );
+      } catch (notifyErr) {
+        console.error('confirm-workshop-store-receipt notify:', notifyErr);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      order_id: String(orderId),
+      store_receipt_confirmed_at: confirmedAt,
+      branch_id: String(storeBranchId),
+    });
+  } catch (e) {
+    console.error('confirm-workshop-store-receipt:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/orders/ready-for-pickup-list
+// Service/custom siap diambil pelanggan: sudah ready_for_pickup + admin toko sudah «Terima».
+router.get('/orders/ready-for-pickup-list', async (req, res) => {
+  try {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    if (!['cs', 'kasir', 'admin_toko', 'superadmin', 'manajer'].includes(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan' });
+    }
+    const scope = await assertUserCanAccessBranchForOrders(req, req.query.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
+    }
+    const bid = scope.branchId;
+    const hasPickup = await ordersHasPickupBranchColumn(db);
+    const hasMeta = await ordersHasMetadataColumnLive(db);
+    const hasRev = await paymentsHasRevenueBranchColumn(db);
+    const vis = sqlStoreReadyForPickupListVisible(
+      'o',
+      1,
+      hasPickup,
+      hasMeta,
+      hasRev
+    );
+    const confirmed = sqlStoreReceiptConfirmedForPickup('o', 1, hasMeta);
+    const sql = `
+      SELECT * FROM (
+        SELECT DISTINCT ON (o.order_id)
+          o.order_id,
+          o.order_number,
+          o.order_type,
+          o.status,
+          o.branch_id,
+          o.created_at,
+          o.updated_at,
+          ${hasMeta ? 'o.metadata,' : ''}
+          o.total,
+          o.jumlah,
+          c.name AS customer_name,
+          c.phone AS customer_phone,
+          COALESCE(oi.nama_item, i.name) AS item_name,
+          oi.kode_produk,
+          oi.weight,
+          oi.qty
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN items i ON oi.item_id = i.item_id
+        WHERE o.order_type::text IN ('service', 'custom')
+          AND o.status::text = 'ready_for_pickup'
+          AND (${confirmed})
+          AND (${vis})
+        ORDER BY o.order_id, o.created_at ASC, oi.order_item_id ASC NULLS LAST
+      ) x
+      ORDER BY x.updated_at DESC NULLS LAST, x.order_id DESC
+    `;
+    const result = await db.query(sql, [bid]);
+    const rows = (result.rows ?? []).map((r) => {
+      const row = jsonSafeDbRow(r);
+      if (hasMeta && row.metadata != null && typeof row.metadata === 'object') {
+        row.store_receipt_confirmed_at =
+          row.metadata.store_receipt_confirmed_at ?? null;
+      }
+      return row;
+    });
+    res.setHeader('X-Vanessa-Ready-Pickup-List', '2026-05-17-v2');
+    return res.status(200).json(rows);
+  } catch (e) {
+    console.error('ready-for-pickup-list:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+  return router;
+}
+
+module.exports = createDashboardOrdersRouter;

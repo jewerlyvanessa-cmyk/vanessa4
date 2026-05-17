@@ -180,7 +180,7 @@ app.post('/payments', async (req, res) => {
       if (lowerOrderType === 'service' || lowerOrderType === 'custom') {
         const supportsWorkshopStatuses = await ordersSupportsWorkshopStatuses(client);
         const postDpCabangStatus = supportsWorkshopStatuses ? 'confirmed' : 'pending';
-        // Service/custom: DP / pembayaran pertama di kasir => menunggu admin toko kirim ke bengkel (confirmed).
+        // Service/custom: DP / pembayaran pertama di kasir => menunggu admin toko kirim ke workshop (confirmed).
         // Pelunasan setelah pickup => completed. Jangan loncat ke workshop dari kasir.
         nextOrderStatus = pickedUpAt ? 'completed' : postDpCabangStatus;
         // Jika sudah berada di fase workshop, jangan mundur status.
@@ -751,6 +751,7 @@ app.get('/payments/daily', async (req, res) => {
       SELECT
         p.payment_id,
         p.order_id,
+        MAX(o.order_number) as order_number,
         p.amount,
         p.method,
         p.payment_date,

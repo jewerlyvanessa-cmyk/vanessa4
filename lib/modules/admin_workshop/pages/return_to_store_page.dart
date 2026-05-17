@@ -276,6 +276,10 @@ class _ReturnToStorePageState extends ConsumerState<ReturnToStorePage> {
           bottom: _loading || _error != null
               ? null
               : TabBar(
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.white70,
+                  indicatorColor: Colors.white,
+                  dividerColor: Colors.white24,
                   tabs: [
                     Tab(text: 'Selesai (${done.length})'),
                     Tab(text: 'Siap diambil (${ready.length})'),

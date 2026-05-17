@@ -1,4 +1,4 @@
-/// Marker in transfer `notes` for store-initiated requests (gudang → toko).
+/// Marker in transfer `notes` for store-initiated requests (warehouse → toko).
 const stockRequestTransferNotesTag = '[PERMINTAAN_STOK]';
 
 /// Permintaan per kategori & jenis (bukan SKU); backend melewati mutasi stok otomatis saat selesai.

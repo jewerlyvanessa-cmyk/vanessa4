@@ -4,53 +4,153 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
 import 'workshop_orders_page.dart';
 import '../../stockist/pages/service_incoming_page.dart';
-import 'technician_management_page.dart';
 import 'material_stock_page.dart';
 import 'workshop_reports_page.dart';
-import 'workshop_settings_page.dart';
 import '../../admin_toko/pages/goods_transfer_page.dart';
 import 'return_to_store_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
+import 'package:vanessa3/providers/workshop_service_incoming_provider.dart';
+import 'package:vanessa3/providers/workshop_return_pending_provider.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
+import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
+import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
+import 'package:vanessa3/routes/app_navigator.dart';
+import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
 
-class AdminWorkshopMainPage extends ConsumerWidget {
+class AdminWorkshopMainPage extends ConsumerStatefulWidget {
   const AdminWorkshopMainPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Watch health check status for Live indicator
+  ConsumerState<AdminWorkshopMainPage> createState() =>
+      _AdminWorkshopMainPageState();
+}
+
+class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
+      ref.read(workshopReturnPendingCountProvider.notifier).refresh();
+      ref.read(workshopDashboardProvider.notifier).listenToUserStateChanges();
+    });
+  }
+
+  void _openTokoSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetToko,
+      options: [
+        ModuleDestinationOption(
+          label: 'Service dari toko',
+          subtitle: 'Persetujuan service/custom masuk workshop',
+          icon: Icons.inventory_2_outlined,
+          iconColor: Colors.deepOrange,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ServiceIncomingPage(),
+              ),
+            );
+            if (!context.mounted) return;
+            ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
+            ref.read(workshopDashboardProvider.notifier).refresh();
+          },
+        ),
+        ModuleDestinationOption(
+          label: 'Kirim ke toko',
+          subtitle: 'Order selesai — kirim balik ke etalase',
+          icon: Icons.local_shipping_outlined,
+          iconColor: Colors.indigo,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ReturnToStorePage(),
+              ),
+            );
+            if (!context.mounted) return;
+            ref.read(workshopReturnPendingCountProvider.notifier).refresh();
+          },
+        ),
+      ],
+    );
+  }
+
+  void _openAntarWorkshopSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetAntarWorkshop,
+      options: [
+        ModuleDestinationOption(
+          label: 'Kirim / terima barang',
+          subtitle: 'Transfer antar cabang workshop (bengkel)',
+          icon: Icons.hub_outlined,
+          iconColor: Colors.blueGrey,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const GoodsTransferPage(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _onRealtimeUpdate(Map<String, dynamic> update) {
+    final type = (update['type'] ?? '').toString();
+    final event = (update['event'] ?? '').toString();
+    final shouldRefresh = type == 'order_update' ||
+        type == 'workshop_assignment' ||
+        event == 'workshop_service_pending' ||
+        event == 'workshop_approved' ||
+        event == 'workshop_assigned' ||
+        event == 'workshop_in_progress' ||
+        event == 'workshop_done_tukang';
+    if (!shouldRefresh) return;
+
+    ref.read(workshopDashboardProvider.notifier).refresh();
+    ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
+    ref.read(workshopReturnPendingCountProvider.notifier).refresh();
+
+    final msg = update['message']?.toString();
+    if (msg != null && msg.isNotEmpty && mounted) {
+      _showWorkshopNotification(context, msg);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isServerHealthy = ref.watch(healthCheckProvider);
+    final dashboardAsync = ref.watch(workshopDashboardProvider);
+    final inProgressCount = dashboardAsync.maybeWhen(
+      data: (d) => d.inProgressOrders,
+      orElse: () => 0,
+    );
+    final pendingAntrianCount = dashboardAsync.maybeWhen(
+      data: (d) => d.pendingOrders,
+      orElse: () => 0,
+    );
+    final pendingApprovalCount = ref.watch(workshopServiceIncomingCountProvider);
+    final returnPendingCount = ref.watch(workshopReturnPendingCountProvider);
+    final tokoBadge = pendingApprovalCount + returnPendingCount;
 
-    // Listen to user state changes for consistency with other pages
     ref.listen(userStateProvider, (previous, next) {
-      // Force rebuild when user state changes (e.g., branch/role switch)
-      // This ensures UI stays consistent across all pages
-
-      // Initialize WebSocket if user is logged in and WebSocket is not connected
       if (next.userId != null && next.role.isNotEmpty) {
         final webSocketChannel = ref.read(webSocketProvider);
         if (webSocketChannel == null) {
           ref.read(webSocketProvider.notifier).initializeAfterLogin();
         }
+        ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
       }
     });
 
-    // Initialize workshop dashboard provider
-    ref.read(workshopDashboardProvider.notifier).listenToUserStateChanges();
-
-    // Listen to real-time order updates for workshop management
     ref.listen(realTimeOrderUpdatesProvider, (previous, next) {
-      next.whenData((update) {
-        if (update['type'] == 'order_update' ||
-            update['type'] == 'workshop_assignment') {
-          // Refresh workshop dashboard when orders or assignments occur
-          ref.read(workshopDashboardProvider.notifier).refresh();
-          // Show notification for new workshop orders or technician updates
-          _showWorkshopNotification(context, update['data']);
-        }
-      });
+      next.whenData(_onRealtimeUpdate);
     });
 
     return Scaffold(
@@ -61,19 +161,6 @@ class AdminWorkshopMainPage extends ConsumerWidget {
           child: Image.asset('assets/logo_bulat.png', fit: BoxFit.contain),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.inventory_2_outlined),
-            tooltip: 'Service dari toko',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (context) => const ServiceIncomingPage(),
-                ),
-              );
-            },
-          ),
-          // Real-time connection indicator
           Container(
             margin: const EdgeInsets.only(right: 8),
             child: Row(
@@ -112,7 +199,7 @@ class AdminWorkshopMainPage extends ConsumerWidget {
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [const UserBranchRoleHeader()],
+              children: const [UserBranchRoleHeader()],
             ),
           ),
           const SizedBox(height: 16),
@@ -125,8 +212,10 @@ class AdminWorkshopMainPage extends ConsumerWidget {
                   entries: [
                     ModuleMenuEntry(
                       icon: Icons.build,
-                      label: 'Antrian pekerjaan',
+                      label: 'ANTRIAN PEKERJAAN',
                       iconColor: Colors.blue,
+                      badgeCount:
+                          pendingAntrianCount > 0 ? pendingAntrianCount : null,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -135,47 +224,17 @@ class AdminWorkshopMainPage extends ConsumerWidget {
                       ),
                     ),
                     ModuleMenuEntry(
-                      icon: Icons.local_shipping_outlined,
-                      label: 'KIRIM KE TOKO',
-                      iconColor: Colors.indigo,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const ReturnToStorePage(),
-                        ),
-                      ),
-                    ),
-                    ModuleMenuEntry(
-                      icon: Icons.inventory_2_outlined,
-                      label: 'Service dari toko',
-                      iconColor: Colors.deepOrange,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const ServiceIncomingPage(),
-                        ),
-                      ),
-                    ),
-                    ModuleMenuEntry(
-                      icon: Icons.local_shipping,
-                      label: 'KIRIM / TERIMA',
-                      iconColor: Colors.teal,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const GoodsTransferPage(),
-                        ),
-                      ),
-                    ),
-                    ModuleMenuEntry(
-                      icon: Icons.engineering,
-                      label: 'TEKNISI',
+                      icon: Icons.engineering_outlined,
+                      label: 'ON PROGRESS',
                       iconColor: Colors.orange,
+                      badgeCount:
+                          inProgressCount > 0 ? inProgressCount : null,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) =>
-                              const TechnicianManagementPage(),
+                          builder: (context) => const WorkshopOrdersPage(
+                            viewMode: WorkshopOrdersViewMode.inProgress,
+                          ),
                         ),
                       ),
                     ),
@@ -202,15 +261,26 @@ class AdminWorkshopMainPage extends ConsumerWidget {
                       ),
                     ),
                     ModuleMenuEntry(
-                      icon: Icons.settings,
-                      label: 'PENGATURAN',
-                      iconColor: Colors.grey,
-                      onTap: () => Navigator.push(
+                      icon: DashboardMenuIcons.kelolaPengguna,
+                      label: 'KARYAWAN',
+                      iconColor: Colors.purple,
+                      onTap: () => pushAppRoute(
                         context,
-                        MaterialPageRoute(
-                          builder: (context) => const WorkshopSettingsPage(),
-                        ),
+                        AppRoutes.adminWorkshopEmployees,
                       ),
+                    ),
+                    ModuleMenuEntry(
+                      icon: Icons.storefront_outlined,
+                      label: ModuleMenuGroupLabels.toko,
+                      iconColor: Colors.deepOrange,
+                      badgeCount: tokoBadge > 0 ? tokoBadge : null,
+                      onTap: () => _openTokoSheet(context),
+                    ),
+                    ModuleMenuEntry(
+                      icon: Icons.hub_outlined,
+                      label: ModuleMenuGroupLabels.antarWorkshop,
+                      iconColor: Colors.blueGrey,
+                      onTap: () => _openAntarWorkshopSheet(context),
                     ),
                   ],
                 ),
@@ -223,16 +293,13 @@ class AdminWorkshopMainPage extends ConsumerWidget {
   }
 
   void _showWorkshopNotification(BuildContext context, String message) {
-    // Show notification for workshop orders, technician assignments, etc.
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Pemberitahuan Workshop: $message'),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'OK',
-          onPressed: () {
-            // Handle notification action
-          },
+          onPressed: () {},
         ),
       ),
     );

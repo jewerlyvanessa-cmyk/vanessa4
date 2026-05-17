@@ -9,8 +9,8 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stockist_input_report_print.dart';
 
-/// Laporan input stok oleh **user login** hanya untuk **cabang aktif** (`user.branch`),
-/// bukan cabang lain. Data diambil via `GET /items?branch_id=<aktif>&created_by=<userId>`.
+/// Laporan input stok: hanya item yang **Anda** input di **cabang aktif** (`user.branch`).
+/// Data: `GET /items?branch_id=…&mine=1&start_date=…&end_date=…` (filter user dari JWT).
 class StockistReportsPage extends ConsumerStatefulWidget {
   const StockistReportsPage({super.key});
 
@@ -60,7 +60,10 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
         59,
       );
     });
+    await _load();
   }
+
+  String _isoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
   Future<void> _load() async {
     setState(() {
@@ -93,16 +96,29 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final itemsUri = Uri.parse(
-        '$baseUrl/items?branch_id=$activeBranchId&created_by=$uid&limit=500',
+      final itemsUri = Uri.parse('$baseUrl/items').replace(
+        queryParameters: {
+          'branch_id': activeBranchId,
+          'mine': '1',
+          'start_date': _isoDate(_fromDate),
+          'end_date': _isoDate(_toDate),
+          'limit': '500',
+        },
       );
 
       final itemsRes =
           await http.get(itemsUri, headers: NetworkConfig.defaultHeaders);
 
       if (itemsRes.statusCode != 200) {
+        String msg = 'Gagal memuat data (${itemsRes.statusCode})';
+        try {
+          final errBody = jsonDecode(itemsRes.body);
+          if (errBody is Map && errBody['error'] != null) {
+            msg = errBody['error'].toString();
+          }
+        } catch (_) {}
         setState(() {
-          _error = 'Gagal memuat data (items: ${itemsRes.statusCode})';
+          _error = msg;
           _isLoading = false;
         });
         return;
@@ -123,15 +139,6 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
         _error = e.toString();
         _isLoading = false;
       });
-    }
-  }
-
-  DateTime? _parseDate(dynamic v) {
-    if (v == null) return null;
-    try {
-      return DateTime.parse(v.toString()).toLocal();
-    } catch (_) {
-      return null;
     }
   }
 
@@ -168,13 +175,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
       return;
     }
 
-    bool inRange(DateTime? dt) {
-      if (dt == null) return true;
-      return !dt.isBefore(_fromDate) && !dt.isAfter(_toDate);
-    }
-
-    final itemsInPeriod =
-        _items.where((i) => inRange(_parseDate(i['created_at']))).toList();
+    final itemsInPeriod = _items;
     final sku = itemsInPeriod.length;
     final qty = itemsInPeriod.fold<int>(0, (s, i) => s + _asInt(i['quantity']));
 
@@ -195,7 +196,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
   Widget build(BuildContext context) {
     final user = ref.watch(userStateProvider);
     ref.listen(userStateProvider, (UserState? prev, UserState next) {
-      if (prev?.branch != next.branch) {
+      if (prev?.branch != next.branch || prev?.userId != next.userId) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _load();
         });
@@ -204,13 +205,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
 
     final dtFmt = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
 
-    bool inRange(DateTime? dt) {
-      if (dt == null) return true;
-      return !dt.isBefore(_fromDate) && !dt.isAfter(_toDate);
-    }
-
-    final itemsInPeriod =
-        _items.where((i) => inRange(_parseDate(i['created_at']))).toList();
+    final itemsInPeriod = _items;
 
     final skuCount = itemsInPeriod.length;
     final totalQty =
@@ -328,13 +323,16 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
                       title: 'Periode',
                       subtitle: _periodSubtitle(),
                     ),
-                    if (user.username.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'Pengguna: ${user.username}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
+                    const SizedBox(height: 8),
+                    _InfoRangeCard(
+                      title: 'Filter',
+                      subtitle: [
+                        'Cabang: ${_activeBranchLabel(user)}',
+                        if (user.username.isNotEmpty)
+                          'Penginput: ${user.username}',
+                        'Hanya item yang Anda input pada cabang ini',
+                      ].join('\n'),
+                    ),
                     const SizedBox(height: 12),
                     _SummaryCard(
                       title: 'Laporan Input Stok',

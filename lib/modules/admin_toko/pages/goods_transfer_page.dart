@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/modules/admin_toko/pages/goods_transfer_create_page.dart';
 
 class GoodsTransferPage extends ConsumerStatefulWidget {
   const GoodsTransferPage({super.key});
@@ -496,7 +497,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: _showCreateTransferDialog,
+            onPressed: _openCreateTransfer,
             tooltip: 'Kirim Barang',
           ),
           IconButton(
@@ -608,7 +609,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                   ],
                 ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateTransferDialog,
+        onPressed: _openCreateTransfer,
         tooltip: 'Kirim Barang Baru',
         child: const Icon(Icons.add),
       ),
@@ -668,15 +669,26 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     );
   }
 
-  void _showCreateTransferDialog() {
+  Future<void> _openCreateTransfer() async {
+    if (_branches.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Daftar cabang belum dimuat')),
+      );
+      return;
+    }
     final fromBranchId = ref.read(userStateProvider).branch;
-    showDialog(
-      context: context,
-      builder: (context) => CreateTransferDialog(
-        branches: _branches,
-        fromBranchId: fromBranchId,
+    final created = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GoodsTransferCreatePage(
+          branches: _branches,
+          fromBranchId: fromBranchId,
+        ),
       ),
-    ).then((_) => _loadData());
+    );
+    if (created == true && mounted) {
+      await _loadData();
+    }
   }
 
   Future<void> _approveTransfer(int transferId) async {
@@ -765,308 +777,3 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
   }
 }
 
-class CreateTransferDialog extends StatefulWidget {
-  final List<dynamic> branches;
-  final dynamic fromBranchId;
-
-  const CreateTransferDialog({
-    super.key,
-    required this.branches,
-    required this.fromBranchId,
-  });
-
-  @override
-  State<CreateTransferDialog> createState() => _CreateTransferDialogState();
-}
-
-class _CreateTransferDialogState extends State<CreateTransferDialog> {
-  final _formKey = GlobalKey<FormState>();
-  int? _selectedBranchId;
-  String _selectedSourceType = 'stok';
-  Map<String, dynamic>? _selectedItem;
-  final TextEditingController _quantityController = TextEditingController(text: '1');
-  final TextEditingController _notesController = TextEditingController();
-  bool _isLoadingItems = false;
-  String _itemsError = '';
-  List<Map<String, dynamic>> _availableItems = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAvailableItems();
-  }
-
-  @override
-  void dispose() {
-    _quantityController.dispose();
-    _notesController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadAvailableItems() async {
-    setState(() {
-      _isLoadingItems = true;
-      _itemsError = '';
-      _availableItems = [];
-      _selectedItem = null;
-    });
-
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-      String status;
-      switch (_selectedSourceType) {
-        case 'buyback':
-          status = 'buyback';
-          break;
-        case 'service':
-          status = 'on-service';
-          break;
-        case 'custom':
-          status = 'on-custom';
-          break;
-        default:
-          status = 'ready';
-      }
-      final uri = Uri.parse(
-        '$baseUrl/items?branch_id=${widget.fromBranchId}&status=$status&limit=200',
-      );
-      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-      if (resp.statusCode != 200) {
-        setState(() {
-          _itemsError = 'Gagal memuat item ($status): ${resp.statusCode}';
-          _isLoadingItems = false;
-        });
-        return;
-      }
-
-      final decoded = jsonDecode(resp.body);
-      final list = (decoded is List) ? decoded : <dynamic>[];
-      final mapped = list
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .where((it) {
-            final q = it['quantity'];
-            final qty = q is int ? q : int.tryParse(q?.toString() ?? '') ?? 0;
-            return qty > 0;
-          })
-          .toList();
-
-      setState(() {
-        _availableItems = mapped;
-        _isLoadingItems = false;
-      });
-    } catch (e) {
-      setState(() {
-        _itemsError = 'Error: $e';
-        _isLoadingItems = false;
-      });
-    }
-  }
-
-  String _itemLabel(Map<String, dynamic> it) {
-    final code = (it['item_code'] ?? it['kode_produk'] ?? '').toString();
-    final name = (it['name'] ?? '').toString();
-    if (code.isNotEmpty && name.isNotEmpty) return '$code - $name';
-    return name.isNotEmpty ? name : code;
-  }
-
-  int _selectedItemStock() {
-    final q = _selectedItem?['quantity'];
-    if (q is int) return q;
-    return int.tryParse(q?.toString() ?? '') ?? 0;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Kirim Barang'),
-      content: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                decoration: const InputDecoration(
-                  labelText: 'Cabang Tujuan',
-                  border: OutlineInputBorder(),
-                ),
-                initialValue: _selectedBranchId,
-                items: widget.branches.map((branch) {
-                  final rawId = branch['branch_id'];
-                  final id = rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '');
-                  return DropdownMenuItem<int>(
-                    value: id,
-                    child: Text(branch['name'] ?? 'Unknown Branch'),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedBranchId = value;
-                  });
-                },
-                validator: (value) => value == null ? 'Pilih cabang tujuan' : null,
-              ),
-              const SizedBox(height: 12),
-              if (_itemsError.isNotEmpty)
-                Text(_itemsError, style: const TextStyle(color: Colors.red)),
-              if (_isLoadingItems)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: LinearProgressIndicator(),
-                ),
-              if (!_isLoadingItems && _itemsError.isEmpty)
-                Autocomplete<Map<String, dynamic>>(
-                  displayStringForOption: (it) => _itemLabel(it),
-                  optionsBuilder: (value) {
-                    final q = value.text.trim().toLowerCase();
-                    if (q.isEmpty) return _availableItems.take(30);
-                    return _availableItems.where((it) {
-                      final label = _itemLabel(it).toLowerCase();
-                      return label.contains(q);
-                    }).take(30);
-                  },
-                  onSelected: (it) {
-                    setState(() => _selectedItem = it);
-                  },
-                  fieldViewBuilder: (
-                    context,
-                    textEditingController,
-                    focusNode,
-                    onFieldSubmitted,
-                  ) {
-                    return TextFormField(
-                      controller: textEditingController,
-                      focusNode: focusNode,
-                      decoration: InputDecoration(
-                        labelText: switch (_selectedSourceType) {
-                          'buyback' => 'Item (buyback)',
-                          'service' => 'Item (order service)',
-                          'custom' => 'Item (order custom)',
-                          _ => 'Item (stok)',
-                        },
-                        helperText: _selectedItem == null
-                            ? 'Ketik untuk cari item'
-                            : 'Stok tersedia: ${_selectedItemStock()}',
-                        border: const OutlineInputBorder(),
-                      ),
-                      validator: (_) {
-                        if (_selectedItem == null) return 'Pilih item dari daftar';
-                        return null;
-                      },
-                      onChanged: (_) {
-                        if (_selectedItem != null) {
-                          setState(() => _selectedItem = null);
-                        }
-                      },
-                    );
-                  },
-                ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _quantityController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Quantity (pcs)',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  final v = int.tryParse((value ?? '').trim());
-                  if (v == null || v <= 0) return 'Quantity harus angka > 0';
-                  if (_selectedItem != null && v > _selectedItemStock()) {
-                    return 'Qty melebihi stok (${_selectedItemStock()})';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _notesController,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'Catatan (opsional)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedSourceType,
-                decoration: const InputDecoration(
-                  labelText: 'Sumber barang',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'stok', child: Text('Dari stok')),
-                  DropdownMenuItem(value: 'buyback', child: Text('Dari buyback')),
-                  DropdownMenuItem(value: 'service', child: Text('Order service')),
-                  DropdownMenuItem(value: 'custom', child: Text('Order custom')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _selectedSourceType = v);
-                  _loadAvailableItems();
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Batal'),
-        ),
-        ElevatedButton(
-          onPressed: _submitTransfer,
-          child: const Text('Kirim'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _submitTransfer() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-
-      final transferData = {
-        'from_branch_id': widget.fromBranchId,
-        'to_branch_id': _selectedBranchId,
-        'item_name': (_selectedItem?['name'] ?? '').toString().trim(),
-        'quantity': int.parse(_quantityController.text.trim()),
-        'source_type': _selectedSourceType,
-        'notes': _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
-      };
-
-      final response = await http.post(
-        Uri.parse('$baseUrl/transfers'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(transferData),
-      );
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Transfer berhasil dibuat')),
-          );
-        }
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gagal membuat transfer: ${response.statusCode}')),
-          );
-        }
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $error')),
-        );
-      }
-    }
-  }
-}

@@ -56,7 +56,7 @@ class _TechnicianManagementPageState
         });
       } else {
         setState(() {
-          _error = 'Gagal memuat data teknisi';
+          _error = 'Gagal memuat data tukang';
           _isLoading = false;
         });
       }
@@ -84,7 +84,7 @@ class _TechnicianManagementPageState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Manajemen Teknisi'),
+        title: const Text('Manajemen Tukang'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -127,7 +127,7 @@ class _TechnicianManagementPageState
                               children: [
                                 Expanded(
                                   child: _buildSummaryCard(
-                                    'Total Teknisi',
+                                    'Total Tukang',
                                     _technicians.length,
                                     Icons.engineering,
                                     Colors.blue,
@@ -180,7 +180,7 @@ class _TechnicianManagementPageState
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Daftar teknisi (${_technicians.length})',
+                            'Daftar tukang (${_technicians.length})',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
@@ -196,7 +196,7 @@ class _TechnicianManagementPageState
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     child: _technicians.isEmpty
                         ? const Center(
-                            child: Text('Belum ada data teknisi'),
+                            child: Text('Belum ada data tukang'),
                           )
                         : LayoutBuilder(
                             builder: (context, constraints) {
@@ -349,7 +349,7 @@ dataRowMinHeight: narrow ? 44 : 44,
                                             columns: narrow
                                                 ? [
                                                     DataColumn(
-                                                      label: dataTableColumnLabel('Teknisi'),
+                                                      label: dataTableColumnLabel('Tukang'),
                                                     ),
                                                     const DataColumn(
                                                       label: SizedBox(width: 44),

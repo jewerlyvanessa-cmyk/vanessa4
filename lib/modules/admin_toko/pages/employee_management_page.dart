@@ -678,7 +678,7 @@ dataRowMinHeight:
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'admin_warehouse':
-        return 'Admin Gudang';
+        return 'Admin Warehouse';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -908,7 +908,7 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'admin_warehouse':
-        return 'Admin Gudang';
+        return 'Admin Warehouse';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -1068,7 +1068,7 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'admin_warehouse':
-        return 'Admin Gudang';
+        return 'Admin Warehouse';
       case 'tukang':
         return 'Tukang';
       case 'manajer':

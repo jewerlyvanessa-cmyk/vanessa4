@@ -8,8 +8,8 @@ const List<String> kBranchTypeKeys = [
 
 const Map<String, String> kBranchTypeLabels = {
   'toko': 'Toko (etalase)',
-  'warehouse': 'Gudang',
-  'workshop': 'Workshop / bengkel',
+  'warehouse': 'Warehouse',
+  'workshop': 'Workshop',
   'pusat': 'Pusat (HQ)',
 };
 
@@ -21,10 +21,10 @@ String normalizeBranchTypeKey(String? raw) {
 String branchTypeLabel(String? raw) =>
     kBranchTypeLabels[normalizeBranchTypeKey(raw)] ?? 'Toko (etalase)';
 
-/// Cabang tipe gudang (`branch_type` = `warehouse`) — sumber kirim untuk permintaan stok toko → gudang.
+/// Cabang tipe warehouse (`branch_type` = `warehouse`) — sumber kirim untuk permintaan stok toko → warehouse.
 bool branchTypeIsWarehouse(String? raw) =>
     normalizeBranchTypeKey(raw) == 'warehouse';
 
-/// Cabang yang dipakai sebagai sumber kirim stok (admin toko → gudang).
+/// Cabang yang dipakai sebagai sumber kirim stok (admin toko → warehouse).
 bool branchTypeCanSupplyStockForTransfer(String? raw) =>
     branchTypeIsWarehouse(raw);

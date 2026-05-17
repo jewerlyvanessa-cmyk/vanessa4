@@ -14,4 +14,4 @@ EXCEPTION
 END $$;
 
 COMMENT ON COLUMN branches.branch_type IS
-  'toko=etalase; warehouse=gudang/stok pusat; workshop=bengkel; pusat=kantor/HQ';
+  'toko=etalase; warehouse=gudang/stok pusat; workshop=workshop; pusat=kantor/HQ';

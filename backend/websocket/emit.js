@@ -6,14 +6,15 @@ function emitNotification(wss, message, options = {}) {
   const eventId = crypto.randomUUID();
   const timestamp = new Date().toISOString();
   const branch_id = options.branch_id ?? null;
-  const event = options.event ?? 'notification';
+  const event = options.event ?? null;
   const payload = options.payload ?? null;
+  const wsType = options.wsType ?? 'notification';
 
   // Backward-compatible message schema:
   // - Flutter client currently expects: { type: 'notification', message: '...' }
-  // - New fields are additive and safe for older clients.
+  // - wsType: order_update | workshop_assignment untuk refresh dashboard workshop
   const frame = {
-    type: 'notification',
+    type: wsType,
     message: String(message ?? ''),
     eventId,
     timestamp,

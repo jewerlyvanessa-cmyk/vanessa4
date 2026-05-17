@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
+import 'package:vanessa3/providers/workshop_service_incoming_provider.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 
-/// Service/custom dari toko: status `awaiting_warehouse` — setujui agar masuk workshop (`sent-to-workshop`).
+/// Service/custom dari toko: menunggu persetujuan admin workshop → antrian pekerjaan (`sent-to-workshop`).
 class ServiceIncomingPage extends ConsumerStatefulWidget {
   const ServiceIncomingPage({super.key});
 
@@ -88,11 +90,13 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Order #$oid masuk antrian pekerjaan — buka menu Antrian pekerjaan (admin) atau Antrian kerja (teknisi).',
+              'Order #$oid masuk antrian pekerjaan — buka menu Antrian pekerjaan (admin) atau Antrian kerja (tukang).',
             ),
           ),
         );
         await _load();
+        ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
+        ref.read(workshopDashboardProvider.notifier).refresh();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Gagal: ${res.body}')),
@@ -119,8 +123,8 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Setelah disetujui, order hilang dari daftar ini dan masuk daftar pekerjaan: '
-                'di aplikasi admin bengkel buka menu «Antrian pekerjaan»; di aplikasi teknisi buka «Antrian kerja».',
+                'Setelah disetujui, order masuk «Antrian pekerjaan» (belum ditugaskan ke tukang). '
+                'Saat tukang memulai pekerjaan, order pindah ke «Update progress» tukang dan muncul di «On progress» admin workshop.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -134,7 +138,7 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Service dari toko'),
+        title: const Text('Persetujuan service dari toko'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -156,7 +160,7 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
                           child: Padding(
                             padding: EdgeInsets.all(24),
                             child: Text(
-                              'Tidak ada order menunggu persetujuan bengkel',
+                              'Tidak ada order menunggu persetujuan workshop',
                             ),
                           ),
                         )

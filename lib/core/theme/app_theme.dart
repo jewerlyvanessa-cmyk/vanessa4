@@ -86,18 +86,28 @@ class AppTheme {
       visualDensity: VisualDensity.adaptivePlatformDensity,
       appBarTheme: AppBarTheme(
         backgroundColor: colorScheme.primary,
-        foregroundColor: colorScheme.onPrimary,
+        foregroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        iconTheme: const IconThemeData(color: Colors.white, size: 22),
+        actionsIconTheme: const IconThemeData(color: Colors.white, size: 22),
         titleTextStyle: const TextStyle(
           fontWeight: FontWeight.bold,
-          fontSize: 22,
+          fontSize: 18,
+          height: 1.2,
+          color: Colors.white,
+        ),
+        toolbarTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          height: 1.2,
         ),
       ),
       textTheme: textTheme,
       primaryTextTheme: textTheme,
       dataTableTheme: DataTableThemeData(
-dataTextStyle: TextStyle(
+        dataTextStyle: TextStyle(
           fontSize: AppTypography.tableCell,
           height: 1.25,
           color: onSurface,

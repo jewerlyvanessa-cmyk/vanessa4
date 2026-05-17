@@ -257,9 +257,9 @@ class _WorkshopReportsPageState extends ConsumerState<WorkshopReportsPage> {
                           ),
                         ]),
                         const SizedBox(height: 16),
-                        _buildSection('Performa Teknisi', [
+                        _buildSection('Performa Tukang', [
                           _buildStatItem(
-                            'Total Teknisi Aktif',
+                            'Total Tukang Aktif',
                             _reportsData!['active_technicians']?.toString() ??
                                 '0',
                           ),

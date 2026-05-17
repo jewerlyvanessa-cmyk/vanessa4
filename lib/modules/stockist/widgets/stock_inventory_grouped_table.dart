@@ -210,9 +210,10 @@ Future<void> showStockRestockDialog(
                             Navigator.pop(dialogContext);
                           }
                           if (context.mounted) {
-                            await promptPrintStockItemQr(
+                            await promptPrintStockItemLabel(
                               context,
                               item: Map<String, dynamic>.from(item),
+                              afterSave: true,
                             );
                           }
                           return;
@@ -346,9 +347,21 @@ class StockInventoryGroupedTable extends StatelessWidget {
                 branchId: bid,
                 branchDisplayName: branchDisplayNameForHistory,
               );
+            } else if (value == 'print_label') {
+              if (!context.mounted) return;
+              await promptPrintStockItemLabel(
+                context,
+                item: Map<String, dynamic>.from(item),
+              );
             } else if (value == 'print_qr') {
               if (!context.mounted) return;
               await promptPrintStockItemQr(
+                context,
+                item: Map<String, dynamic>.from(item),
+              );
+            } else if (value == 'print_barcode') {
+              if (!context.mounted) return;
+              await promptPrintStockItemBarcode(
                 context,
                 item: Map<String, dynamic>.from(item),
               );
@@ -372,11 +385,27 @@ class StockInventoryGroupedTable extends StatelessWidget {
               ),
             ),
             const PopupMenuItem(
+              value: 'print_label',
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.label_outline),
+                title: Text('Cetak label…'),
+              ),
+            ),
+            const PopupMenuItem(
               value: 'print_qr',
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.qr_code_2),
                 title: Text('Cetak QR'),
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'print_barcode',
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.barcode_reader),
+                title: Text('Cetak barcode'),
               ),
             ),
           ],
@@ -739,7 +768,7 @@ class _StockHistoryBottomSheetState extends State<StockHistoryBottomSheet> {
     if (rt == 'item_create') return '$type · Input / pembuatan stok';
     if (rt == 'restock') return '$type · Restok';
     if (rt == 'order') return '$type · Order / transaksi';
-    if (rt == 'transfer') return '$type · Antar cabang';
+    if (rt == 'transfer') return '$type · Antar tipe cabang';
     return '$type · qty ${row['quantity'] ?? '-'}';
   }
 

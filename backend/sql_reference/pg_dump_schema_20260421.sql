@@ -921,7 +921,7 @@ ALTER TABLE ONLY public.users ALTER COLUMN user_id SET DEFAULT nextval('public.u
 
 COPY public.branches (branch_id, name, code, alias, initials, address, phone_number, created_at, updated_at, status) FROM stdin;
 1	Toko Emas Vanessa Brangkal	BRG	Emas Brangkal	BGE	Pasar Brangkal	09888888	2025-12-26 22:39:47.854303	2025-12-26 22:39:47.854303	active
-3	Workshop Vanessa Kendalsari	WKS	Bengkel Kendalsari	WKS	Kendalsari	088888888888	2025-12-28 13:31:29.581898	2025-12-28 13:31:29.581898	active
+3	Workshop Vanessa Kendalsari	WKS	Workshop Kendalsari	WKS	Kendalsari	088888888888	2025-12-28 13:31:29.581898	2025-12-28 13:31:29.581898	active
 4	Cabang Utama	MAIN	Main Branch	CUT	Jl. Raya No. 123	\N	2026-01-04 15:13:25.314928	2026-01-04 15:13:25.314928	active
 2	Toko Emas Vanessa Pohjejer	444	\N	\N	Pasar Pohjejer	\N	2025-12-27 22:29:45.78485	2026-04-14 22:37:01.084316	active
 19	ggg	GDGD	ddseed	FFAS	ddege	4343435r3	2026-04-14 22:40:12.348334	2026-04-14 22:40:12.348334	active

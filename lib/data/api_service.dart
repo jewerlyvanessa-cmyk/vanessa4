@@ -274,7 +274,7 @@ class ApiService {
   }
 
   /// Antrian kerja workshop di cabang. [assignedTechnicianId] hanya untuk filter
-  /// pekerjaan milik teknisi (user_id / metadata assignment) — dipakai halaman Update Progress.
+  /// pekerjaan milik tukang (user_id / metadata assignment) — dipakai halaman Update Progress.
   static Future<List<Map<String, dynamic>>> getWorkQueue(
     String branchId, {
     String? assignedTechnicianId,
@@ -361,6 +361,108 @@ class ApiService {
       debugPrint('Error fetching workshop reports: $e');
       throw Exception('Failed to fetch workshop reports: $e');
     }
+  }
+
+  /// GET /api/orders/ready-for-pickup-list — daftar service/custom siap ambil (sudah diterima admin toko).
+  static Future<List<Map<String, dynamic>>> getReadyForPickupList(
+    String branchId,
+  ) async {
+    final url = Uri.parse('$baseUrl/api/orders/ready-for-pickup-list').replace(
+      queryParameters: <String, String>{'branch_id': branchId},
+    );
+    final response = await _makeRequest(
+      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+    );
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    var msg = 'HTTP ${response.statusCode}';
+    try {
+      final d = jsonDecode(response.body);
+      if (d is Map && d['error'] != null) msg = d['error'].toString();
+    } catch (_) {}
+    throw Exception('Gagal memuat daftar siap ambil: $msg');
+  }
+
+  /// POST /api/orders/confirm-workshop-store-receipt — admin toko konfirmasi terima dari workshop.
+  static Future<bool> confirmWorkshopStoreReceipt({
+    required int orderId,
+    required String branchId,
+  }) async {
+    final url = Uri.parse(
+      '$baseUrl/api/orders/confirm-workshop-store-receipt',
+    );
+    final response = await _makeRequest(
+      () => http.post(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode({
+          'order_id': orderId,
+          'branch_id': int.tryParse(branchId) ?? branchId,
+        }),
+      ),
+    );
+    if (response.statusCode == 200) return true;
+    String msg = response.body;
+    try {
+      final d = jsonDecode(response.body);
+      if (d is Map && d['error'] != null) msg = d['error'].toString();
+    } catch (_) {}
+    throw Exception('Gagal konfirmasi terima: $msg');
+  }
+
+  /// GET /technicians — daftar tukang aktif di cabang (admin workshop).
+  static Future<List<Map<String, dynamic>>> getTechnicians(String branchId) async {
+    final url = Uri.parse('$baseUrl/technicians').replace(
+      queryParameters: <String, String>{'branch_id': branchId},
+    );
+    final response = await _makeRequest(
+      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Gagal memuat daftar tukang: ${response.statusCode}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) return [];
+    return decoded
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  /// PUT /workshop-orders/:id/assign-technician — admin workshop menugaskan tukang.
+  static Future<bool> assignWorkshopTechnician({
+    required int orderId,
+    required String branchId,
+    required int technicianId,
+    bool startImmediately = false,
+  }) async {
+    final url = Uri.parse('$baseUrl/workshop-orders/$orderId/assign-technician');
+    final response = await _makeRequest(
+      () => http.put(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+        body: jsonEncode({
+          'branch_id': int.tryParse(branchId) ?? branchId,
+          'technician_id': technicianId,
+          'start_immediately': startImmediately,
+        }),
+      ),
+    );
+    if (response.statusCode == 200) return true;
+    var msg = 'HTTP ${response.statusCode}';
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['error'] != null) {
+        msg = decoded['error'].toString();
+      }
+    } catch (_) {}
+    throw Exception(msg);
   }
 
   /// Update work progress
@@ -533,7 +635,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getTechnicianReports(
     String technicianId,
     String branchId, {
-    String period = 'month',
+    String period = 'today',
   }) async {
     final url = Uri.parse(
       '$baseUrl/api/workshop/technician-reports?technician_id=$technicianId&branch_id=$branchId&period=$period',

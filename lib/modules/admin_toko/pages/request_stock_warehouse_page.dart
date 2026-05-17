@@ -20,7 +20,7 @@ class _CatJenisLine {
   }
 }
 
-/// Admin toko: permintaan stok ke gudang per **kategori + jenis + qty** (bukan pilih SKU).
+/// Admin toko: permintaan stok ke warehouse per **kategori + jenis + qty** (bukan pilih SKU).
 class RequestStockWarehousePage extends ConsumerStatefulWidget {
   const RequestStockWarehousePage({super.key});
 
@@ -128,7 +128,7 @@ class _RequestStockWarehousePageState
 
     if (warehouseId == null || warehouseId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih gudang pengirim')),
+        const SnackBar(content: Text('Pilih warehouse pengirim')),
       );
       return;
     }
@@ -241,7 +241,7 @@ class _RequestStockWarehousePageState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pesan stok ke gudang'),
+        title: const Text('Pesan stok ke warehouse'),
         actions: [
           IconButton(
             tooltip: 'Muat ulang cabang',
@@ -272,7 +272,7 @@ class _RequestStockWarehousePageState
                   const SizedBox(height: 4),
                   Text(
                     'Kategori & jenis mengikuti form order Jual (CS). '
-                    'Hanya cabang bertipe Gudang (warehouse) yang tampil — atur di Superadmin.',
+                    'Hanya cabang bertipe warehouse yang tampil — atur di Superadmin.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: cs.onSurfaceVariant,
                     ),
@@ -282,11 +282,11 @@ class _RequestStockWarehousePageState
                     initialValue: _warehouseBranchId,
                     isExpanded: true,
                     decoration: const InputDecoration(
-                      labelText: 'Gudang pengirim',
+                      labelText: 'Warehouse pengirim',
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
-                    hint: const Text('Pilih gudang'),
+                    hint: const Text('Pilih warehouse'),
                     items: _branches.map((b) {
                       final m = b as Map;
                       final id = m['branch_id'].toString();
@@ -308,7 +308,7 @@ class _RequestStockWarehousePageState
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
-                        'Tidak ada cabang tipe Gudang (warehouse) selain toko ini. '
+                        'Tidak ada cabang tipe warehouse selain toko ini. '
                         'Jalankan migrasi cabang (branch_type) dan set tipe di Superadmin.',
                         style: TextStyle(
                           fontSize: 13,
@@ -461,9 +461,9 @@ class _RequestStockWarehousePageState
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Stockist melihat permintaan di gudang. Menyetujui hanya mengubah status '
+                      'Stockist melihat permintaan di warehouse. Menyetujui hanya mengubah status '
                       '(tanpa mutasi stok otomatis di sistem untuk permintaan per kategori/jenis); '
-                      'pencatatan fisik dilakukan di gudang.',
+                      'pencatatan fisik dilakukan di warehouse.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                       ),

@@ -14,6 +14,7 @@ import '../../../utils/logger.dart';
 import '../../../utils/pembulatan.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart';
+import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
@@ -870,6 +871,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         // Refresh "order hari ini" list + stats
         ref.invalidate(todayOrdersProvider);
         ref.invalidate(orderTodayStatsProvider);
+        bumpCsDailyOrdersListRevision(ref);
 
         // Navigate to faktur page
         if (mounted) {

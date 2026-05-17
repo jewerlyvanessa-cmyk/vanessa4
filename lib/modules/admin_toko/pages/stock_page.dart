@@ -4,9 +4,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
+import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
+import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockPage extends ConsumerStatefulWidget {
   const StockPage({super.key});
@@ -16,10 +19,12 @@ class StockPage extends ConsumerStatefulWidget {
 }
 
 class _StockPageState extends ConsumerState<StockPage> {
+  final _searchCtrl = TextEditingController();
   List<dynamic> _items = [];
   bool _isLoading = true;
   String _error = '';
   String _selectedStatus = 'ready';
+  String _search = '';
 
   String? _normalizePhotoUrl(dynamic raw) {
     final s = raw?.toString().trim();
@@ -33,6 +38,12 @@ class _StockPageState extends ConsumerState<StockPage> {
   void initState() {
     super.initState();
     _loadItems();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadItems() async {
@@ -71,12 +82,39 @@ class _StockPageState extends ConsumerState<StockPage> {
   }
 
   List<dynamic> get _filteredItems {
-    if (_selectedStatus == 'all') {
-      return _items;
+    var list = _selectedStatus == 'all'
+        ? List<dynamic>.from(_items)
+        : _items
+            .where(
+              (item) => stockItemVisibleForStatusFilter(item, _selectedStatus),
+            )
+            .toList();
+    if (_search.trim().isNotEmpty) {
+      list = list
+          .where((item) => stockInventoryItemMatchesQuery(item, _search))
+          .toList();
     }
-    return _items
-        .where((item) => stockItemVisibleForStatusFilter(item, _selectedStatus))
-        .toList();
+    return list;
+  }
+
+  void _onSearchChanged(String v) => setState(() => _search = v);
+
+  Future<void> _printStockReport() async {
+    final user = ref.read(userStateProvider);
+    final branchId = user.branch.trim();
+    final branchLabel = stockBranchDisplayName(
+          branches: user.branches,
+          branchId: branchId,
+        ) ??
+        branchId;
+    await printStockInventoryReportPdf(
+      context,
+      branchLabel: branchLabel.isEmpty ? 'Cabang' : branchLabel,
+      branchIdForLogo: branchId,
+      selectedStatus: _selectedStatus,
+      filteredItems: _filteredItems,
+      searchQuery: _search,
+    );
   }
 
   Future<void> _showAddStockDialog() async {
@@ -313,7 +351,11 @@ class _StockPageState extends ConsumerState<StockPage> {
                 if (created != null) {
                   Navigator.of(context).pop();
                   if (shelfContext.mounted) {
-                    await promptPrintStockItemQr(shelfContext, item: created);
+                    await promptPrintStockItemLabel(
+                      shelfContext,
+                      item: created,
+                      afterSave: true,
+                    );
                   }
                 }
               },
@@ -401,6 +443,11 @@ class _StockPageState extends ConsumerState<StockPage> {
         title: const Text('Stok Barang'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.print_outlined),
+            onPressed: _isLoading || _error.isNotEmpty ? null : _printStockReport,
+            tooltip: 'Cetak laporan stok',
+          ),
+          IconButton(
             icon: const Icon(Icons.add),
             onPressed: _showAddStockDialog,
             tooltip: 'Tambah Stok',
@@ -420,6 +467,14 @@ class _StockPageState extends ConsumerState<StockPage> {
               selectedStatus: _selectedStatus,
               onStatusChanged: (v) => setState(() => _selectedStatus = v),
               summaryItems: _filteredItems,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: StockInventorySearchFieldStateful(
+              controller: _searchCtrl,
+              onQueryChanged: _onSearchChanged,
+              enabled: !_isLoading && _error.isEmpty,
             ),
           ),
 
@@ -442,7 +497,13 @@ class _StockPageState extends ConsumerState<StockPage> {
                     ),
                   )
                 : _filteredItems.isEmpty
-                    ? const Center(child: Text('Tidak ada data stok'))
+                    ? Center(
+                        child: Text(
+                          _search.trim().isNotEmpty
+                              ? 'Tidak ada hasil untuk "${_search.trim()}"'
+                              : 'Tidak ada data stok',
+                        ),
+                      )
                     : StockInventoryGroupedTable(
                         filteredItems: _filteredItems,
                         branchIdForMutations: ref.read(userStateProvider).branch,

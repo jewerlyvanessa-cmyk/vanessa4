@@ -24,7 +24,7 @@ const { attachWebSocketServer } = require('./websocket/attach');
 const { local: localStorage } = require('./storage/storage.service');
 const customersRoute = require('./routes/customers'); // Import customers route
 const apiRoutes = require('./api'); // Import new API routes
-const dashboardOrdersRoute = require('./routes/dashboard_orders'); // Import dashboard orders route
+const createDashboardOrdersRoute = require('./routes/dashboard_orders');
 const branchesRoute = require('./routes/branches'); // Import branches route
 const userInfoRoute = require('./routes/userInfo');
 const getOrdersDaily = require('./routes/orders_daily_handler');
@@ -1334,7 +1334,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             if (!allowed.has(st)) {
               return res.status(400).json({
                 error: 'Item tidak boleh dijual dalam status ini',
-                detail: `item_id ${row.item_id} (${row.kode_produk || row.name || ''}) memiliki status "${row.status}". Barang buyback atau yang belum siap etalase harus diproses/ditransfer ke gudang dulu.`,
+                detail: `item_id ${row.item_id} (${row.kode_produk || row.name || ''}) memiliki status "${row.status}". Barang buyback atau yang belum siap etalase harus diproses/ditransfer ke warehouse dulu.`,
               });
             }
           }
@@ -2178,6 +2178,7 @@ app.get('/orders/pending-payment', async (req, res) => {
         o.order_id,
         o.order_number,
         o.order_type,
+        o.status,
         o.total,
         o.diskon,
         o.created_at,
@@ -2185,6 +2186,15 @@ app.get('/orders/pending-payment', async (req, res) => {
         c.name AS customer_name,
         c.phone,
         c.address,
+        (
+          SELECT p.method
+          FROM payments p
+          WHERE p.order_id = o.order_id
+            AND p.status = 'pending'
+          ORDER BY COALESCE(p.payment_date, p.created_at) DESC NULLS LAST,
+            p.payment_id DESC NULLS LAST
+          LIMIT 1
+        ) AS payment_method,
         EXISTS (
           SELECT 1 FROM payments p0
           WHERE p0.order_id = o.order_id AND p0.status = 'completed'
@@ -2297,6 +2307,7 @@ app.get('/orders/pending-payment', async (req, res) => {
         order_id: row.order_id.toString(),
         order_number: row.order_number,
         order_type: row.order_type,
+        status: row.status,
         total,
         diskon: parseFloat(row.diskon || 0),
         created_at: row.created_at,
@@ -2312,6 +2323,8 @@ app.get('/orders/pending-payment', async (req, res) => {
         material: row.material,
         paid_amount: paid,
         remaining_amount: remaining,
+        amount: remaining,
+        payment_method: row.payment_method ?? null,
         has_completed_payment: Boolean(row.has_completed_payment),
       };
     });
@@ -2666,6 +2679,9 @@ app.get('/items', async (req, res) => {
       limit,
       sellable_only,
       created_by,
+      mine,
+      start_date,
+      end_date,
     } = req.query;
     const hasCreatorCol = await itemsHasCreatedByColumn();
     const fromSql = hasCreatorCol
@@ -2713,10 +2729,54 @@ app.get('/items', async (req, res) => {
       params.push(`%${search}%`);
     }
 
+    const jwtUserId = parseInt(
+      String(req.user?.user_id ?? req.user?.id ?? '').trim(),
+      10
+    );
+    const mineOnly =
+      mine === 'true' || mine === '1' || mine === true;
     const createdByFilter = parseInt(String(created_by ?? '').trim(), 10);
-    if (hasCreatorCol && Number.isFinite(createdByFilter) && createdByFilter > 0) {
+    const roleNorm = String(req.user?.role ?? '')
+      .trim()
+      .toLowerCase();
+    const canFilterAnyUser = ['superadmin', 'manajer'].includes(roleNorm);
+
+    if (mineOnly) {
+      if (!hasCreatorCol) {
+        return res.status(503).json({
+          error:
+            'Kolom items.created_by belum tersedia. Jalankan migrasi database terbaru.',
+        });
+      }
+      if (!Number.isFinite(jwtUserId) || jwtUserId <= 0) {
+        return res.status(401).json({
+          error: 'User login tidak dikenali untuk filter laporan input',
+        });
+      }
       conditions.push(`i.created_by = $${params.length + 1}`);
-      params.push(createdByFilter);
+      params.push(jwtUserId);
+    } else if (hasCreatorCol) {
+      if (Number.isFinite(createdByFilter) && createdByFilter > 0) {
+        if (!canFilterAnyUser && jwtUserId !== createdByFilter) {
+          return res.status(403).json({
+            error: 'Tidak boleh melihat input stok pengguna lain',
+          });
+        }
+        conditions.push(`i.created_by = $${params.length + 1}`);
+        params.push(createdByFilter);
+      }
+    }
+
+    const startDateTrim =
+      start_date != null ? String(start_date).trim() : '';
+    const endDateTrim = end_date != null ? String(end_date).trim() : '';
+    if (startDateTrim) {
+      conditions.push(`DATE(i.created_at) >= $${params.length + 1}`);
+      params.push(startDateTrim);
+    }
+    if (endDateTrim) {
+      conditions.push(`DATE(i.created_at) <= $${params.length + 1}`);
+      params.push(endDateTrim);
     }
 
     if (conditions.length > 0) {
@@ -4179,9 +4239,9 @@ cron.schedule('0 9 * * *', () => {
 console.log('Cron job untuk pengingat otomatis telah diaktifkan.');
 
 // Tambahkan fungsi untuk mengirim notifikasi realtime
-function sendNotificationToClients(message) {
+function sendNotificationToClients(message, options = {}) {
   console.log(`Broadcasting message: ${message}`);
-  emitNotification(wss, message);
+  emitNotification(wss, message, options);
 }
 
 registerPaymentsCoreRoutes(app, {
@@ -4359,6 +4419,9 @@ app.get('/stock-mutations', async (req, res) => {
       end_date,
       limit = 50,
       offset = 0,
+      created_by,
+      mine,
+      reference_type,
     } = req.query;
 
     let query = `
@@ -4417,6 +4480,46 @@ app.get('/stock-mutations', async (req, res) => {
     if (type) {
       query += ` AND sm.type = $${paramIndex}`;
       params.push(type);
+      paramIndex++;
+    }
+
+    const refTypeTrim =
+      reference_type != null ? String(reference_type).trim() : '';
+    if (refTypeTrim) {
+      query += ` AND sm.reference_type = $${paramIndex}`;
+      params.push(refTypeTrim);
+      paramIndex++;
+    }
+
+    const jwtUserIdMut = parseInt(
+      String(req.user?.user_id ?? req.user?.id ?? '').trim(),
+      10
+    );
+    const mineOnlyMut =
+      mine === 'true' || mine === '1' || mine === true;
+    const createdByMut = parseInt(String(created_by ?? '').trim(), 10);
+    const roleNormMut = String(req.user?.role ?? '')
+      .trim()
+      .toLowerCase();
+    const canFilterAnyUserMut = ['superadmin', 'manajer'].includes(roleNormMut);
+
+    if (mineOnlyMut) {
+      if (!Number.isFinite(jwtUserIdMut) || jwtUserIdMut <= 0) {
+        return res.status(401).json({
+          error: 'User login tidak dikenali untuk filter mutasi',
+        });
+      }
+      query += ` AND sm.created_by = $${paramIndex}`;
+      params.push(jwtUserIdMut);
+      paramIndex++;
+    } else if (Number.isFinite(createdByMut) && createdByMut > 0) {
+      if (!canFilterAnyUserMut && jwtUserIdMut !== createdByMut) {
+        return res.status(403).json({
+          error: 'Tidak boleh melihat mutasi pengguna lain',
+        });
+      }
+      query += ` AND sm.created_by = $${paramIndex}`;
+      params.push(createdByMut);
       paramIndex++;
     }
 
@@ -4648,10 +4751,10 @@ app.use('/api', customersRoute);
 // Integrate new API routes
 app.use('/api', apiRoutes); // Integrate new API routes
 // Integrate dashboard and orders routes
-app.use('/api', dashboardOrdersRoute);
+app.use('/api', createDashboardOrdersRoute(sendNotificationToClients));
 // Integrate branches routes
 app.use('/api', branchesRoute);
 // User info route
 app.use('/api', userInfoRoute);
 
-registerWorkshopRoutes(app, { db });
+registerWorkshopRoutes(app, { db, notifyClients: sendNotificationToClients });

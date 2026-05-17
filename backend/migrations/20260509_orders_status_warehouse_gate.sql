@@ -1,5 +1,5 @@
--- Service/custom: cabang toko → antrian bengkel (awaiting_warehouse) → workshop (sent-to-workshop).
--- confirmed = DP sudah dibayar di kasir, menunggu admin toko kirim ke bengkel (UI).
+-- Service/custom: cabang toko → antrian workshop (awaiting_warehouse) → workshop (sent-to-workshop).
+-- confirmed = DP sudah dibayar di kasir, menunggu admin toko kirim ke workshop (UI).
 
 BEGIN;
 

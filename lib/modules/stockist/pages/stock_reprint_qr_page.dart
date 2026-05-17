@@ -84,15 +84,21 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
     });
 
     try {
-      final list = await fetchStockItemsByCode(
+      final raw = await fetchStockItemsByCode(
         code: code,
         branchId: ref.read(userStateProvider).branch.trim(),
         limit: 50,
       );
+      final list =
+          raw.where((it) => stockItemIsReadyForLabelReprint(it)).toList();
       if (!mounted) return;
       setState(() {
         _items = list;
-        _error = list.isEmpty ? 'Item tidak ditemukan untuk: $code' : '';
+        _error = list.isEmpty
+            ? (raw.isEmpty
+                ? 'Item tidak ditemukan untuk: $code'
+                : 'Item ditemukan tetapi bukan stok ready (qty > 0).')
+            : '';
         _loading = false;
       });
     } catch (e) {
@@ -128,17 +134,16 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
   }
 
   Future<void> _printItem(Map<String, dynamic> item) async {
-    await promptPrintStockItemQr(context, item: item, askConfirm: false);
+    await promptPrintStockItemLabel(context, item: item);
   }
 
   Future<void> _printBulk() async {
     if (_queue.isEmpty) return;
     setState(() => _printingBulk = true);
     try {
-      await promptPrintStockItemsQrBulk(
+      await promptPrintStockItemsLabelBulk(
         context,
         items: _queue.values.toList(),
-        askConfirm: false,
       );
     } finally {
       if (mounted) setState(() => _printingBulk = false);
@@ -149,7 +154,7 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Cetak ulang QR stok'),
+        title: const Text('Cetak ulang label stok'),
         actions: [
           IconButton(
             tooltip: 'Bersihkan pencarian',
@@ -196,7 +201,7 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.print),
-                        label: Text(_printingBulk ? '…' : 'Cetak massal QR'),
+                        label: Text(_printingBulk ? '…' : 'Cetak massal'),
                       ),
                     ],
                   ),
@@ -207,16 +212,16 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           Text(
-            'Sumber item: ketik kode / pindai QR, atau pilih dari daftar stok cabang aktif. '
-            'Tambahkan ke antrian lalu «Cetak massal QR» untuk satu PDF banyak label, '
-            'atau «Cetak» pada satu baris untuk satu label.',
+            'Sumber item: ketik kode / pindai QR, atau pilih dari daftar stok ready cabang aktif. '
+            'Tambahkan ke antrian lalu «Cetak massal» untuk satu PDF banyak label '
+            '(QR, barcode, atau keduanya). «Cetak» pada satu baris untuk satu item.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 14),
           OutlinedButton.icon(
             onPressed: _loading ? null : _openStockPicker,
             icon: const Icon(Icons.inventory_2_outlined),
-            label: const Text('Pilih dari daftar stok'),
+            label: const Text('Pilih dari stok ready'),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -445,7 +450,10 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
       _error = '';
     });
     try {
-      final list = await fetchStockInventoryItems(branchId: widget.branchId);
+      final list = await fetchStockInventoryItems(
+        branchId: widget.branchId,
+        status: 'ready',
+      );
       if (!mounted) return;
       setState(() {
         _all = list;
@@ -508,7 +516,7 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pilih dari daftar stok'),
+        title: const Text('Pilih stok ready'),
         actions: [
           if (!_loading && _error.isEmpty && _filtered.isNotEmpty)
             TextButton(
@@ -527,15 +535,27 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              controller: _searchCtrl,
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Saring kode / nama',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              onChanged: (_) => setState(() {}),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Hanya stok status Ready dengan qty > 0.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _searchCtrl,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Saring kode / nama',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
             ),
           ),
           if (_loading)
@@ -559,8 +579,8 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
                   ? Center(
                       child: Text(
                         _all.isEmpty
-                            ? 'Tidak ada data stok di cabang ini.'
-                            : 'Tidak ada yang cocok dengan pencarian.',
+                            ? 'Tidak ada stok ready di cabang ini.'
+                            : 'Tidak ada stok ready yang cocok dengan pencarian.',
                         textAlign: TextAlign.center,
                       ),
                     )

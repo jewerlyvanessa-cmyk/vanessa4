@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:vanessa3/data/api_service.dart';
+import 'package:vanessa3/providers/store_workshop_receipt_count_provider.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 
-/// Order service/custom `done_workshop`: menunggu admin toko konfirmasi terima → `ready_for_pickup`
-/// (tanpa filter tanggal pembuatan; selaras GET `/api/orders/service-awaiting-store-receipt`).
+/// Order service/custom `ready_for_pickup` dari workshop — admin toko konfirmasi terima fisik
+/// (metadata `store_receipt_confirmed_at`) agar muncul di menu Ambil CS.
 class ServiceAwaitingStoreReceiptPage extends ConsumerStatefulWidget {
   const ServiceAwaitingStoreReceiptPage({super.key});
 
@@ -80,29 +82,22 @@ class _ServiceAwaitingStoreReceiptPageState
   Future<void> _confirmReceive(Map<String, dynamic> row) async {
     final userState = ref.read(userStateProvider);
     final orderId = int.tryParse((row['order_id'] ?? '').toString());
-    final branchId = int.tryParse(userState.branch);
-    if (orderId == null || branchId == null) return;
+    if (orderId == null) return;
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final res = await http.put(
-        Uri.parse('$baseUrl/workshop-orders/$orderId/status'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'branch_id': branchId,
-          'status': 'ready_for_pickup',
-        }),
+      await ApiService.confirmWorkshopStoreReceipt(
+        orderId: orderId,
+        branchId: userState.branch,
       );
       if (!mounted) return;
-      if (res.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Order #$orderId → ${OrderStatusUi.label('ready_for_pickup')}')),
-        );
-        await _load();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal: ${res.body}')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Order #$orderId diterima — CS dapat memproses di menu Ambil',
+          ),
+        ),
+      );
+      ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
+      await _load();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -116,7 +111,7 @@ class _ServiceAwaitingStoreReceiptPageState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Terima dari bengkel'),
+        title: const Text('Terima dari workshop'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -142,9 +137,9 @@ class _ServiceAwaitingStoreReceiptPageState
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'Tidak ada order service/custom yang menunggu konfirmasi terima dari bengkel.\n\n'
-                  'Order di sini tidak memandang tanggal order dibuat. '
-                  'Setelah Anda «Terima», status menjadi siap ambil — CS dapat memproses di menu Ambil.',
+                  'Tidak ada kiriman workshop yang menunggu konfirmasi terima di toko.\n\n'
+                  'Muncul setelah admin workshop menekan «Kirim ke Toko». '
+                  'Setelah Anda «Terima», order tampil di menu Ambil CS.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),

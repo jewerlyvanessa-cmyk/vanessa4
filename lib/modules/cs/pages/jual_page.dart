@@ -14,6 +14,7 @@ import '../../../utils/logger.dart';
 import 'package:file_picker/file_picker.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart'; // Import todayOrdersProvider
+import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -464,7 +465,7 @@ class _JualPageState extends ConsumerState<JualPage> {
           SnackBar(
             content: Text(
               'Barang status "${item['status']}" tidak boleh dijual langsung '
-              '(mis. buyback — kirim ke gudang dulu setelah diproses).',
+              '(mis. buyback — kirim ke warehouse dulu setelah diproses).',
             ),
           ),
         );
@@ -869,9 +870,11 @@ class _JualPageState extends ConsumerState<JualPage> {
               : _customerAddressController.text,
         };
 
-        // Refresh today orders provider to show new order
+        // Refresh order hari ini (stats + list) — bundle dipicu dari stats provider.
         if (mounted) {
+          ref.invalidate(orderTodayStatsProvider);
           ref.invalidate(todayOrdersProvider);
+          bumpCsDailyOrdersListRevision(ref);
         }
 
         if (mounted) {

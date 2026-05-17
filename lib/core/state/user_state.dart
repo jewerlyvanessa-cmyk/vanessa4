@@ -44,7 +44,7 @@ class UserState {
     );
   }
 
-  /// When non-null, workshop / teknisi API calls must not run (avoids `null` user id on the wire).
+  /// When non-null, workshop / tukang API calls must not run (avoids `null` user id on the wire).
   String? get workshopSessionBlockReason {
     if (userId == null) {
       return 'Sesi tidak valid. Silakan login ulang.';
@@ -102,8 +102,13 @@ class UserStateNotifier extends StateNotifier<UserState> {
           authToken = '';
         }
 
+        final rawUserId = userData['userId'];
+        final parsedUserId = rawUserId is int
+            ? rawUserId
+            : int.tryParse(rawUserId?.toString() ?? '');
+
         state = UserState(
-          userId: userData['userId'],
+          userId: parsedUserId,
           username: userData['username'] ?? '',
           branch: userData['branch'] ?? '',
           role: userData['role'] ?? '',

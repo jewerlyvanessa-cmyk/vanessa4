@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 
@@ -11,7 +12,7 @@ class ReportsPage extends ConsumerStatefulWidget {
 }
 
 class _ReportsPageState extends ConsumerState<ReportsPage> {
-  String _selectedPeriod = 'month';
+  String _selectedPeriod = 'today';
   Map<String, dynamic>? _reportsData;
   bool _isLoading = true;
   String? _error;
@@ -38,12 +39,21 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         });
         return;
       }
+      final userId = userState.userId;
+      if (userId == null) {
+        setState(() {
+          _error = 'Sesi tidak valid. Silakan login ulang.';
+          _isLoading = false;
+        });
+        return;
+      }
       final reports = await ApiService.getTechnicianReports(
-        userState.userId!.toString(),
+        userId.toString(),
         userState.branch,
         period: _selectedPeriod,
       );
 
+      if (!mounted) return;
       setState(() {
         _reportsData = reports;
         _isLoading = false;
@@ -64,10 +74,351 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
   }
 
   void _changePeriod(String period) {
-    setState(() {
-      _selectedPeriod = period;
-    });
+    if (_selectedPeriod == period) return;
+    setState(() => _selectedPeriod = period);
     _loadReports();
+  }
+
+  String _getPeriodText(String period) {
+    switch (period) {
+      case 'today':
+        return 'Hari Ini';
+      case 'week':
+        return 'Minggu Ini';
+      case 'month':
+        return 'Bulan Ini';
+      case 'quarter':
+        return '3 Bulan Terakhir';
+      default:
+        return 'Hari Ini';
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    const months = [
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember',
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  Map<String, dynamic> get _workStats {
+    final raw = _reportsData?['work_stats'];
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return {};
+  }
+
+  List<Map<String, dynamic>> _listField(String key) {
+    final raw = _reportsData?[key];
+    if (raw is! List) return [];
+    return raw
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
+  }
+
+  num _num(dynamic v) {
+    if (v is num) return v;
+    return num.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  Widget _summaryCard(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: cs.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: cs.primary, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Text(label)),
+          const SizedBox(width: 8),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Map<String, dynamic> _todayRow(List<Map<String, dynamic>> daily) {
+    final now = DateTime.now();
+    for (final day in daily) {
+      final raw = day['work_date']?.toString();
+      if (raw == null || raw.isEmpty) continue;
+      final parsed = DateTime.tryParse(raw);
+      if (parsed == null) continue;
+      if (parsed.year == now.year &&
+          parsed.month == now.month &&
+          parsed.day == now.day) {
+        return day;
+      }
+    }
+    return <String, dynamic>{};
+  }
+
+  Widget _reportBody(BuildContext context) {
+    final userState = ref.watch(userStateProvider);
+    final cs = Theme.of(context).colorScheme;
+    final stats = _workStats;
+    final daily = _listField('daily_distribution');
+    final materials = _listField('material_usage');
+    final workTypes = _listField('work_type_distribution');
+
+    final todayStats = _selectedPeriod == 'today'
+        ? stats
+        : _todayRow(daily);
+    final todayOrders = _selectedPeriod == 'today'
+        ? _num(stats['total_orders'])
+        : _num(todayStats['orders_count']);
+    final todayCompleted = _selectedPeriod == 'today'
+        ? _num(stats['completed_orders'])
+        : _num(todayStats['completed_count']);
+
+    return RefreshIndicator(
+      onRefresh: _loadReports,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          Text(
+            'Laporan untuk: ${userState.username.isNotEmpty ? userState.username : 'Anda'}'
+            '${userState.userId != null ? ' (ID ${userState.userId})' : ''}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Hanya pekerjaan yang ditugaskan ke akun login ini.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _PeriodChip(
+                label: 'Hari Ini',
+                isSelected: _selectedPeriod == 'today',
+                onTap: () => _changePeriod('today'),
+              ),
+              _PeriodChip(
+                label: 'Minggu',
+                isSelected: _selectedPeriod == 'week',
+                onTap: () => _changePeriod('week'),
+              ),
+              _PeriodChip(
+                label: 'Bulan',
+                isSelected: _selectedPeriod == 'month',
+                onTap: () => _changePeriod('month'),
+              ),
+              _PeriodChip(
+                label: '3 Bulan',
+                isSelected: _selectedPeriod == 'quarter',
+                onTap: () => _changePeriod('quarter'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _StatCard(
+                  title: 'Total',
+                  value: _num(stats['total_orders']).toString(),
+                  icon: Icons.work_outline,
+                  color: cs.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StatCard(
+                  title: 'Rata-rata',
+                  value:
+                      '${_num(stats['avg_duration_hours']).toStringAsFixed(1)}j',
+                  icon: Icons.schedule_outlined,
+                  color: cs.tertiary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StatCard(
+                  title: 'Efisiensi',
+                  value: '${_num(stats['efficiency'])}%',
+                  icon: Icons.trending_up_outlined,
+                  color: cs.secondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_selectedPeriod != 'today') ...[
+            _summaryCard(
+              context,
+              title: 'Hari ini',
+              icon: Icons.today_outlined,
+              children: [
+                _statLine('Tanggal', _formatDate(DateTime.now())),
+                _statLine('Pekerjaan', todayOrders.toString()),
+                _statLine('Selesai', todayCompleted.toString()),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          _summaryCard(
+            context,
+            title: _getPeriodText(_selectedPeriod),
+            icon: Icons.calendar_month_outlined,
+            children: [
+              if (_selectedPeriod == 'today')
+                _statLine('Tanggal', _formatDate(DateTime.now())),
+              _statLine('Total pekerjaan', _num(stats['total_orders']).toString()),
+              _statLine(
+                'Selesai',
+                _num(stats['completed_orders']).toString(),
+              ),
+              _statLine(
+                'Dalam proses',
+                _num(stats['in_progress_orders']).toString(),
+              ),
+              _statLine(
+                'Menunggu',
+                _num(stats['pending_orders']).toString(),
+              ),
+              _statLine(
+                'Rata-rata / pekerjaan',
+                '${_num(stats['avg_duration_hours']).toStringAsFixed(1)} jam',
+              ),
+              _statLine(
+                'Total jam kerja',
+                '${_num(stats['total_work_hours']).toStringAsFixed(1)} jam',
+              ),
+              _statLine('Efisiensi', '${_num(stats['efficiency'])}%'),
+              _statLine(
+                'Tepat waktu',
+                '${_num(stats['on_time_rate'])}%',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _summaryCard(
+            context,
+            title: 'Distribusi harian',
+            icon: Icons.bar_chart_outlined,
+            children: daily.isEmpty
+                ? [
+                    Text(
+                      'Belum ada data harian pada periode ini.',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  ]
+                : daily.take(14).map((day) {
+                    final dateRaw = day['work_date']?.toString();
+                    final parsed = DateTime.tryParse(dateRaw ?? '');
+                    final label = parsed != null
+                        ? _formatDate(parsed)
+                        : (dateRaw ?? '—');
+                    return _statLine(
+                      label,
+                      '${_num(day['orders_count'])} kerja · ${_num(day['completed_count'])} selesai',
+                    );
+                  }).toList(),
+          ),
+          const SizedBox(height: 12),
+          _summaryCard(
+            context,
+            title: 'Penggunaan material',
+            icon: Icons.inventory_2_outlined,
+            children: materials.isEmpty
+                ? [
+                    Text(
+                      'Belum ada catatan material pada periode ini.',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  ]
+                : materials.map((m) {
+                    return _statLine(
+                      m['material_type']?.toString() ?? '—',
+                      '${_num(m['total_weight_used']).toStringAsFixed(1)} g · ${_num(m['usage_count'])}×',
+                    );
+                  }).toList(),
+          ),
+          const SizedBox(height: 12),
+          _summaryCard(
+            context,
+            title: 'Jenis pekerjaan',
+            icon: Icons.pie_chart_outline_outlined,
+            children: workTypes.isEmpty
+                ? [
+                    Text(
+                      'Belum ada breakdown jenis pekerjaan.',
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  ]
+                : workTypes.map((w) {
+                    final avg = _num(w['avg_duration']);
+                    return _statLine(
+                      w['item_type']?.toString() ?? '—',
+                      '${_num(w['count'])} · ${avg.toStringAsFixed(1)} jam rata-rata',
+                    );
+                  }).toList(),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -81,493 +432,77 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
         ),
         title: const Text('Laporan'),
         actions: [
-          // Period selector
-          PopupMenuButton<String>(
-            onSelected: _changePeriod,
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'week', child: Text('Minggu Ini')),
-              const PopupMenuItem(value: 'month', child: Text('Bulan Ini')),
-              const PopupMenuItem(value: 'quarter', child: Text('3 Bulan')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  Text(_getPeriodText(_selectedPeriod)),
-                  const Icon(Icons.arrow_drop_down),
-                ],
-              ),
-            ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Muat ulang',
+            onPressed: _isLoading ? null : _loadReports,
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Report Categories
-          Expanded(
-            child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                ? Center(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.error, size: 48, color: Colors.red),
+                        Icon(
+                          Icons.error_outline,
+                          size: 48,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                         const SizedBox(height: 16),
-                        Text('Error: $_error'),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 16),
-                        ElevatedButton(
+                        FilledButton(
                           onPressed: _loadReports,
-                          child: const Text('Coba Lagi'),
-                        ),
-                      ],
-                    ),
-                  )
-                : Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: GridView.count(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      children: [
-                        _ReportCard(
-                          icon: Icons.work,
-                          title: 'Laporan Harian',
-                          subtitle: 'Ringkasan pekerjaan hari ini',
-                          color: Colors.blue,
-                          onTap: () => _showDailyReport(context),
-                        ),
-                        _ReportCard(
-                          icon: Icons.calendar_month,
-                          title: 'Laporan Periode',
-                          subtitle: 'Statistik pekerjaan periode',
-                          color: Colors.green,
-                          onTap: () => _showPeriodReport(context),
-                        ),
-                        _ReportCard(
-                          icon: Icons.inventory,
-                          title: 'Penggunaan Material',
-                          subtitle: 'Laporan material yang digunakan',
-                          color: Colors.orange,
-                          onTap: () => _showMaterialReport(context),
-                        ),
-                        _ReportCard(
-                          icon: Icons.trending_up,
-                          title: 'Performa',
-                          subtitle: 'Analisis performa kerja',
-                          color: Colors.purple,
-                          onTap: () => _showPerformanceReport(context),
-                        ),
-                        _ReportCard(
-                          icon: Icons.pie_chart,
-                          title: 'Distribusi Pekerjaan',
-                          subtitle: 'Breakdown jenis pekerjaan',
-                          color: Colors.teal,
-                          onTap: () => _showWorkDistributionReport(context),
-                        ),
-                        _ReportCard(
-                          icon: Icons.download,
-                          title: 'Export Laporan',
-                          subtitle: 'Unduh laporan dalam format PDF',
-                          color: Colors.indigo,
-                          onTap: () => _exportReport(context),
+                          child: const Text('Coba lagi'),
                         ),
                       ],
                     ),
                   ),
-          ),
-
-          // Quick Stats
-          if (_reportsData != null)
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Statistik Cepat', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _QuickStat(
-                              label: 'Total Pekerjaan',
-                              value: _reportsData!['work_stats']['total_orders'].toString(),
-                              icon: Icons.work,
-                              color: Colors.blue,
-                            ),
-                          ),
-                          Expanded(
-                            child: _QuickStat(
-                              label: 'Rata-rata Waktu',
-                              value: '${_reportsData!['work_stats']['avg_duration_hours'].toStringAsFixed(1)}h',
-                              icon: Icons.schedule,
-                              color: Colors.green,
-                            ),
-                          ),
-                          Expanded(
-                            child: _QuickStat(
-                              label: 'Efisiensi',
-                              value: '${_reportsData!['work_stats']['efficiency']}%',
-                              icon: Icons.trending_up,
-                              color: Colors.orange,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+                )
+              : _reportsData == null
+                  ? const Center(child: Text('Data laporan tidak tersedia'))
+                  : _reportBody(context),
     );
-  }
-
-  String _getPeriodText(String period) {
-    switch (period) {
-      case 'week':
-        return 'Minggu';
-      case 'month':
-        return 'Bulan';
-      case 'quarter':
-        return '3 Bulan';
-      default:
-        return 'Bulan';
-    }
-  }
-
-  void _showDailyReport(BuildContext context) {
-    if (_reportsData == null) return;
-
-    final todayStats = _reportsData!['daily_distribution'].isNotEmpty
-      ? _reportsData!['daily_distribution'][0]
-      : {'orders_count': 0, 'completed_count': 0};
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Laporan Harian'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Tanggal: ${_formatDate(DateTime.now())}'),
-              const SizedBox(height: 8),
-              Text('Total Pekerjaan: ${todayStats['orders_count']}'),
-              Text('Pekerjaan Selesai: ${todayStats['completed_count']}'),
-              Text('Pekerjaan Pending: ${todayStats['orders_count'] - todayStats['completed_count']}'),
-              Text('Rata-rata Waktu: ${_reportsData!['work_stats']['avg_duration_hours'].toStringAsFixed(1)} jam'),
-              const SizedBox(height: 8),
-              const Text('Status Pekerjaan:'),
-              Text('• Selesai: ${todayStats['completed_count']}'),
-              Text('• Dalam Proses: ${_reportsData!['work_stats']['in_progress_orders']}'),
-              Text('• Menunggu: ${_reportsData!['work_stats']['pending_orders']}'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Laporan harian diekspor')),
-              );
-            },
-            child: const Text('Export'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPeriodReport(BuildContext context) {
-    if (_reportsData == null) return;
-
-    final stats = _reportsData!['work_stats'];
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Laporan ${_getPeriodText(_selectedPeriod)}'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Periode: ${_getPeriodText(_selectedPeriod)}'),
-              const SizedBox(height: 8),
-              Text('Total Pekerjaan: ${stats['total_orders']}'),
-              Text('Pekerjaan Selesai: ${stats['completed_orders']}'),
-              Text('Pekerjaan Pending: ${stats['pending_orders'] + stats['in_progress_orders']}'),
-              Text('Rata-rata Waktu per Pekerjaan: ${stats['avg_duration_hours'].toStringAsFixed(1)} jam'),
-              Text('Total Waktu Kerja: ${stats['total_work_hours'].toStringAsFixed(1)} jam'),
-              const SizedBox(height: 8),
-              const Text('Distribusi Harian:'),
-              ..._reportsData!['daily_distribution'].take(7).map<Widget>((day) =>
-                Text('• ${_formatDate(DateTime.parse(day['work_date']))}: ${day['orders_count']} pekerjaan')
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Laporan periode diekspor')),
-              );
-            },
-            child: const Text('Export'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showMaterialReport(BuildContext context) {
-    if (_reportsData == null) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Laporan Penggunaan Material'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Periode: ${_getPeriodText(_selectedPeriod)}'),
-              const SizedBox(height: 8),
-              const Text('Total Material Digunakan:'),
-              ..._reportsData!['material_usage'].map<Widget>((material) =>
-                Text('• ${material['material_type']}: ${material['total_weight_used'].toStringAsFixed(1)} gram (${material['usage_count']} kali)')
-              ),
-              const SizedBox(height: 8),
-              const Text('Material berdasarkan Jenis Pekerjaan:'),
-              ..._reportsData!['work_type_distribution'].map<Widget>((workType) =>
-                Text('• ${workType['item_type']}: ${workType['count']} pekerjaan (${workType['avg_duration']?.toStringAsFixed(1) ?? '0'} jam rata-rata)')
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Laporan material diekspor')),
-              );
-            },
-            child: const Text('Export'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPerformanceReport(BuildContext context) {
-    if (_reportsData == null) return;
-
-    final stats = _reportsData!['work_stats'];
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Laporan Performa'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Periode: ${_getPeriodText(_selectedPeriod)}'),
-              const SizedBox(height: 8),
-              const Text('Metrik Performa:'),
-              Text('• Efisiensi Kerja: ${stats['efficiency']}%'),
-              Text('• Tingkat Penyelesaian: ${stats['on_time_rate']}%'),
-              Text('• Rata-rata Waktu per Pekerjaan: ${stats['avg_duration_hours'].toStringAsFixed(1)} jam'),
-              Text('Total Waktu Kerja: ${stats['total_work_hours'].toStringAsFixed(1)} jam'),
-              const SizedBox(height: 8),
-              const Text('Kekuatan:'),
-              const Text('• Konsistensi dalam penyelesaian pekerjaan'),
-              const Text('• Penggunaan material yang efisien'),
-              const Text('• Kemampuan mengelola berbagai jenis pekerjaan'),
-              const SizedBox(height: 8),
-              const Text('Area Perbaikan:'),
-              const Text('• Optimasi waktu persiapan pekerjaan'),
-              const Text('• Peningkatan akurasi estimasi material'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showWorkDistributionReport(BuildContext context) {
-    if (_reportsData == null) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Distribusi Jenis Pekerjaan'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Periode: ${_getPeriodText(_selectedPeriod)}'),
-              const SizedBox(height: 8),
-              const Text('Breakdown berdasarkan Jenis Pekerjaan:'),
-              ..._reportsData!['work_type_distribution'].map<Widget>((workType) =>
-                Text('• ${workType['item_type']}: ${workType['count']} pekerjaan (${workType['avg_duration']?.toStringAsFixed(1) ?? '0'} jam rata-rata)')
-              ),
-              const SizedBox(height: 8),
-              const Text('Distribusi Harian:'),
-              ..._reportsData!['daily_distribution'].take(7).map<Widget>((day) =>
-                Text('• ${_formatDate(DateTime.parse(day['work_date']))}: ${day['orders_count']} pekerjaan (${day['completed_count']} selesai)')
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Tutup'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _exportReport(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Memilih jenis laporan untuk diekspor...')),
-    );
-
-    // Show export options
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Pilih Jenis Laporan', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.today),
-              title: const Text('Laporan Harian'),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Laporan harian diekspor ke PDF')),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.calendar_month),
-              title: const Text('Laporan Periode'),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Laporan periode diekspor ke PDF')),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.inventory),
-              title: const Text('Laporan Material'),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Laporan material diekspor ke PDF')),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    const months = [
-      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-    ];
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 }
 
-class _ReportCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _ReportCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.color,
+class _PeriodChip extends StatelessWidget {
+  const _PeriodChip({
+    required this.label,
+    required this.isSelected,
     required this.onTap,
   });
 
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Card(
-        elevation: 2,
+    final cs = Theme.of(context).colorScheme;
+    return Material(
+      color: isSelected ? cs.primary : cs.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 32, color: color),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? cs.onPrimary : cs.onSurface,
+              fontSize: AppTypography.bodySmall,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ),
@@ -575,39 +510,51 @@ class _ReportCard extends StatelessWidget {
   }
 }
 
-class _QuickStat extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  const _QuickStat({
-    required this.label,
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.title,
     required this.value,
     required this.icon,
     required this.color,
   });
 
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 20),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: cs.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall,
-          textAlign: TextAlign.center,
-        ),
-      ],
+      ),
     );
   }
 }

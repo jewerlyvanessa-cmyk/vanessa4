@@ -77,7 +77,7 @@ Map<String, dynamic> _fakturMetadataMap(Map<String, dynamic> orderData) {
 }
 
 /// Total biaya untuk faktur ambil: biaya aktual dari tukang (`order_cost_breakdown` → metadata & `orders.total`).
-/// Tidak mengutamakan `orders.jumlah` bila sudah ada revisi biaya bengkel (`cost_revision`).
+/// Tidak mengutamakan `orders.jumlah` bila sudah ada revisi biaya workshop (`cost_revision`).
 double pickupTotalBiayaFromWorkshopInput(Map<String, dynamic> orderData) {
   final meta = _fakturMetadataMap(orderData);
   final rev = int.tryParse(meta['cost_revision']?.toString() ?? '');
@@ -350,7 +350,7 @@ Map<String, String> fakturServiceCustomFieldRows(
   ]);
   final rev = int.tryParse(metadata['cost_revision']?.toString() ?? '');
   final hasFinalWorkshopCost =
-      rev != null && rev > 0; // biaya aktual tersimpan dari bengkel (bukan estimasi)
+      rev != null && rev > 0; // biaya aktual tersimpan dari workshop (bukan estimasi)
 
   final estNum = hasFinalWorkshopCost
       ? pickFirstPositiveNumber([

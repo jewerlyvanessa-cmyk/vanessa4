@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
-import 'dart:math' as math;
+import 'package:intl/intl.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'payment_page.dart';
@@ -30,6 +30,70 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
     return n.isEmpty ? '—' : n;
   }
 
+  String _fmtMoney(num n) => NumberFormat.currency(
+    locale: 'id_ID',
+    symbol: 'Rp ',
+    decimalDigits: 0,
+  ).format(n);
+
+  num _amountDue(Map<String, dynamic> order) {
+    for (final k in const ['remaining_amount', 'amount']) {
+      final v = order[k];
+      if (v == null) continue;
+      if (v is num) return v;
+      final n = num.tryParse(v.toString());
+      if (n != null) return n;
+    }
+    final t = order['total'];
+    if (t is num) return t;
+    return num.tryParse(t?.toString() ?? '0') ?? 0;
+  }
+
+  String _paymentMethodLabel(Map<String, dynamic> order) {
+    final m = (order['payment_method'] ?? order['method'] ?? '')
+        .toString()
+        .trim();
+    if (m.isEmpty) return '—';
+    return m;
+  }
+
+  Widget _queueMetaLine(
+    BuildContext context,
+    String label,
+    String value,
+    ColorScheme cs,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 52,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontSize: 11,
+                  ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
+                    height: 1.25,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   bool _paymentQueueOrderMatchesSearch(Map<String, dynamic> o, String q) {
     if (q.isEmpty) return true;
     if ('${o['order_id']}'.toLowerCase().contains(q)) return true;
@@ -44,6 +108,7 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
     if ((o['order_type'] ?? '').toString().toLowerCase().contains(q)) {
       return true;
     }
+    if (_paymentMethodLabel(o).toLowerCase().contains(q)) return true;
     return false;
   }
 
@@ -205,7 +270,7 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                     decoration: InputDecoration(
                       isDense: true,
                       hintText:
-                          'Cari id order, nota, pelanggan, no. HP, item…',
+                          'Cari nota, tipe order, item, metode, status…',
                       prefixIcon: const Icon(Icons.search, size: 22),
                       suffixIcon: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -256,10 +321,10 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                                   final cs = Theme.of(context).colorScheme;
                                   final isNarrow =
                                       constraints.maxWidth < 600;
-                                  final minW = math.max(
-                                    constraints.maxWidth,
-                                    780.0,
-                                  );
+                                  final w = constraints.maxWidth;
+                                  final h = constraints.maxHeight.isFinite
+                                      ? constraints.maxHeight
+                                      : 320.0;
 
                                   void goPay(Map<String, dynamic> order) {
                                     Navigator.push(
@@ -279,6 +344,10 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                         final order = filtered[i];
                         if (order.isNotEmpty) normalizeKasirOrderMap(order);
                         final nota = _orderNota(order);
+                        final due = _amountDue(order);
+                        final type =
+                            (order['order_type'] ?? '—').toString();
+                        final item = kasirOrderItemTitle(order);
                         return Material(
                           color: cs.surfaceContainerLow.withValues(alpha: 0.65),
                           shape: RoundedRectangleBorder(
@@ -291,139 +360,36 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                             borderRadius: BorderRadius.circular(10),
                             onTap: order.isEmpty ? null : () => goPay(order),
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              '#${order['order_id'] ?? '—'}',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelLarge
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.w800,
-                                                    letterSpacing: -0.2,
-                                                    fontSize:
-                                                        AppTypography.bodySmall,
-                                                  ),
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              'Nota: $nota',
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .labelSmall
-                                                  ?.copyWith(
-                                                    color: cs.onSurfaceVariant,
-                                                    fontSize: 11,
-                                                  ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: cs.surfaceContainerHighest
-                                              .withValues(alpha: 0.7),
-                                          borderRadius:
-                                              BorderRadius.circular(999),
-                                          border: Border.all(
-                                            color: cs.outlineVariant
-                                                .withValues(alpha: 0.35),
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '${order['status'] ?? '—'}',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .labelSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                                fontSize: 11,
-                                              ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
                                   Text(
-                                    '${order['customer_name'] ?? 'N/A'}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: AppTypography.bodySmall,
-                                        ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    kasirOrderItemTitle(order),
+                                    nota,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: Theme.of(context)
                                         .textTheme
-                                        .bodySmall
+                                        .titleSmall
                                         ?.copyWith(
-                                          color: cs.onSurfaceVariant,
-                                          fontSize: 12,
-                                          height: 1.2,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                   ),
                                   const SizedBox(height: 6),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          'Rp ${order['total']?.toString() ?? '0'}',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .labelLarge
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w900,
-                                                color: cs.primary,
-                                                fontSize:
-                                                    AppTypography.body,
-                                              ),
+                                  _queueMetaLine(context, 'Order', type, cs),
+                                  _queueMetaLine(context, 'Item', item, cs),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _fmtMoney(due),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w900,
+                                          color: cs.primary,
                                         ),
-                                      ),
-                                      FilledButton(
-                                        style: FilledButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                          minimumSize: const Size(0, 34),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                        onPressed:
-                                            order.isEmpty ? null : () => goPay(order),
-                                        child: const Text(
-                                          'Bayar',
-                                          style: TextStyle(fontSize: 13),
-                                        ),
-                                      ),
-                                    ],
                                   ),
                                 ],
                               ),
@@ -439,6 +405,11 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                     if (order.isNotEmpty) normalizeKasirOrderMap(order);
                     rows.add(
                       DataRow(
+                        onSelectChanged: order.isEmpty
+                            ? null
+                            : (selected) {
+                                if (selected == true) goPay(order);
+                              },
                         color: WidgetStateProperty.resolveWith((s) {
                           if (s.contains(WidgetState.hovered)) {
                             return cs.primary.withValues(alpha: 0.06);
@@ -451,25 +422,23 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                         cells: [
                           DataCell(
                             Text(
-                              '#${order['order_id'] ?? '—'}',
+                              _orderNota(order),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: AppTypography.tableCell,
                               ),
                             ),
+                            onTap: order.isEmpty ? null : () => goPay(order),
                           ),
                           DataCell(
                             Text(
-                              _orderNota(order),
+                              '${order['order_type'] ?? '—'}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: AppTypography.tableCell,
-                              ),
                             ),
-                          ),
-                          DataCell(
-                            Text('${order['customer_name'] ?? 'N/A'}'),
+                            onTap: order.isEmpty ? null : () => goPay(order),
                           ),
                           DataCell(
                             Text(
@@ -477,27 +446,17 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
+                            onTap: order.isEmpty ? null : () => goPay(order),
                           ),
                           DataCell(
                             Text(
-                              'Rp ${order['total']?.toString() ?? '0'}',
+                              _fmtMoney(_amountDue(order)),
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: cs.primary,
                               ),
                             ),
-                          ),
-                          DataCell(Text('${order['status'] ?? '—'}')),
-                          DataCell(
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: FilledButton(
-                                onPressed: order.isEmpty
-                                    ? null
-                                    : () => goPay(order),
-                                child: const Text('Bayar'),
-                              ),
-                            ),
+                            onTap: order.isEmpty ? null : () => goPay(order),
                           ),
                         ],
                       ),
@@ -514,31 +473,42 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: Scrollbar(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(minWidth: minW),
-                          child: SingleChildScrollView(
-                            child: DataTable(
-                              headingRowColor: WidgetStateProperty.all(
-                                cs.surfaceContainerHigh,
+                      child: SizedBox(
+                        width: w,
+                        height: h,
+                        child: ClipRect(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.topLeft,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.vertical,
+                              child: DataTable(
+                                headingRowColor: WidgetStateProperty.all(
+                                  cs.surfaceContainerHigh,
+                                ),
+                                dataRowMinHeight: 40,
+                                dataRowMaxHeight: 56,
+                                columnSpacing: 6,
+                                horizontalMargin: 6,
+                                showCheckboxColumn: false,
+                                dividerThickness: 0.5,
+                                columns: [
+                                  DataColumn(
+                                    label: dataTableColumnLabel('No. Nota'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Order'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Item'),
+                                  ),
+                                  DataColumn(
+                                    label: dataTableColumnLabel('Jumlah'),
+                                    numeric: true,
+                                  ),
+                                ],
+                                rows: rows,
                               ),
-                              dataRowMinHeight: 40,
-                              dataRowMaxHeight: 56,
-                              columnSpacing: 10,
-                              horizontalMargin: 8,
-                              showCheckboxColumn: false,
-                              dividerThickness: 0.5,
-                              columns: [
-                                DataColumn(label: dataTableColumnLabel('Order')),
-                                DataColumn(label: dataTableColumnLabel('Nota')),
-                                DataColumn(label: dataTableColumnLabel('Customer')),
-                                DataColumn(label: dataTableColumnLabel('Item')),
-                                DataColumn(label: dataTableColumnLabel('Total')),
-                                DataColumn(label: dataTableColumnLabel('Status')),
-                                DataColumn(label: dataTableColumnLabel('Aksi')),
-                              ],
-                              rows: rows,
                             ),
                           ),
                         ),

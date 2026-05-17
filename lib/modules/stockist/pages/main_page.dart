@@ -118,7 +118,7 @@ class StockistMainPage extends ConsumerWidget {
                 ),
                 ModuleMenuEntry(
                   icon: Icons.qr_code_2,
-                  label: 'CETAK ULANG QR',
+                  label: 'CETAK ULANG LABEL',
                   iconColor: Colors.brown,
                   onTap: () => Navigator.push(
                     context,
@@ -137,12 +137,6 @@ class StockistMainPage extends ConsumerWidget {
                       builder: (context) => const StockistReportsPage(),
                     ),
                   ),
-                ),
-                ModuleMenuEntry(
-                  icon: Icons.qr_code_scanner,
-                  label: 'CEK STOK',
-                  iconColor: Colors.teal,
-                  onTap: () => Navigator.pushNamed(context, '/cek_stok'),
                 ),
               ],
             ),

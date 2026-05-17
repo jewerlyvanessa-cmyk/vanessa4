@@ -8,10 +8,25 @@ import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/data/api_service.dart';
+import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
 import 'package:vanessa3/widgets/workshop_cost_breakdown_sheet.dart';
 
+/// Mode tampilan antrian workshop.
+enum WorkshopOrdersViewMode {
+  /// Antrian pekerjaan (filter fleksibel).
+  queue,
+
+  /// Hanya pekerjaan yang sedang dikerjakan tukang di cabang workshop.
+  inProgress,
+}
+
 class WorkshopOrdersPage extends ConsumerStatefulWidget {
-  const WorkshopOrdersPage({super.key});
+  const WorkshopOrdersPage({
+    super.key,
+    this.viewMode = WorkshopOrdersViewMode.queue,
+  });
+
+  final WorkshopOrdersViewMode viewMode;
 
   @override
   ConsumerState<WorkshopOrdersPage> createState() => _WorkshopOrdersPageState();
@@ -28,6 +43,10 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.viewMode == WorkshopOrdersViewMode.inProgress) {
+      _selectedStatus = 'in_progress';
+      _scope = 'local';
+    }
     _loadWorkshopOrders();
   }
 
@@ -63,16 +82,23 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
         return;
       }
 
+      final isQueueMode =
+          widget.viewMode != WorkshopOrdersViewMode.inProgress;
       final qStatus = _selectedStatus == 'all'
           ? ''
           : '&status=${Uri.encodeQueryComponent(_selectedStatus)}';
-      final qScope = '&scope=${Uri.encodeQueryComponent(_scope)}';
-      final qUnassigned = (_selectedStatus == 'all' || _selectedStatus == 'pending')
+      // Antrian pekerjaan: queue_mode=antrian → visibilitas cabang workshop + belum assign (backend).
+      final qScope = isQueueMode
+          ? '&scope=all'
+          : '&scope=${Uri.encodeQueryComponent(_scope)}';
+      final qQueue = isQueueMode ? '&queue_mode=antrian' : '';
+      final qUnassigned = isQueueMode &&
+              (_selectedStatus == 'all' || _selectedStatus == 'pending')
           ? '&unassigned_only=1'
           : '';
       final response = await http.get(
         Uri.parse(
-          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus$qUnassigned',
+          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus$qQueue$qUnassigned',
         ),
         headers: NetworkConfig.defaultHeaders,
       );
@@ -125,9 +151,12 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
   List<dynamic> get _filteredOrders => _workshopOrders;
 
   bool _isInProgressStatus(String s) =>
-      s == 'repairing' || s == 'polishing' || s == 'custom_work';
+      s == 'repairing' ||
+      s == 'polishing' ||
+      s == 'custom_work' ||
+      s == 'in_workshop';
 
-  /// PUT /workshop-orders mengizinkan alur teknisi hanya untuk role ini (bukan admin_workshop).
+  /// PUT /workshop-orders mengizinkan alur tukang hanya untuk role ini (bukan admin_workshop).
   bool _roleCanPutTechnicianWorkshopFlow(String role) =>
       {'superadmin', 'manajer', 'tukang'}.contains(role);
 
@@ -175,8 +204,6 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
     final current = (order['status'] ?? '').toString().trim().toLowerCase();
     final role = ref.read(userStateProvider).role.trim().toLowerCase();
     final canReceiveFromWarehouse = {
-      'admin_workshop',
-      'stockist',
       'superadmin',
       'manajer',
     }.contains(role);
@@ -198,7 +225,7 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
         ...['polishing', 'done_workshop'],
       if ((current == 'polishing' || current == 'custom_work') && canTechPut)
         'done_workshop',
-      // Bengkel / toko / manajemen: kirim balik ke toko setelah selesai bengkel (bukan teknisi).
+      // Workshop / toko / manajemen: kirim balik ke toko setelah selesai workshop (bukan tukang).
       if (current == 'done_workshop' && canMarkReadyForPickup)
         'ready_for_pickup',
     ];
@@ -233,10 +260,12 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
     // Listen to real-time workshop order updates
     ref.listen(realTimeOrderUpdatesProvider, (previous, next) {
       next.whenData((update) {
+        final event = (update['event'] ?? '').toString();
         if (update['type'] == 'order_update' ||
             update['type'] == 'workshop_assignment' ||
-            update['type'] == 'workshop_update') {
-          // Refresh workshop orders when relevant updates occur
+            update['type'] == 'workshop_update' ||
+            event == 'workshop_approved' ||
+            event == 'workshop_assigned') {
           _loadWorkshopOrders();
         }
       });
@@ -250,9 +279,15 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Antrian pekerjaan'),
             Text(
-              _scopeSubtitle(),
+              widget.viewMode == WorkshopOrdersViewMode.inProgress
+                  ? 'ON PROGRESS'
+                  : 'Antrian pekerjaan',
+            ),
+            Text(
+              widget.viewMode == WorkshopOrdersViewMode.inProgress
+                  ? 'Pekerjaan yang sedang dikerjakan tukang di cabang ini'
+                  : _scopeSubtitle(),
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: appBarFg.withValues(alpha: 0.85),
                     fontWeight: FontWeight.w400,
@@ -261,33 +296,34 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
           ],
         ),
         actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              setState(() => _selectedStatus = value);
-              _loadWorkshopOrders();
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'all', child: Text('Semua')),
-              const PopupMenuItem(
-                value: 'pending',
-                child: Text('Baru masuk workshop'),
-              ),
-              const PopupMenuItem(
-                value: 'in_progress',
-                child: Text('Dalam Proses'),
-              ),
-              const PopupMenuItem(value: 'completed', child: Text('Selesai')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Text(_getStatusLabel(_selectedStatus)),
-                  const Icon(Icons.arrow_drop_down),
-                ],
+          if (widget.viewMode != WorkshopOrdersViewMode.inProgress)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                setState(() => _selectedStatus = value);
+                _loadWorkshopOrders();
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'all', child: Text('Semua')),
+                const PopupMenuItem(
+                  value: 'pending',
+                  child: Text('Baru masuk workshop'),
+                ),
+                const PopupMenuItem(
+                  value: 'in_progress',
+                  child: Text('Dalam Proses'),
+                ),
+                const PopupMenuItem(value: 'completed', child: Text('Selesai')),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Text(_getStatusLabel(_selectedStatus)),
+                    const Icon(Icons.arrow_drop_down),
+                  ],
+                ),
               ),
             ),
-          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadWorkshopOrders,
@@ -298,40 +334,44 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment<String>(
-                  value: 'all',
-                  label: Text('Antrian'),
-                  icon: Icon(Icons.playlist_play_outlined, size: 18),
-                ),
-                ButtonSegment<String>(
-                  value: 'cross_branch',
-                  label: Text('Cabang lain'),
-                  icon: Icon(Icons.swap_horiz, size: 18),
-                ),
-                ButtonSegment<String>(
-                  value: 'local',
-                  label: Text('Cabang ini'),
-                  icon: Icon(Icons.home_work_outlined, size: 18),
-                ),
-              ],
-              selected: {_scope},
-              onSelectionChanged: (Set<String> next) {
-                if (next.isEmpty) return;
-                setState(() => _scope = next.first);
-                _loadWorkshopOrders();
-              },
+          if (widget.viewMode != WorkshopOrdersViewMode.inProgress)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment<String>(
+                    value: 'all',
+                    label: Text('Antrian'),
+                    icon: Icon(Icons.playlist_play_outlined, size: 18),
+                  ),
+                  ButtonSegment<String>(
+                    value: 'cross_branch',
+                    label: Text('Cabang lain'),
+                    icon: Icon(Icons.swap_horiz, size: 18),
+                  ),
+                  ButtonSegment<String>(
+                    value: 'local',
+                    label: Text('Cabang ini'),
+                    icon: Icon(Icons.home_work_outlined, size: 18),
+                  ),
+                ],
+                selected: {_scope},
+                onSelectionChanged: (Set<String> next) {
+                  if (next.isEmpty) return;
+                  setState(() => _scope = next.first);
+                  _loadWorkshopOrders();
+                },
+              ),
             ),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
             child: Text(
-              'Tip: pakai «Antrian» untuk semua pekerjaan di cabang bengkel login. '
-              '«Cabang ini» = cabang asal order sama dengan cabang login, atau order yang metadata-nya mengarah ke bengkel ini.',
+              widget.viewMode == WorkshopOrdersViewMode.inProgress
+                  ? 'Menampilkan order service/custom dengan status dikerjakan tukang '
+                      '(perbaikan, poles, custom work, atau sudah masuk bengkel dan ditugaskan).'
+                  : 'Tip: pakai «Antrian» untuk semua pekerjaan di cabang workshop login. '
+                      '«Cabang ini» = cabang asal order sama dengan cabang login, atau order yang metadata-nya mengarah ke workshop ini.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -389,8 +429,36 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     child: _filteredOrders.isEmpty
                         ? Center(
-                            child: Text(
-                              _emptyListMessage(),
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    _emptyListMessage(),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  if (widget.viewMode !=
+                                          WorkshopOrdersViewMode.inProgress &&
+                                      (_selectedStatus != 'all' ||
+                                          _scope != 'all')) ...[
+                                    const SizedBox(height: 16),
+                                    OutlinedButton.icon(
+                                      onPressed: () {
+                                        setState(() {
+                                          _selectedStatus = 'all';
+                                          _scope = 'all';
+                                        });
+                                        _loadWorkshopOrders();
+                                      },
+                                      icon: const Icon(Icons.filter_alt_off),
+                                      label: const Text(
+                                        'Reset filter (Antrian / Semua)',
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
                           )
                         : LayoutBuilder(
@@ -445,11 +513,14 @@ const desktopW = 960.0;
                                             value: 'start_work',
                                             child: Text('Mulai kerja'),
                                           ),
-                                        if (role != 'admin_workshop' &&
-                                            role != 'tukang')
+                                        if (const {
+                                          'admin_workshop',
+                                          'superadmin',
+                                          'manajer',
+                                        }.contains(role))
                                           const PopupMenuItem(
                                             value: 'assign_technician',
-                                            child: Text('Assign teknisi'),
+                                            child: Text('Assign tukang'),
                                           ),
                                         const PopupMenuItem(
                                           value: 'cost_breakdown',
@@ -612,7 +683,7 @@ dataRowMinHeight: narrow ? 52 : 48,
                                                       label: dataTableColumnLabel('Item'),
                                                     ),
                                                     DataColumn(
-                                                      label: dataTableColumnLabel('Teknisi'),
+                                                      label: dataTableColumnLabel('Tukang'),
                                                     ),
                                                     DataColumn(
                                                       label: dataTableColumnLabel('Status'),
@@ -648,11 +719,14 @@ dataRowMinHeight: narrow ? 52 : 48,
       case 'cross_branch':
         return 'Hanya kiriman dari cabang lain (sama antrian, disaring)';
       default:
-        return 'Sama dengan antrian kerja tukang (belum selesai bengkel)';
+        return 'Sama dengan antrian kerja tukang (belum selesai workshop)';
     }
   }
 
   String _emptyListMessage() {
+    if (widget.viewMode == WorkshopOrdersViewMode.inProgress) {
+      return 'Tidak ada pekerjaan yang sedang dikerjakan tukang di cabang ini.';
+    }
     final filt = _selectedStatus == 'all'
         ? ''
         : ' (filter: ${_getStatusLabel(_selectedStatus)})';
@@ -663,8 +737,8 @@ dataRowMinHeight: narrow ? 52 : 48,
       return 'Tidak ada kiriman cabang lain di antrian$filt';
     }
     return 'Tidak ada order di antrian kerja$filt.\n'
-        'Order baru dari toko: cek status Menunggu bengkel — setujui ke workshop '
-        '(menu Service dari toko atau Update status pada baris berstatus tersebut).';
+        'Order menunggu persetujuan workshop: buka menu TOKO → Service dari toko, '
+        'lalu setujui agar masuk antrian ini.';
   }
 
   Widget _buildSummaryCard(
@@ -740,11 +814,7 @@ dataRowMinHeight: narrow ? 52 : 48,
         _startTechnicianWork(order);
         break;
       case 'assign_technician':
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Assign teknisi untuk order #${order['order_id']}'),
-          ),
-        );
+        _showAssignTechnicianDialog(order);
         break;
       case 'cost_breakdown':
         final oid = int.tryParse(order['order_id']?.toString() ?? '');
@@ -768,7 +838,169 @@ dataRowMinHeight: narrow ? 52 : 48,
     }
   }
 
-  /// Sama alur «Mulai» di antrian kerja tukang: assign progres ke teknisi login.
+  Future<void> _showAssignTechnicianDialog(dynamic order) async {
+    final userState = ref.read(userStateProvider);
+    final block = userState.workshopSessionBlockReason;
+    if (block != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(block)),
+        );
+      }
+      return;
+    }
+    final branch = userState.branch.trim();
+    if (branch.isEmpty) return;
+
+    final oid = int.tryParse(order['order_id']?.toString() ?? '');
+    if (oid == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ID order tidak valid')),
+        );
+      }
+      return;
+    }
+
+    List<Map<String, dynamic>> technicians = [];
+    try {
+      technicians = await ApiService.getTechnicians(branch);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memuat tukang: $e')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    if (technicians.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tidak ada tukang aktif di cabang ini. Tambahkan lewat menu Karyawan.'),
+        ),
+      );
+      return;
+    }
+
+    int? selectedTechId;
+    var startImmediately = false;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Text('Assign tukang — order #$oid'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Pilih tukang yang mengerjakan order ini. '
+                    'Order akan hilang dari antrian dan muncul di Update Progress tukang.',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: (technicians.length * 72.0).clamp(120.0, 280.0),
+                    child: ListView.builder(
+                      itemCount: technicians.length,
+                      itemBuilder: (context, index) {
+                        final t = technicians[index];
+                        final tid = int.tryParse(t['user_id']?.toString() ?? '');
+                        final name = (t['username'] ?? 'Tukang').toString();
+                        final activeOrders =
+                            int.tryParse(t['active_orders']?.toString() ?? '0') ?? 0;
+                        final selected = tid != null && selectedTechId == tid;
+                        return ListTile(
+                          selected: selected,
+                          leading: Icon(
+                            selected
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_off,
+                            color: selected
+                                ? Theme.of(ctx).colorScheme.primary
+                                : null,
+                          ),
+                          title: Text(name),
+                          subtitle: Text(
+                            activeOrders > 0
+                                ? 'Sedang $activeOrders pekerjaan aktif'
+                                : 'Belum ada pekerjaan aktif',
+                          ),
+                          onTap: tid == null
+                              ? null
+                              : () => setDialogState(() => selectedTechId = tid),
+                        );
+                      },
+                    ),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Langsung mulai kerja'),
+                    subtitle: const Text(
+                      'Status langsung ke Dikerjakan / Custom Work (seperti tombol Mulai tukang)',
+                    ),
+                    value: startImmediately,
+                    onChanged: (v) =>
+                        setDialogState(() => startImmediately = v),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Batal'),
+              ),
+              FilledButton(
+                onPressed: selectedTechId != null && selectedTechId! > 0
+                    ? () => Navigator.of(ctx).pop(true)
+                    : null,
+                child: const Text('Assign'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (confirmed != true || selectedTechId == null) return;
+
+    try {
+      await ApiService.assignWorkshopTechnician(
+        orderId: oid,
+        branchId: branch,
+        technicianId: selectedTechId!,
+        startImmediately: startImmediately,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              startImmediately
+                  ? 'Order #$oid ditugaskan dan mulai dikerjakan'
+                  : 'Order #$oid ditugaskan ke tukang',
+            ),
+          ),
+        );
+        await _loadWorkshopOrders();
+        ref.read(workshopDashboardProvider.notifier).refresh();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal assign: $e')),
+        );
+      }
+    }
+  }
+
+  /// Sama alur «Mulai» di antrian kerja tukang: assign progres ke tukang login.
   Future<void> _startTechnicianWork(dynamic order) async {
     try {
       final userState = ref.read(userStateProvider);

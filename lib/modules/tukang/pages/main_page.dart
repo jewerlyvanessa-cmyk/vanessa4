@@ -61,7 +61,7 @@ class TukangMainPage extends ConsumerWidget {
               fit: BoxFit.contain,
             ),
             const SizedBox(width: 12),
-            const Text('Teknisi'),
+            const Text('Tukang'),
           ],
         ),
         actions: [
@@ -269,7 +269,7 @@ class TukangMainPage extends ConsumerWidget {
     // Show notification for new work assignments, progress updates, etc.
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Pemberitahuan Teknisi: $message'),
+        content: Text('Pemberitahuan Tukang: $message'),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'OK',

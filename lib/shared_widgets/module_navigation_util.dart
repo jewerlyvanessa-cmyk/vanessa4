@@ -1,5 +1,6 @@
 // Fungsi utilitas global untuk navigasi modul utama berdasarkan role
 import 'package:flutter/material.dart';
+import 'package:vanessa3/routes/app_routes.dart';
 
 String getMainModuleForRole(String role) {
   final normalized = role.trim().toLowerCase();
@@ -32,33 +33,33 @@ void navigateToMainModule(BuildContext context, String mainModule) {
   final normalized = mainModule.trim().toLowerCase();
   switch (normalized) {
     case 'cs':
-      navigator.pushReplacementNamed('/cs');
+      navigator.pushReplacementNamed(AppRoutes.cs);
       break;
     case 'kasir':
-      navigator.pushReplacementNamed('/kasir');
+      navigator.pushReplacementNamed(AppRoutes.kasir);
       break;
     case 'superadmin':
-      navigator.pushReplacementNamed('/superadmin');
+      navigator.pushReplacementNamed(AppRoutes.superadmin);
       break;
     case 'admin_toko':
-      navigator.pushReplacementNamed('/admin_toko');
+      navigator.pushReplacementNamed(AppRoutes.adminToko);
       break;
     case 'admin_workshop':
-      navigator.pushReplacementNamed('/admin_workshop');
+      navigator.pushReplacementNamed(AppRoutes.adminWorkshop);
       break;
     case 'admin_warehouse':
-      navigator.pushReplacementNamed('/admin_warehouse');
+      navigator.pushReplacementNamed(AppRoutes.adminWarehouse);
       break;
     case 'tukang':
-      navigator.pushReplacementNamed('/tukang');
+      navigator.pushReplacementNamed(AppRoutes.tukang);
       break;
     case 'manajer':
-      navigator.pushReplacementNamed('/manager');
+      navigator.pushReplacementNamed(AppRoutes.manajer);
       break;
     case 'stockist':
-      navigator.pushReplacementNamed('/stockist');
+      navigator.pushReplacementNamed(AppRoutes.stockist);
       break;
     default:
-      navigator.pushReplacementNamed('/dashboard');
+      navigator.pushReplacementNamed(AppRoutes.dashboard);
   }
 }
