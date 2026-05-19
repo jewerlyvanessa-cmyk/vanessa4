@@ -403,7 +403,13 @@ workshopApi.post('/produce-from-material', async (req, res) => {
     } = req.body ?? {};
 
     const branchId = parseInt(String(branch_id ?? ''), 10);
-    const orderId = parseInt(String(order_id ?? ''), 10);
+    const orderIdParsed = parseInt(String(order_id ?? '').trim(), 10);
+    const hasOrder =
+      order_id != null &&
+      String(order_id).trim() !== '' &&
+      Number.isFinite(orderIdParsed) &&
+      orderIdParsed > 0;
+    const orderId = hasOrder ? orderIdParsed : null;
     const techId = parseInt(String(technician_id ?? req.user?.user_id ?? req.user?.id ?? ''), 10);
     const materialItemId = parseInt(String(material_item_id ?? ''), 10);
     const qtyUsed = parseFloat(String(material_qty_used ?? ''));
@@ -422,9 +428,6 @@ workshopApi.post('/produce-from-material', async (req, res) => {
     if (!Number.isFinite(branchId) || branchId <= 0) {
       return res.status(400).json({ error: 'branch_id wajib' });
     }
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      return res.status(400).json({ error: 'order_id wajib (hubungkan ke pekerjaan)' });
-    }
     if (!Number.isFinite(materialItemId) || materialItemId <= 0) {
       return res.status(400).json({ error: 'material_item_id wajib' });
     }
@@ -442,12 +445,20 @@ workshopApi.post('/produce-from-material', async (req, res) => {
     }
     const outQty = Number.isFinite(outputQty) && outputQty > 0 ? outputQty : 1;
 
-    const orderCheck = await db.query(
-      `SELECT order_id, status FROM orders WHERE order_id = $1 LIMIT 1`,
-      [orderId]
-    );
-    if (orderCheck.rows.length === 0) {
-      return res.status(404).json({ error: 'Order tidak ditemukan' });
+    if (hasOrder) {
+      const orderCheck = await db.query(
+        `SELECT order_id, status, order_type::text AS order_type FROM orders WHERE order_id = $1 LIMIT 1`,
+        [orderId]
+      );
+      if (orderCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Order tidak ditemukan' });
+      }
+      const ot = String(orderCheck.rows[0].order_type ?? '').trim().toLowerCase();
+      if (ot !== 'service' && ot !== 'custom') {
+        return res.status(400).json({
+          error: 'Order opsional hanya untuk tipe service atau custom',
+        });
+      }
     }
 
     await client.query('BEGIN');
@@ -490,7 +501,11 @@ workshopApi.post('/produce-from-material', async (req, res) => {
         nextMatQty,
         JSON.stringify({
           last_updated_by: String(techId),
-          last_update_notes: notes || `Produksi perhiasan order #${orderId}`,
+          last_update_notes:
+            notes ||
+            (hasOrder
+              ? `Produksi perhiasan order #${orderId}`
+              : 'Produksi mandiri tukang'),
           updated_at: new Date().toISOString(),
         }),
         materialItemId,
@@ -498,7 +513,9 @@ workshopApi.post('/produce-from-material', async (req, res) => {
     );
 
     const productionMeta = {
-      order_id: String(orderId),
+      ...(hasOrder
+        ? { order_id: String(orderId) }
+        : { production_kind: 'self_initiated' }),
       technician_id: String(techId),
       material_item_id: String(materialItemId),
       material_name: matRow.name,
@@ -552,7 +569,9 @@ workshopApi.post('/produce-from-material', async (req, res) => {
         qtyUsed,
         prevMatQty,
         nextMatQty,
-        `Bahan untuk produksi order #${orderId} → ${outputName}`,
+        hasOrder
+          ? `Bahan untuk produksi order #${orderId} → ${outputName}`
+          : `Bahan produksi mandiri → ${outputName}`,
         outputItemId,
         creatorOk ? creatorId : null,
       ]
@@ -570,14 +589,16 @@ workshopApi.post('/produce-from-material', async (req, res) => {
         outputItemId,
         branchId,
         outQty,
-        `Hasil produksi tukang dari material ${matRow.name} (order #${orderId})`,
-        orderId,
+        hasOrder
+          ? `Hasil produksi tukang dari material ${matRow.name} (order #${orderId})`
+          : `Hasil produksi mandiri dari material ${matRow.name}`,
+        hasOrder ? orderId : outputItemId,
         creatorOk ? creatorId : null,
       ]
     );
 
     const hasMeta = await ordersHasMetadataColumnLive(db);
-    if (hasMeta) {
+    if (hasOrder && hasMeta) {
       const prodEntry = {
         output_item_id: outputItemId,
         output_name: outputName,
@@ -606,15 +627,18 @@ workshopApi.post('/produce-from-material', async (req, res) => {
     await client.query('COMMIT');
 
     broadcastWorkshop(
-      `Tukang memproduksi ${outputName} dari material (Order #${orderId})`,
+      hasOrder
+        ? `Tukang memproduksi ${outputName} dari material (Order #${orderId})`
+        : `Tukang memproduksi ${outputName} (produksi mandiri)`,
       'order_update',
       {
         branch_id: branchId,
         event: 'workshop_production_created',
         payload: {
-          order_id: orderId,
+          order_id: hasOrder ? orderId : null,
           output_item_id: outputItemId,
           technician_id: techId,
+          production_kind: hasOrder ? 'order_linked' : 'self_initiated',
         },
       }
     );
@@ -625,7 +649,8 @@ workshopApi.post('/produce-from-material', async (req, res) => {
       output_name: outputRow.name,
       output_kode: outputRow.kode_produk,
       material_remaining: nextMatQty,
-      order_id: orderId,
+      order_id: hasOrder ? orderId : null,
+      production_kind: hasOrder ? 'order_linked' : 'self_initiated',
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -679,6 +704,7 @@ workshopApi.get('/productions', async (req, res) => {
           i.quantity AS output_quantity,
           i.created_at,
           i.metadata->>'order_id' AS order_id,
+          i.metadata->>'production_kind' AS production_kind,
           i.metadata->>'technician_id' AS technician_id,
           i.metadata->>'material_item_id' AS material_item_id,
           i.metadata->>'material_name' AS material_name,

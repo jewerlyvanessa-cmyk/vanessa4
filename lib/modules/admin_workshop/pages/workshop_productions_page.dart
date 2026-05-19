@@ -184,9 +184,19 @@ class _WorkshopProductionsPageState
                                                 ),
                                               ),
                                             ),
-                                            if (orderId != null)
+                                            if (orderId != null &&
+                                                orderId.isNotEmpty)
                                               Chip(
                                                 label: Text('Order #$orderId'),
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                materialTapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              )
+                                            else
+                                              Chip(
+                                                label: const Text('Mandiri'),
                                                 visualDensity:
                                                     VisualDensity.compact,
                                                 materialTapTargetSize:

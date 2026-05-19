@@ -21,12 +21,15 @@ class CustomersState {
   final String? error;
   /// Cabang terakhir yang dipakai saat `fetchCustomers(branchId: …)` (untuk refresh CRUD).
   final String? filterBranchId;
+  /// Sudah pernah selesai fetch minimal sekali (cegah loop saat daftar kosong).
+  final bool hasLoaded;
 
   const CustomersState({
     required this.customers,
     this.isLoading = false,
     this.error,
     this.filterBranchId,
+    this.hasLoaded = false,
   });
 
   CustomersState copyWith({
@@ -35,14 +38,17 @@ class CustomersState {
     String? error,
     String? filterBranchId,
     bool clearFilterBranchId = false,
+    bool? hasLoaded,
+    bool clearError = false,
   }) {
     return CustomersState(
       customers: customers ?? this.customers,
       isLoading: isLoading ?? this.isLoading,
-      error: error,
+      error: clearError ? null : (error ?? this.error),
       filterBranchId: clearFilterBranchId
           ? null
           : (filterBranchId ?? this.filterBranchId),
+      hasLoaded: hasLoaded ?? this.hasLoaded,
     );
   }
 }
@@ -50,12 +56,20 @@ class CustomersState {
 class CustomersNotifier extends StateNotifier<CustomersState> {
   CustomersNotifier() : super(const CustomersState(customers: []));
 
-  Future<void> fetchCustomers({String? branchId}) async {
+  Future<void> fetchCustomers({String? branchId, bool silent = false}) async {
+    final branchChanged =
+        branchId != null &&
+        branchId.toString().trim().isNotEmpty &&
+        branchId.toString() != (state.filterBranchId ?? '');
+    final showFullScreenLoading =
+        !silent && (!state.hasLoaded || branchChanged);
+
     state = state.copyWith(
-      isLoading: true,
-      error: null,
+      isLoading: showFullScreenLoading,
+      clearError: true,
       filterBranchId: branchId,
       clearFilterBranchId: branchId == null,
+      hasLoaded: branchChanged ? false : state.hasLoaded,
     );
 
     final uri = Uri.parse('${NetworkConfig.baseUrl}/api/customers').replace(
@@ -80,6 +94,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
           state = state.copyWith(
             customers: List<Map<String, dynamic>>.from(responseData),
             isLoading: false,
+            hasLoaded: true,
           );
           Logger.logInfo(
             'DEBUG: Successfully loaded ${responseData.length} customers',
@@ -87,6 +102,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
         } else {
           state = state.copyWith(
             isLoading: false,
+            hasLoaded: true,
             error: 'Format data pelanggan tidak valid',
           );
           Logger.logInfo('DEBUG: Invalid data format');
@@ -94,6 +110,7 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       } else {
         state = state.copyWith(
           isLoading: false,
+          hasLoaded: true,
           error: 'Failed to load customers: ${response.statusCode}',
         );
         Logger.logInfo(
@@ -105,50 +122,66 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       state = state.copyWith(
         customers: [],
         isLoading: false,
+        hasLoaded: true,
         error: 'Network error occurred: $error',
       );
     }
   }
 
-  Future<void> addCustomer(
-    String name,
-    String email,
-    String phone,
-    String address,
-  ) async {
-    state = state.copyWith(isLoading: true, error: null);
-
+  Future<bool> addCustomer({
+    required String name,
+    required String phone,
+    String? email,
+    String? address,
+    String? branchId,
+  }) async {
     final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers');
     try {
+      final body = <String, dynamic>{
+        'name': name.trim(),
+        'phone': phone.trim(),
+        'address': (address == null || address.trim().isEmpty)
+            ? null
+            : address.trim(),
+      };
+      final emailTrim = email?.trim();
+      if (emailTrim != null && emailTrim.isNotEmpty) {
+        body['email'] = emailTrim;
+      }
+      final branch = branchId?.trim();
+      if (branch != null && branch.isNotEmpty) {
+        body['branch_id'] = branch;
+      }
+
       final response = await http.post(
         url,
         headers: NetworkConfig.defaultHeaders,
-        body: json.encode({
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'address': address,
-        }),
+        body: json.encode(body),
       );
       if (response.statusCode == 201) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(branchId: state.filterBranchId);
-        } else {
-          state = state.copyWith(
-            isLoading: false,
-            error: responseData['message'] ?? 'Failed to add customer',
-          );
+          await fetchCustomers(branchId: state.filterBranchId, silent: true);
+          return true;
         }
-      } else {
-        final responseData = json.decode(response.body);
         state = state.copyWith(
-          isLoading: false,
-          error: responseData['message'] ?? 'Failed to add customer',
+          error: responseData['message']?.toString() ?? 'Gagal menambah pelanggan',
         );
+        return false;
       }
+      Map<String, dynamic>? responseData;
+      try {
+        responseData = json.decode(response.body) as Map<String, dynamic>?;
+      } catch (_) {}
+      state = state.copyWith(
+        error:
+            responseData?['message']?.toString() ??
+            'Gagal menambah pelanggan (${response.statusCode})',
+      );
+      return false;
     } catch (error) {
-      state = state.copyWith(isLoading: false, error: 'Network error occurred');
+      state = state.copyWith(error: 'Kesalahan jaringan: $error');
+      return false;
     }
   }
 
@@ -159,8 +192,6 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     String phone,
     String address,
   ) async {
-    state = state.copyWith(isLoading: true, error: null);
-
     final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers/$id');
     try {
       final response = await http.patch(
@@ -176,11 +207,10 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(branchId: state.filterBranchId);
+          await fetchCustomers(branchId: state.filterBranchId, silent: true);
           return true;
         } else {
           state = state.copyWith(
-            isLoading: false,
             error: responseData['message'] ?? 'Failed to update customer',
           );
           return false;
@@ -188,42 +218,40 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       } else {
         final responseData = json.decode(response.body);
         state = state.copyWith(
-          isLoading: false,
           error: responseData['message'] ?? 'Failed to update customer',
         );
         return false;
       }
     } catch (error) {
-      state = state.copyWith(isLoading: false, error: 'Network error occurred');
+      state = state.copyWith(error: 'Network error occurred');
       return false;
     }
   }
 
   Future<void> deleteCustomer(String id) async {
-    state = state.copyWith(isLoading: true, error: null);
-
     final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers/$id');
     try {
-      final response = await http.delete(url);
+      final response = await http.delete(
+        url,
+        headers: NetworkConfig.defaultHeaders,
+      );
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
-          await fetchCustomers(branchId: state.filterBranchId);
+          await fetchCustomers(branchId: state.filterBranchId, silent: true);
         } else {
           state = state.copyWith(
-            isLoading: false,
             error: responseData['message'] ?? 'Failed to delete customer',
           );
         }
       } else {
         final responseData = json.decode(response.body);
         state = state.copyWith(
-          isLoading: false,
           error: responseData['message'] ?? 'Failed to delete customer',
         );
       }
     } catch (error) {
-      state = state.copyWith(isLoading: false, error: 'Network error occurred');
+      state = state.copyWith(error: 'Network error occurred');
     }
   }
 }
@@ -726,11 +754,10 @@ class CustomersPage extends ConsumerWidget {
   }
 
   String? _validateEmail(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Email tidak boleh kosong';
-    }
-    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-    if (!emailRegex.hasMatch(value.trim())) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    final emailRegex = RegExp(r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,}$');
+    if (!emailRegex.hasMatch(trimmed)) {
       return 'Format email tidak valid';
     }
     return null;
@@ -748,11 +775,10 @@ class CustomersPage extends ConsumerWidget {
   }
 
   String? _validateAddress(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Alamat tidak boleh kosong';
-    }
-    if (value.trim().length < 10) {
-      return 'Alamat minimal 10 karakter';
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    if (trimmed.length < 5) {
+      return 'Alamat minimal 5 karakter jika diisi';
     }
     return null;
   }
@@ -1041,6 +1067,128 @@ dataRowMinHeight: narrow ? 40 : 44,
     );
   }
 
+  void _showAddCustomerDialog(BuildContext pageContext, WidgetRef ref) {
+    final customersNotifier = ref.read(customersProvider.notifier);
+    final branchId = ref.read(userStateProvider).branch;
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+    final phoneController = TextEditingController();
+    final addressController = TextEditingController();
+
+    showDialog<void>(
+      context: pageContext,
+      builder: (dialogContext) {
+        final formKey = GlobalKey<FormState>();
+        var saving = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Tambah Pelanggan'),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nama *',
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        validator: _validateName,
+                        enabled: !saving,
+                      ),
+                      TextFormField(
+                        controller: phoneController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nomor Telepon *',
+                        ),
+                        validator: _validatePhone,
+                        keyboardType: TextInputType.phone,
+                        enabled: !saving,
+                      ),
+                      TextFormField(
+                        controller: emailController,
+                        decoration: const InputDecoration(
+                          labelText: 'Email (opsional)',
+                        ),
+                        validator: _validateEmail,
+                        keyboardType: TextInputType.emailAddress,
+                        enabled: !saving,
+                      ),
+                      TextFormField(
+                        controller: addressController,
+                        decoration: const InputDecoration(
+                          labelText: 'Alamat (opsional)',
+                        ),
+                        validator: _validateAddress,
+                        maxLines: 3,
+                        enabled: !saving,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Batal'),
+                ),
+                FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (!(formKey.currentState?.validate() ?? false)) {
+                            return;
+                          }
+                          setDialogState(() => saving = true);
+                          final ok = await customersNotifier.addCustomer(
+                            name: nameController.text,
+                            phone: phoneController.text,
+                            email: emailController.text,
+                            address: addressController.text,
+                            branchId: branchId,
+                          );
+                          if (!dialogContext.mounted) return;
+                          if (ok) {
+                            Navigator.of(dialogContext).pop();
+                            if (!pageContext.mounted) return;
+                            ScaffoldMessenger.of(pageContext).showSnackBar(
+                              const SnackBar(
+                                content: Text('Pelanggan berhasil ditambahkan'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } else {
+                            setDialogState(() => saving = false);
+                            final err = ref.read(customersProvider).error;
+                            ScaffoldMessenger.of(pageContext).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  err ?? 'Gagal menambah pelanggan',
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showEditCustomerDialog(
     BuildContext context,
     Map<String, dynamic> customer,
@@ -1077,7 +1225,9 @@ dataRowMinHeight: narrow ? 40 : 44,
                   ),
                   TextFormField(
                     controller: emailController,
-                    decoration: const InputDecoration(labelText: 'Email'),
+                    decoration: const InputDecoration(
+                      labelText: 'Email (opsional)',
+                    ),
                     validator: _validateEmail,
                     keyboardType: TextInputType.emailAddress,
                   ),
@@ -1091,7 +1241,9 @@ dataRowMinHeight: narrow ? 40 : 44,
                   ),
                   TextFormField(
                     controller: addressController,
-                    decoration: const InputDecoration(labelText: 'Alamat'),
+                    decoration: const InputDecoration(
+                      labelText: 'Alamat (opsional)',
+                    ),
                     validator: _validateAddress,
                     maxLines: 3,
                   ),
@@ -1180,24 +1332,25 @@ dataRowMinHeight: narrow ? 40 : 44,
     // Listen to real-time customer updates
     ref.listen(realTimeOrderUpdatesProvider, (previous, next) {
       next.whenData((update) {
-        if (update['type'] == 'customer_update' ||
-            update['type'] == 'order_update') {
-          // Refresh customer data when customer-related updates occur
-          customersNotifier.fetchCustomers(branchId: userState.branch);
+        if (update['type'] == 'customer_update') {
+          customersNotifier.fetchCustomers(
+            branchId: userState.branch,
+            silent: true,
+          );
         }
       });
     });
 
-    // Fetch customers jika belum ada data dan tidak loading
-    if (!customersState.isLoading &&
-        customersState.customers.isEmpty &&
-        customersState.error == null) {
+    // Muat awal sekali; jangan ulang hanya karena daftar kosong (menyebabkan kedip).
+    if (!customersState.hasLoaded && !customersState.isLoading) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        customersNotifier.fetchCustomers(branchId: userState.branch);
+        if (!ref.read(customersProvider).hasLoaded) {
+          customersNotifier.fetchCustomers(branchId: userState.branch);
+        }
       });
     }
 
-    if (customersState.isLoading) {
+    if (customersState.isLoading && !customersState.hasLoaded) {
       return Scaffold(
         appBar: AppBar(title: const Text('Pelanggan')),
         body: const Center(child: CircularProgressIndicator()),
@@ -1227,21 +1380,60 @@ dataRowMinHeight: narrow ? 40 : 44,
       );
     }
 
+    final canAdd = _canEditCustomer(userState.role);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pelanggan'),
         actions: [
+          if (canAdd)
+            IconButton(
+              icon: const Icon(Icons.person_add_outlined),
+              tooltip: 'Tambah pelanggan',
+              onPressed: () => _showAddCustomerDialog(context, ref),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => customersNotifier.fetchCustomers(
-              branchId: userState.branch,
-            ),
+            onPressed: customersState.isLoading
+                ? null
+                : () => customersNotifier.fetchCustomers(
+                      branchId: userState.branch,
+                      silent: true,
+                    ),
             tooltip: 'Refresh',
           ),
         ],
       ),
       body: customersState.customers.isEmpty
-          ? const Center(child: Text('Belum ada data pelanggan'))
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.people_outline,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Belum ada data pelanggan',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      textAlign: TextAlign.center,
+                    ),
+                    if (canAdd) ...[
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        onPressed: () => _showAddCustomerDialog(context, ref),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Tambah Pelanggan'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            )
           : Padding(
               padding: const EdgeInsets.only(top: 4),
               child: _buildCustomersDataTable(
@@ -1251,86 +1443,11 @@ dataRowMinHeight: narrow ? 40 : 44,
                 userState.role,
               ),
             ),
-      floatingActionButton: _canEditCustomer(userState.role)
-          ? FloatingActionButton(
-              onPressed: () {
-                final nameController = TextEditingController();
-                final emailController = TextEditingController();
-                final phoneController = TextEditingController();
-                final addressController = TextEditingController();
-
-                showDialog(
-                  context: context,
-                  builder: (context) {
-                    final formKey = GlobalKey<FormState>();
-                    return AlertDialog(
-                      title: const Text('Tambah Pelanggan'),
-                      content: SingleChildScrollView(
-                        child: Form(
-                          key: formKey,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              TextFormField(
-                                controller: nameController,
-                                decoration:
-                                    const InputDecoration(labelText: 'Nama'),
-                                validator: _validateName,
-                              ),
-                              TextFormField(
-                                controller: emailController,
-                                decoration:
-                                    const InputDecoration(labelText: 'Email'),
-                                validator: _validateEmail,
-                                keyboardType: TextInputType.emailAddress,
-                              ),
-                              TextFormField(
-                                controller: phoneController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Nomor Telepon',
-                                ),
-                                validator: _validatePhone,
-                                keyboardType: TextInputType.phone,
-                              ),
-                              TextFormField(
-                                controller: addressController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Alamat',
-                                ),
-                                validator: _validateAddress,
-                                maxLines: 3,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Batal'),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            if (formKey.currentState?.validate() ?? false) {
-                              await customersNotifier.addCustomer(
-                                nameController.text.trim(),
-                                emailController.text.trim(),
-                                phoneController.text.trim(),
-                                addressController.text.trim(),
-                              );
-                              if (context.mounted) {
-                                Navigator.of(context).pop();
-                              }
-                            }
-                          },
-                          child: const Text('Tambah'),
-                        ),
-                      ],
-                    );
-                  },
-                );
-              },
-              child: const Icon(Icons.add),
+      floatingActionButton: canAdd
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddCustomerDialog(context, ref),
+              icon: const Icon(Icons.add),
+              label: const Text('Tambah'),
             )
           : null,
     );

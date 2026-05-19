@@ -51,6 +51,7 @@ Future<void> printStockistInputReportPdf(
   required int skuCount,
   required int totalQty,
   required List<Map<String, dynamic>> items,
+  bool showCreatedByColumn = false,
 }) async {
   if (!context.mounted) return;
   try {
@@ -97,29 +98,49 @@ Future<void> printStockistInputReportPdf(
             pw.Text('Tidak ada item pada periode ini.')
           else
             pw.TableHelper.fromTextArray(
-              headers: const ['Kode', 'Nama', 'Qty', 'Status', 'Dibuat'],
+              headers: showCreatedByColumn
+                  ? const ['Kode', 'Nama', 'Qty', 'Status', 'Penginput', 'Dibuat']
+                  : const ['Kode', 'Nama', 'Qty', 'Status', 'Dibuat'],
               data: rows.map((i) {
                 final name = (i['name'] ?? '-').toString();
                 final shortName =
                     name.length > 42 ? '${name.substring(0, 39)}...' : name;
-                return [
+                final createdBy = (i['item_created_by_name'] ??
+                        i['created_by_name'] ??
+                        i['username'] ??
+                        '-')
+                    .toString();
+                final base = [
                   _itemCode(i),
                   shortName,
                   '${_qty(i)}',
                   (i['status'] ?? '-').toString(),
-                  _createdAt(i),
                 ];
+                if (showCreatedByColumn) {
+                  base.add(createdBy);
+                }
+                base.add(_createdAt(i));
+                return base;
               }).toList(),
               cellAlignment: pw.Alignment.centerLeft,
               headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-              columnWidths: const {
-                0: pw.FlexColumnWidth(0.9),
-                1: pw.FlexColumnWidth(1.8),
-                2: pw.FlexColumnWidth(0.45),
-                3: pw.FlexColumnWidth(0.65),
-                4: pw.FlexColumnWidth(0.95),
-              },
+              columnWidths: showCreatedByColumn
+                  ? const {
+                      0: pw.FlexColumnWidth(0.85),
+                      1: pw.FlexColumnWidth(1.5),
+                      2: pw.FlexColumnWidth(0.4),
+                      3: pw.FlexColumnWidth(0.6),
+                      4: pw.FlexColumnWidth(0.75),
+                      5: pw.FlexColumnWidth(0.9),
+                    }
+                  : const {
+                      0: pw.FlexColumnWidth(0.9),
+                      1: pw.FlexColumnWidth(1.8),
+                      2: pw.FlexColumnWidth(0.45),
+                      3: pw.FlexColumnWidth(0.65),
+                      4: pw.FlexColumnWidth(0.95),
+                    },
             ),
           if (items.length > 120)
             pw.Padding(

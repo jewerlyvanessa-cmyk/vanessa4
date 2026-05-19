@@ -393,7 +393,7 @@ class ApiService {
   /// Tukang: buat perhiasan dari stok material (tercatat untuk admin workshop).
   static Future<Map<String, dynamic>> produceJewelryFromMaterial({
     required String branchId,
-    required int orderId,
+    int? orderId,
     required int technicianId,
     required int materialItemId,
     required double materialQtyUsed,
@@ -401,19 +401,22 @@ class ApiService {
     String? notes,
   }) async {
     final url = Uri.parse('$baseUrl/api/workshop/produce-from-material');
+    final body = <String, dynamic>{
+      'branch_id': branchId,
+      'technician_id': technicianId,
+      'material_item_id': materialItemId,
+      'material_qty_used': materialQtyUsed,
+      if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      'output': output,
+    };
+    if (orderId != null && orderId > 0) {
+      body['order_id'] = orderId;
+    }
     final response = await _makeRequest(
       () => http.post(
         url,
         headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'branch_id': branchId,
-          'order_id': orderId,
-          'technician_id': technicianId,
-          'material_item_id': materialItemId,
-          'material_qty_used': materialQtyUsed,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-          'output': output,
-        }),
+        body: jsonEncode(body),
       ),
     );
 

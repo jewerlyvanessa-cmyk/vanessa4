@@ -9,10 +9,24 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stockist_input_report_print.dart';
 
-/// Laporan input stok: hanya item yang **Anda** input di **cabang aktif** (`user.branch`).
-/// Data: `GET /items?branch_id=…&mine=1&start_date=…&end_date=…` (filter user dari JWT).
+/// Mode laporan input stok.
+enum StockInputReportMode {
+  /// Stockist: hanya item yang Anda input di cabang aktif.
+  personal,
+  /// Admin warehouse: semua input stok pada cabang warehouse aktif.
+  activeBranch,
+}
+
+/// Laporan input stok per **cabang aktif** (`user.branch`).
+/// - [StockInputReportMode.personal]: `mine=1` (hanya Anda).
+/// - [StockInputReportMode.activeBranch]: semua penginput di cabang aktif.
 class StockistReportsPage extends ConsumerStatefulWidget {
-  const StockistReportsPage({super.key});
+  const StockistReportsPage({
+    super.key,
+    this.mode = StockInputReportMode.personal,
+  });
+
+  final StockInputReportMode mode;
 
   @override
   ConsumerState<StockistReportsPage> createState() =>
@@ -96,14 +110,17 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
+      final queryParams = <String, String>{
+        'branch_id': activeBranchId,
+        'start_date': _isoDate(_fromDate),
+        'end_date': _isoDate(_toDate),
+        'limit': '500',
+      };
+      if (widget.mode == StockInputReportMode.personal) {
+        queryParams['mine'] = '1';
+      }
       final itemsUri = Uri.parse('$baseUrl/items').replace(
-        queryParameters: {
-          'branch_id': activeBranchId,
-          'mine': '1',
-          'start_date': _isoDate(_fromDate),
-          'end_date': _isoDate(_toDate),
-          'limit': '500',
-        },
+        queryParameters: queryParams,
       );
 
       final itemsRes =
@@ -179,17 +196,37 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
     final sku = itemsInPeriod.length;
     final qty = itemsInPeriod.fold<int>(0, (s, i) => s + _asInt(i['quantity']));
 
+    final inputByLabel = widget.mode == StockInputReportMode.personal
+        ? user.username
+        : 'Semua pengguna (cabang aktif)';
+
     await printStockistInputReportPdf(
       context,
       fromDate: _fromDate,
       toDate: _toDate,
       branchLabel: _activeBranchLabel(user),
       branchIdForLogo: user.branch.trim(),
-      username: user.username,
+      username: inputByLabel,
       skuCount: sku,
       totalQty: qty,
       items: itemsInPeriod,
+      showCreatedByColumn: widget.mode == StockInputReportMode.activeBranch,
     );
+  }
+
+  String _filterSubtitle(UserState user) {
+    final branchLine = 'Cabang aktif: ${_activeBranchLabel(user)}';
+    if (widget.mode == StockInputReportMode.personal) {
+      return [
+        branchLine,
+        if (user.username.isNotEmpty) 'Penginput: ${user.username}',
+        'Hanya item yang Anda input pada cabang ini',
+      ].join('\n');
+    }
+    return [
+      branchLine,
+      'Semua item yang di-input pada cabang warehouse aktif',
+    ].join('\n');
   }
 
   @override
@@ -326,12 +363,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
                     const SizedBox(height: 8),
                     _InfoRangeCard(
                       title: 'Filter',
-                      subtitle: [
-                        'Cabang: ${_activeBranchLabel(user)}',
-                        if (user.username.isNotEmpty)
-                          'Penginput: ${user.username}',
-                        'Hanya item yang Anda input pada cabang ini',
-                      ].join('\n'),
+                      subtitle: _filterSubtitle(user),
                     ),
                     const SizedBox(height: 12),
                     _SummaryCard(
@@ -346,6 +378,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
                       title: 'Daftar item',
                       items: itemsInPeriod,
                       dateFmt: dtFmt,
+                      showCreatedBy: widget.mode == StockInputReportMode.activeBranch,
                     ),
                   ],
                 ),
@@ -358,11 +391,13 @@ class _MyItemsTable extends StatelessWidget {
     required this.title,
     required this.items,
     required this.dateFmt,
+    this.showCreatedBy = false,
   });
 
   final String title;
   final List<Map<String, dynamic>> items;
   final DateFormat dateFmt;
+  final bool showCreatedBy;
 
   String _code(Map<String, dynamic> i) =>
       (i['kode_produk'] ?? i['item_code'] ?? '-').toString();
@@ -392,7 +427,9 @@ class _MyItemsTable extends StatelessWidget {
             const SizedBox(height: 8),
             if (items.isEmpty)
               Text(
-                'Tidak ada item yang tercatat dibuat oleh Anda pada periode ini.',
+                showCreatedBy
+                    ? 'Tidak ada input stok pada cabang aktif untuk periode ini.'
+                    : 'Tidak ada item yang tercatat dibuat oleh Anda pada periode ini.',
                 style: Theme.of(context).textTheme.bodySmall,
               )
             else
@@ -412,18 +449,24 @@ class _MyItemsTable extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         height: 1.1,
                       ),
-                  columns: const [
-                    DataColumn(label: Text('Kode')),
-                    DataColumn(label: Text('Nama')),
-                    DataColumn(label: Text('Qty')),
-                    DataColumn(label: Text('Status')),
-                    DataColumn(label: Text('Dibuat')),
+                  columns: [
+                    const DataColumn(label: Text('Kode')),
+                    const DataColumn(label: Text('Nama')),
+                    const DataColumn(label: Text('Qty')),
+                    const DataColumn(label: Text('Status')),
+                    if (showCreatedBy) const DataColumn(label: Text('Penginput')),
+                    const DataColumn(label: Text('Dibuat')),
                   ],
                   rows: items.map((i) {
                     final qty = int.tryParse(
                           (i['quantity'] ?? i['qty'] ?? '0').toString(),
                         ) ??
                         0;
+                    final createdBy = (i['item_created_by_name'] ??
+                            i['created_by_name'] ??
+                            i['username'] ??
+                            '-')
+                        .toString();
                     return DataRow(
                       cells: [
                         DataCell(Text(_code(i))),
@@ -436,6 +479,7 @@ class _MyItemsTable extends StatelessWidget {
                         ),
                         DataCell(Text('$qty')),
                         DataCell(Text((i['status'] ?? '-').toString())),
+                        if (showCreatedBy) DataCell(Text(createdBy)),
                         DataCell(Text(_fmt(i['created_at']))),
                       ],
                     );

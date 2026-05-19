@@ -1,12 +1,41 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-/// Konversi cm → point PDF (72 pt = 1 inch, 2,54 cm = 1 inch).
-double _pdfCmToPoints(double cm) => cm * 72.0 / 2.54;
+/// Label stok thermal: 80 × 12 mm (satu label per halaman PDF).
+const double kStockLabelWidthMm = 80;
+const double kStockLabelHeightMm = 12;
+const double kStockLabelQrMm = 8;
+const double kStockLabelBarcodeWidthMm = 20;
+const double kStockLabelBarcodeHeightMm = 8;
+/// Jarak tepi kanan label ke area teks (judul / berat / kode): 2,5 cm.
+const double kStockLabelTextOffsetFromRightMm = 25;
+
+PdfPageFormat get stockLabelPageFormat => PdfPageFormat(
+      kStockLabelWidthMm * PdfPageFormat.mm,
+      kStockLabelHeightMm * PdfPageFormat.mm,
+      marginAll: 0,
+    );
+
+/// Konversi mm → point PDF (72 pt = 1 inch, 25,4 mm = 1 inch).
+double _pdfMmToPoints(double mm) => mm * 72.0 / 25.4;
+
+const double _kLabelPadMm = 0.8;
+const double _kCodeGapMm = 1.0;
+
+double _codeSectionWidthMm(StockLabelPrintChoice format) {
+  switch (format) {
+    case StockLabelPrintChoice.qr:
+      return kStockLabelQrMm;
+    case StockLabelPrintChoice.barcode:
+      return kStockLabelBarcodeWidthMm;
+    case StockLabelPrintChoice.both:
+      return kStockLabelQrMm + _kCodeGapMm + kStockLabelBarcodeWidthMm;
+  }
+}
 
 /// Pilihan format cetak label stok.
 enum StockLabelPrintChoice { qr, barcode, both }
@@ -39,7 +68,9 @@ String? _formatLabelPurity(dynamic raw) {
   return s.isEmpty ? null : s;
 }
 
-({String? weight, String? purity}) _labelMetaFromItem(Map<String, dynamic>? item) {
+({String? weight, String? purity}) _labelMetaFromItem(
+  Map<String, dynamic>? item,
+) {
   if (item == null) return (weight: null, purity: null);
   return (
     weight: _formatLabelWeight(item['weight']),
@@ -47,58 +78,102 @@ String? _formatLabelPurity(dynamic raw) {
   );
 }
 
-pw.Widget _weightPurityBlock({String? weight, String? purity}) {
+String? _metaLine({String? weight, String? purity}) {
   final parts = <String>[];
   if (weight != null) parts.add('Berat: $weight');
   if (purity != null) parts.add('Kadar: $purity');
-  if (parts.isEmpty) return pw.SizedBox();
-  return pw.Padding(
-    padding: const pw.EdgeInsets.only(bottom: 10),
-    child: pw.Text(
-      parts.join('   ·   '),
-      style: const pw.TextStyle(fontSize: 11),
-      textAlign: pw.TextAlign.center,
-    ),
-  );
-}
-
-pw.Widget _humanCodeLine(String payload) {
-  return pw.Text(payload, style: const pw.TextStyle(fontSize: 12));
+  if (parts.isEmpty) return null;
+  return parts.join(' · ');
 }
 
 pw.Widget _qrBlock(String payload) {
-  final qrSizePt = _pdfCmToPoints(1.0);
-  return pw.Column(
-    mainAxisSize: pw.MainAxisSize.min,
-    children: [
-      pw.BarcodeWidget(
-        barcode: pw.Barcode.qrCode(),
-        data: payload,
-        width: qrSizePt,
-        height: qrSizePt,
-      ),
-      pw.SizedBox(height: 8),
-      _humanCodeLine(payload),
-    ],
+  final size = _pdfMmToPoints(kStockLabelQrMm);
+  return pw.BarcodeWidget(
+    barcode: pw.Barcode.qrCode(),
+    data: payload,
+    width: size,
+    height: size,
   );
 }
 
 pw.Widget _barcodeBlock(String payload) {
-  final barW = _pdfCmToPoints(5.0);
-  final barH = _pdfCmToPoints(1.6);
-  return pw.Column(
-    mainAxisSize: pw.MainAxisSize.min,
-    children: [
-      pw.BarcodeWidget(
-        barcode: pw.Barcode.code128(),
-        data: payload,
-        width: barW,
-        height: barH,
-        drawText: false,
+  return pw.BarcodeWidget(
+    barcode: pw.Barcode.code128(),
+    data: payload,
+    width: _pdfMmToPoints(kStockLabelBarcodeWidthMm),
+    height: _pdfMmToPoints(kStockLabelBarcodeHeightMm),
+    drawText: false,
+  );
+}
+
+pw.Widget _labelTextColumn({
+  required String displayTitle,
+  required String payload,
+  String? weight,
+  String? purity,
+}) {
+  final titleStyle =
+      pw.TextStyle(fontSize: 5.5, fontWeight: pw.FontWeight.bold);
+  final metaStyle = pw.TextStyle(fontSize: 4.8);
+  final codeStyle = pw.TextStyle(fontSize: 5.2);
+
+  final meta = _metaLine(weight: weight, purity: purity);
+  final children = <pw.Widget>[
+    pw.Text(
+      displayTitle,
+      style: titleStyle,
+      maxLines: 1,
+      overflow: pw.TextOverflow.clip,
+    ),
+  ];
+  if (meta != null) {
+    children.add(
+      pw.Text(
+        meta,
+        style: metaStyle,
+        maxLines: 1,
+        overflow: pw.TextOverflow.clip,
       ),
-      pw.SizedBox(height: 6),
-      _humanCodeLine(payload),
-    ],
+    );
+  }
+  children.add(
+    pw.Text(
+      payload,
+      style: codeStyle,
+      maxLines: 1,
+      overflow: pw.TextOverflow.clip,
+    ),
+  );
+
+  return pw.Column(
+    crossAxisAlignment: pw.CrossAxisAlignment.end,
+    mainAxisAlignment: pw.MainAxisAlignment.center,
+    mainAxisSize: pw.MainAxisSize.min,
+    children: children,
+  );
+}
+
+pw.Widget _codeBlocksRow(
+  String payload,
+  StockLabelPrintChoice format,
+  double gap,
+) {
+  final children = <pw.Widget>[];
+  if (format == StockLabelPrintChoice.qr ||
+      format == StockLabelPrintChoice.both) {
+    children.add(_qrBlock(payload));
+  }
+  if (format == StockLabelPrintChoice.both) {
+    children.add(pw.SizedBox(width: gap));
+  }
+  if (format == StockLabelPrintChoice.barcode ||
+      format == StockLabelPrintChoice.both) {
+    children.add(_barcodeBlock(payload));
+  }
+  return pw.Row(
+    mainAxisSize: pw.MainAxisSize.min,
+    crossAxisAlignment: pw.CrossAxisAlignment.center,
+    children: children,
   );
 }
 
@@ -110,28 +185,43 @@ pw.Widget _stockLabelPageContent({
 }) {
   final displayTitle = _displayTitle(titleLine, payload);
   final meta = _labelMetaFromItem(item);
-  return pw.Center(
+  final pad = _pdfMmToPoints(_kLabelPadMm);
+  final gap = _pdfMmToPoints(_kCodeGapMm);
+  final codeWidthMm = _codeSectionWidthMm(format);
+
+  return pw.SizedBox(
+    width: _pdfMmToPoints(kStockLabelWidthMm),
+    height: _pdfMmToPoints(kStockLabelHeightMm),
     child: pw.Padding(
-      padding: const pw.EdgeInsets.all(24),
-      child: pw.Column(
-        mainAxisSize: pw.MainAxisSize.min,
+      padding: pw.EdgeInsets.all(pad),
+      child: pw.Stack(
         children: [
-          pw.Text(
-            displayTitle,
-            style: pw.TextStyle(
-              fontSize: 16,
-              fontWeight: pw.FontWeight.bold,
+          pw.Positioned(
+            left: 0,
+            right: _pdfMmToPoints(kStockLabelTextOffsetFromRightMm - _kLabelPadMm),
+            top: 0,
+            bottom: 0,
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: _labelTextColumn(
+                displayTitle: displayTitle,
+                payload: payload,
+                weight: meta.weight,
+                purity: meta.purity,
+              ),
             ),
-            textAlign: pw.TextAlign.center,
           ),
-          _weightPurityBlock(weight: meta.weight, purity: meta.purity),
-          if (format == StockLabelPrintChoice.qr ||
-              format == StockLabelPrintChoice.both)
-            _qrBlock(payload),
-          if (format == StockLabelPrintChoice.both) pw.SizedBox(height: 16),
-          if (format == StockLabelPrintChoice.barcode ||
-              format == StockLabelPrintChoice.both)
-            _barcodeBlock(payload),
+          pw.Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: pw.SizedBox(
+              width: _pdfMmToPoints(codeWidthMm),
+              child: pw.Center(
+                child: _codeBlocksRow(payload, format, gap),
+              ),
+            ),
+          ),
         ],
       ),
     ),
@@ -147,7 +237,7 @@ Future<Uint8List> buildStockItemLabelPdf({
   final doc = pw.Document();
   doc.addPage(
     pw.Page(
-      pageFormat: PdfPageFormat.a4,
+      pageFormat: stockLabelPageFormat,
       build: (context) => _stockLabelPageContent(
         payload: payload,
         titleLine: titleLine,
@@ -181,7 +271,7 @@ Future<Uint8List> buildStockItemsLabelPdf(
     final title = name.isNotEmpty ? name : payload;
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: stockLabelPageFormat,
         build: (context) => _stockLabelPageContent(
           payload: payload,
           titleLine: title,
@@ -199,6 +289,110 @@ Future<Uint8List> buildStockItemsBulkQrPdf(
 ) =>
     buildStockItemsLabelPdf(items, StockLabelPrintChoice.qr);
 
+const _labelPrintChannel = MethodChannel('com.example.vanessa3/label_print');
+
+bool get _useNativeLabelPrint =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
+
+/// Cetak label di mobile dengan ukuran kertas tepat 80×12 mm (sama seperti web).
+Future<bool> _printLabelNative(Uint8List bytes, {required int pageCount}) async {
+  final result = await _labelPrintChannel.invokeMethod<bool>(
+    'printLabelPdf',
+    <String, dynamic>{
+      'name': 'label_stok',
+      'widthMm': kStockLabelWidthMm,
+      'heightMm': kStockLabelHeightMm,
+      'pageCount': pageCount,
+      'data': bytes,
+    },
+  );
+  return result ?? false;
+}
+
+/// Perkiraan jumlah halaman label dalam PDF (satu label = satu halaman).
+int _estimateLabelPdfPageCount(Uint8List bytes) {
+  final text = String.fromCharCodes(bytes);
+  final matches = RegExp(r'/Type\s*/Page(?!s)').allMatches(text);
+  return matches.isEmpty ? 1 : matches.length;
+}
+
+String _labelPdfFileName() {
+  final stamp = DateTime.now().toIso8601String().replaceAll(':', '-');
+  return 'label_stok_$stamp.pdf';
+}
+
+/// Simpan PDF label langsung (80×12 mm per halaman, tanpa dialog cetak Android).
+Future<void> _saveLabelPdf(
+  BuildContext context,
+  Uint8List bytes,
+) async {
+  try {
+    if (_useNativeLabelPrint) {
+      final path = await _labelPrintChannel.invokeMethod<String>(
+        'saveLabelPdf',
+        <String, dynamic>{
+          'fileName': _labelPdfFileName(),
+          'data': bytes,
+        },
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            path != null && path.isNotEmpty
+                ? 'PDF label tersimpan ($kStockLabelWidthMm×$kStockLabelHeightMm mm per halaman).\n$path'
+                : 'PDF label tersimpan.',
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
+
+    await Printing.sharePdf(bytes: bytes, filename: _labelPdfFileName());
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal simpan PDF: $e')),
+      );
+    }
+  }
+}
+
+enum _LabelOutput { print, savePdf }
+
+Future<_LabelOutput?> _askLabelOutput(BuildContext context) async {
+  return showModalBottomSheet<_LabelOutput>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.print),
+            title: const Text('Cetak'),
+            subtitle: Text(
+              'Printer / Save as PDF sistem ($kStockLabelWidthMm×$kStockLabelHeightMm mm)',
+            ),
+            onTap: () => Navigator.pop(ctx, _LabelOutput.print),
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf),
+            title: const Text('Simpan PDF'),
+            subtitle: Text(
+              'File PDF ukuran tepat $kStockLabelWidthMm×$kStockLabelHeightMm mm per label',
+            ),
+            onTap: () => Navigator.pop(ctx, _LabelOutput.savePdf),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 Future<void> _runPrint(
   BuildContext context,
   Future<Uint8List> Function() buildPdf, {
@@ -207,7 +401,31 @@ Future<void> _runPrint(
   try {
     final bytes = await buildPdf();
     if (!context.mounted) return;
-    await Printing.layoutPdf(onLayout: (_) async => bytes);
+
+    if (_useNativeLabelPrint && context.mounted) {
+      final output = await _askLabelOutput(context);
+      if (!context.mounted || output == null) return;
+
+      if (output == _LabelOutput.savePdf) {
+        await _saveLabelPdf(context, bytes);
+        return;
+      }
+
+      final ok = await _printLabelNative(
+        bytes,
+        pageCount: _estimateLabelPdfPageCount(bytes),
+      );
+      if (ok) return;
+    }
+
+    await Printing.layoutPdf(
+      name: 'label_stok',
+      format: stockLabelPageFormat,
+      dynamicLayout: false,
+      usePrinterSettings: false,
+      forceCustomPrintPaper: true,
+      onLayout: (_) async => bytes,
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -304,10 +522,10 @@ Future<void> promptPrintStockItemLabel(
     context,
     title: afterSave ? 'Stok tersimpan' : 'Cetak label stok?',
     message: afterSave
-        ? 'Cetak label untuk kode $payload?'
+        ? 'Cetak label $kStockLabelWidthMm×$kStockLabelHeightMm mm untuk kode $payload?'
             '${name.isNotEmpty ? '\n($name)' : ''}'
         : 'Kode: $payload${name.isNotEmpty ? '\nNama: $name' : ''}\n\n'
-            'Pilih format cetak.',
+            'Label $kStockLabelWidthMm×$kStockLabelHeightMm mm. Pilih format cetak.',
   );
   if (!context.mounted || choice == null) return;
 
@@ -330,8 +548,9 @@ Future<void> promptPrintStockItemsLabelBulk(
     context,
     title: afterSave ? 'Stok massal tersimpan' : 'Cetak label stok massal?',
     message: afterSave
-        ? 'Cetak ${withPayload.length} label?'
-        : '${withPayload.length} label (satu halaman per item).\n'
+        ? 'Cetak ${withPayload.length} label ($kStockLabelWidthMm×$kStockLabelHeightMm mm)?'
+        : '${withPayload.length} label, satu halaman per item '
+            '($kStockLabelWidthMm×$kStockLabelHeightMm mm).\n'
             'Pilih QR, barcode Code 128, atau keduanya.',
   );
   if (!context.mounted || choice == null) return;
@@ -357,7 +576,8 @@ Future<void> promptPrintStockItemQr(
         title: const Text('Cetak QR stok?'),
         content: Text(
           'QR berisi kode:\n$payload'
-          '${name.isNotEmpty ? '\n\nNama: $name' : ''}',
+          '${name.isNotEmpty ? '\n\nNama: $name' : ''}\n\n'
+          'Ukuran label $kStockLabelWidthMm×$kStockLabelHeightMm mm, QR $kStockLabelQrMm mm.',
         ),
         actions: [
           TextButton(
@@ -401,8 +621,8 @@ Future<void> promptPrintStockItemsQrBulk(
       builder: (ctx) => AlertDialog(
         title: const Text('Cetak QR stok massal?'),
         content: Text(
-          '${withPayload.length} label akan digabung dalam satu PDF '
-          '(satu halaman per item, QR 1×1 cm).',
+          '${withPayload.length} label ($kStockLabelWidthMm×$kStockLabelHeightMm mm, '
+          'satu halaman per item, QR $kStockLabelQrMm mm).',
         ),
         actions: [
           TextButton(
@@ -446,7 +666,9 @@ Future<void> promptPrintStockItemBarcode(
         title: const Text('Cetak barcode stok?'),
         content: Text(
           'Barcode Code 128 berisi kode:\n$payload'
-          '${name.isNotEmpty ? '\n\nNama: $name' : ''}',
+          '${name.isNotEmpty ? '\n\nNama: $name' : ''}\n\n'
+          'Label $kStockLabelWidthMm×$kStockLabelHeightMm mm, '
+          'barcode $kStockLabelBarcodeWidthMm×$kStockLabelBarcodeHeightMm mm.',
         ),
         actions: [
           TextButton(

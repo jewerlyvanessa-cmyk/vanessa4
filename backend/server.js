@@ -2709,6 +2709,9 @@ app.get('/items', async (req, res) => {
       end_date,
       source,
     } = req.query;
+    const roleNorm = String(req.user?.role ?? '')
+      .trim()
+      .toLowerCase();
     const hasCreatorCol = await itemsHasCreatedByColumn();
     const fromSql = hasCreatorCol
       ? 'items i LEFT JOIN users icu ON i.created_by = icu.user_id'
@@ -2720,7 +2723,36 @@ app.get('/items', async (req, res) => {
     let params = [];
     let conditions = [];
 
-    if (branch_id) {
+    const jwtBranchId = String(req.user?.branch_id ?? '').trim();
+    const branchScopedRoles = new Set([
+      'admin_warehouse',
+      'stockist',
+      'cs',
+      'kasir',
+      'admin_toko',
+      'admin_workshop',
+    ]);
+    let effectiveBranchId =
+      branch_id != null ? String(branch_id).trim() : '';
+
+    if (branchScopedRoles.has(roleNorm)) {
+      if (!jwtBranchId) {
+        return res.status(400).json({
+          error: 'Cabang aktif tidak ditemukan pada sesi login',
+        });
+      }
+      if (effectiveBranchId && effectiveBranchId !== jwtBranchId) {
+        return res.status(403).json({
+          error: 'Hanya boleh melihat stok cabang aktif Anda',
+        });
+      }
+      effectiveBranchId = jwtBranchId;
+    }
+
+    if (effectiveBranchId) {
+      conditions.push(`i.branch_id = $${params.length + 1}`);
+      params.push(effectiveBranchId);
+    } else if (branch_id) {
       conditions.push(`i.branch_id = $${params.length + 1}`);
       params.push(branch_id);
     }
@@ -2762,9 +2794,6 @@ app.get('/items', async (req, res) => {
     const mineOnly =
       mine === 'true' || mine === '1' || mine === true;
     const createdByFilter = parseInt(String(created_by ?? '').trim(), 10);
-    const roleNorm = String(req.user?.role ?? '')
-      .trim()
-      .toLowerCase();
     const canFilterAnyUser = ['superadmin', 'manajer'].includes(roleNorm);
 
     if (mineOnly) {

@@ -88,7 +88,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
 
     return MaterialApp(
       navigatorKey: VanessaApp.navigatorKey,
-      title: 'Vanessa App',
+      title: 'Vanessa',
       scrollBehavior: const VanessaScrollBehavior(),
       theme: AppTheme.lightTheme,
       localizationsDelegates: const [

@@ -214,7 +214,7 @@ class _StockReprintQrPageState extends ConsumerState<StockReprintQrPage> {
           Text(
             'Sumber item: ketik kode / pindai QR, atau pilih dari daftar stok ready cabang aktif. '
             'Tambahkan ke antrian lalu «Cetak massal» untuk satu PDF banyak label '
-            '(QR, barcode, atau keduanya). «Cetak» pada satu baris untuk satu item.',
+            '(80×12 mm; QR, barcode, atau keduanya). «Cetak» pada satu baris untuk satu item.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 14),

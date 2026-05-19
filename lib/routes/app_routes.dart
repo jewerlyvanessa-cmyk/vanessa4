@@ -131,7 +131,9 @@ class AppRoutes {
     warehouseFromStore: (context) => const DariTokoPage(),
     warehouseToStore: (context) => const KirimKeTokoPage(),
     warehouseEmployees: (context) => const EmployeeManagementPage(),
-    warehouseStockInputReport: (context) => const StockistReportsPage(),
+    warehouseStockInputReport: (context) => const StockistReportsPage(
+          mode: StockInputReportMode.activeBranch,
+        ),
     warehouseSupplierReceipt: (context) => const SupplierReceiptPage(),
     adminTokoOrders: (context) => const DailyOrdersPaymentsPage(),
     adminTokoServiceCustom: (context) => const DailyOrdersPaymentsPage(

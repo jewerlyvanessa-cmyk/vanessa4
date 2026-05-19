@@ -5,7 +5,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
-/// Tukang membuat perhiasan dari stok material — tercatat untuk admin workshop.
+/// Tukang membuat perhiasan dari stok material (produksi mandiri atau opsional ke order).
 class ProduceJewelryPage extends ConsumerStatefulWidget {
   const ProduceJewelryPage({super.key});
 
@@ -34,20 +34,44 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
   List<Map<String, dynamic>> _workQueue = [];
   List<Map<String, dynamic>> _materialStock = [];
   bool _loading = true;
+  bool _loadingWorkQueue = false;
   String? _error;
 
-  Map<String, dynamic>? _selectedWork;
-  Map<String, dynamic>? _selectedMaterial;
+  int? _selectedOrderId;
+  int? _selectedMaterialId;
+  bool _linkToOrder = false;
   String _outputKategori = 'PERHIASAN';
   String _outputJenis = 'CINCIN';
   String _outputTipe = 'BIASA';
   String _outputMaterial = 'EMAS';
   bool _saving = false;
 
+  int? _orderIdOf(Map<String, dynamic> w) =>
+      int.tryParse(w['order_id']?.toString() ?? '');
+
+  int? _materialIdOf(Map<String, dynamic> m) =>
+      int.tryParse(m['item_id']?.toString() ?? '');
+
+  Map<String, dynamic>? get _selectedMaterial {
+    if (_selectedMaterialId == null) return null;
+    for (final m in _materialStock) {
+      if (_materialIdOf(m) == _selectedMaterialId) return m;
+    }
+    return null;
+  }
+
+  List<String> get _outputJenisOptions =>
+      _jenisByKategori[_outputKategori] ?? const ['UMUM'];
+
+  String get _effectiveOutputJenis =>
+      _outputJenisOptions.contains(_outputJenis)
+          ? _outputJenis
+          : _outputJenisOptions.first;
+
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadMaterialStock();
   }
 
   @override
@@ -61,7 +85,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadMaterialStock() async {
     setState(() {
       _loading = true;
       _error = null;
@@ -76,17 +100,14 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
         });
         return;
       }
-      final results = await Future.wait([
-        ApiService.getWorkQueue(
-          user.branch,
-          assignedTechnicianId: user.userId!.toString(),
-        ),
-        ApiService.getMaterialStock(user.branch),
-      ]);
+      final stock = await ApiService.getMaterialStock(user.branch);
       if (!mounted) return;
       setState(() {
-        _workQueue = results[0];
-        _materialStock = results[1];
+        _materialStock = stock;
+        if (_selectedMaterialId != null &&
+            !_materialStock.any((m) => _materialIdOf(m) == _selectedMaterialId)) {
+          _selectedMaterialId = null;
+        }
         _loading = false;
       });
     } catch (e) {
@@ -98,23 +119,57 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
     }
   }
 
+  Future<void> _loadWorkQueueIfNeeded() async {
+    if (_workQueue.isNotEmpty || _loadingWorkQueue) return;
+    setState(() => _loadingWorkQueue = true);
+    try {
+      final user = ref.read(userStateProvider);
+      final queue = await ApiService.getWorkQueue(
+        user.branch,
+        assignedTechnicianId: user.userId!.toString(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _workQueue = queue;
+        if (_selectedOrderId != null &&
+            !_workQueue.any((w) => _orderIdOf(w) == _selectedOrderId)) {
+          _selectedOrderId = null;
+        }
+        _loadingWorkQueue = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingWorkQueue = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal memuat daftar order: $e')),
+      );
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedWork == null || _selectedMaterial == null) {
+
+    final material = _selectedMaterial;
+    if (material == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih pekerjaan dan material bahan')),
+        const SnackBar(content: Text('Pilih material bahan')),
+      );
+      return;
+    }
+
+    if (_linkToOrder && _selectedOrderId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pilih order atau matikan kaitan order')),
       );
       return;
     }
 
     final user = ref.read(userStateProvider);
-    final orderId = int.tryParse(_selectedWork!['order_id']?.toString() ?? '');
-    final materialId =
-        int.tryParse(_selectedMaterial!['item_id']?.toString() ?? '');
+    final materialId = _materialIdOf(material);
     final matQty = double.tryParse(_matQtyCtrl.text.trim());
-    if (orderId == null || materialId == null || matQty == null || matQty <= 0) {
+    if (materialId == null || matQty == null || matQty <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data pekerjaan atau material tidak valid')),
+        const SnackBar(content: Text('Data material tidak valid')),
       );
       return;
     }
@@ -123,7 +178,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
     try {
       final res = await ApiService.produceJewelryFromMaterial(
         branchId: user.branch,
-        orderId: orderId,
+        orderId: _linkToOrder ? _selectedOrderId : null,
         technicianId: user.userId!,
         materialItemId: materialId,
         materialQtyUsed: matQty,
@@ -132,7 +187,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
           'name': _nameCtrl.text.trim(),
           'kode_produk': _kodeCtrl.text.trim(),
           'kategori': _outputKategori,
-          'jenis': _outputJenis,
+          'jenis': _effectiveOutputJenis,
           'tipe': _outputTipe,
           'material': _outputMaterial,
           'purity': _purityCtrl.text.trim(),
@@ -141,10 +196,13 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
         },
       );
       if (!mounted) return;
+      final linked = res['order_id'] != null;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Perhiasan "${res['output_name'] ?? _nameCtrl.text}" berhasil dibuat',
+            linked
+                ? 'Perhiasan "${res['output_name'] ?? _nameCtrl.text}" dibuat (terkait order)'
+                : 'Perhiasan "${res['output_name'] ?? _nameCtrl.text}" berhasil dibuat',
           ),
         ),
       );
@@ -156,10 +214,15 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
       _purityCtrl.clear();
       _notesCtrl.clear();
       setState(() {
-        _selectedWork = null;
-        _selectedMaterial = null;
+        _selectedOrderId = null;
+        _selectedMaterialId = null;
+        _linkToOrder = false;
+        _outputKategori = 'PERHIASAN';
+        _outputJenis = 'CINCIN';
+        _outputTipe = 'BIASA';
+        _outputMaterial = 'EMAS';
       });
-      await _loadData();
+      await _loadMaterialStock();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -168,6 +231,80 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Widget _buildOptionalOrderSection(BuildContext context, ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Kaitkan ke order service/custom'),
+          subtitle: const Text(
+            'Opsional — produksi mandiri tidak perlu order',
+          ),
+          value: _linkToOrder,
+          onChanged: (on) async {
+            setState(() {
+              _linkToOrder = on;
+              if (!on) _selectedOrderId = null;
+            });
+            if (on) await _loadWorkQueueIfNeeded();
+          },
+        ),
+        if (_linkToOrder) ...[
+          const SizedBox(height: 8),
+          if (_loadingWorkQueue)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_workQueue.isEmpty)
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Order (opsional)',
+                border: OutlineInputBorder(),
+                enabled: false,
+              ),
+              child: Text(
+                'Belum ada order service/custom yang ditugaskan ke Anda.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: cs.onSurfaceVariant),
+              ),
+            )
+          else
+            DropdownButtonFormField<int>(
+              key: ValueKey('work_${_workQueue.length}_$_selectedOrderId'),
+              initialValue: _workQueue.any((w) => _orderIdOf(w) == _selectedOrderId)
+                  ? _selectedOrderId
+                  : null,
+              decoration: const InputDecoration(
+                labelText: 'Order service/custom',
+                border: OutlineInputBorder(),
+              ),
+              items: _workQueue.map((w) {
+                final oid = _orderIdOf(w);
+                if (oid == null) return null;
+                final item = w['item_name']?.toString() ??
+                    w['nama_item']?.toString() ??
+                    'Item';
+                final st = OrderStatusUi.label(w['status']?.toString());
+                return DropdownMenuItem(
+                  value: oid,
+                  child: Text('Order #$oid — $item ($st)'),
+                );
+              }).whereType<DropdownMenuItem<int>>().toList(),
+              onChanged: (v) => setState(() => _selectedOrderId = v),
+              validator: (v) {
+                if (_linkToOrder && v == null) return 'Pilih order';
+                return null;
+              },
+            ),
+        ],
+      ],
+    );
   }
 
   @override
@@ -180,7 +317,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _loadData,
+            onPressed: _loading ? null : _loadMaterialStock,
           ),
         ],
       ),
@@ -196,7 +333,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                         Text(_error!, textAlign: TextAlign.center),
                         const SizedBox(height: 12),
                         FilledButton.tonal(
-                          onPressed: _loadData,
+                          onPressed: _loadMaterialStock,
                           child: const Text('Coba lagi'),
                         ),
                       ],
@@ -204,7 +341,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                   ),
                 )
               : RefreshIndicator(
-                  onRefresh: _loadData,
+                  onRefresh: _loadMaterialStock,
                   child: SingleChildScrollView(
                     physics: ResponsiveLayout.scrollPhysics,
                     padding: ResponsiveLayout.safeScrollPadding(context),
@@ -223,8 +360,9 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
-                                      'Hasil produksi tercatat di Admin Workshop '
-                                      '(menu Produksi Tukang) dan terhubung ke nomor order.',
+                                      'Produksi mandiri dari stok material workshop. '
+                                      'Hasil tercatat di Admin Workshop (Produksi Tukang). '
+                                      'Order service/custom hanya jika ingin dikaitkan.',
                                       style: Theme.of(context).textTheme.bodySmall,
                                     ),
                                   ),
@@ -234,60 +372,56 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            '1. Pekerjaan',
+                            '1. Material bahan',
                             style: Theme.of(context).textTheme.titleSmall,
                           ),
                           const SizedBox(height: 8),
-                          DropdownButtonFormField<Map<String, dynamic>>(
-                            initialValue: _selectedWork,
-                            decoration: const InputDecoration(
-                              labelText: 'Order / pekerjaan *',
-                              border: OutlineInputBorder(),
+                          if (_materialStock.isEmpty)
+                            InputDecorator(
+                              decoration: const InputDecoration(
+                                labelText: 'Stok material *',
+                                border: OutlineInputBorder(),
+                                enabled: false,
+                              ),
+                              child: Text(
+                                'Belum ada stok material di workshop',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(color: cs.onSurfaceVariant),
+                              ),
+                            )
+                          else
+                            DropdownButtonFormField<int>(
+                              key: ValueKey(
+                                'mat_${_materialStock.length}_$_selectedMaterialId',
+                              ),
+                              initialValue: _materialStock.any(
+                                (m) => _materialIdOf(m) == _selectedMaterialId,
+                              )
+                                  ? _selectedMaterialId
+                                  : null,
+                              decoration: const InputDecoration(
+                                labelText: 'Stok material *',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: _materialStock.map((m) {
+                                final id = _materialIdOf(m);
+                                if (id == null) return null;
+                                final name = m['item_name']?.toString() ??
+                                    m['name']?.toString() ??
+                                    'Material';
+                                final qty = m['quantity']?.toString() ?? '0';
+                                return DropdownMenuItem(
+                                  value: id,
+                                  child: Text('$name (stok: $qty)'),
+                                );
+                              }).whereType<DropdownMenuItem<int>>().toList(),
+                              onChanged: (v) =>
+                                  setState(() => _selectedMaterialId = v),
+                              validator: (v) =>
+                                  v == null ? 'Pilih material' : null,
                             ),
-                            items: _workQueue.map((w) {
-                              final oid = w['order_id']?.toString() ?? '—';
-                              final item = w['item_name']?.toString() ??
-                                  w['nama_item']?.toString() ??
-                                  'Item';
-                              final st = OrderStatusUi.label(
-                                w['status']?.toString(),
-                              );
-                              return DropdownMenuItem(
-                                value: w,
-                                child: Text('Order #$oid — $item ($st)'),
-                              );
-                            }).toList(),
-                            onChanged: (v) => setState(() => _selectedWork = v),
-                            validator: (v) =>
-                                v == null ? 'Pilih pekerjaan' : null,
-                          ),
-                          const SizedBox(height: 20),
-                          Text(
-                            '2. Material bahan',
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<Map<String, dynamic>>(
-                            initialValue: _selectedMaterial,
-                            decoration: const InputDecoration(
-                              labelText: 'Stok material *',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: _materialStock.map((m) {
-                              final name = m['item_name']?.toString() ??
-                                  m['name']?.toString() ??
-                                  'Material';
-                              final qty = m['quantity']?.toString() ?? '0';
-                              return DropdownMenuItem(
-                                value: m,
-                                child: Text('$name (stok: $qty)'),
-                              );
-                            }).toList(),
-                            onChanged: (v) =>
-                                setState(() => _selectedMaterial = v),
-                            validator: (v) =>
-                                v == null ? 'Pilih material' : null,
-                          ),
                           const SizedBox(height: 10),
                           TextFormField(
                             controller: _matQtyCtrl,
@@ -317,7 +451,7 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                           ),
                           const SizedBox(height: 20),
                           Text(
-                            '3. Hasil perhiasan',
+                            '2. Hasil perhiasan',
                             style: Theme.of(context).textTheme.titleSmall,
                           ),
                           const SizedBox(height: 8),
@@ -367,13 +501,15 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
-                            initialValue: _outputJenis,
+                            key: ValueKey<String>(
+                              'output_jenis_${_outputKategori}_$_effectiveOutputJenis',
+                            ),
+                            initialValue: _effectiveOutputJenis,
                             decoration: const InputDecoration(
                               labelText: 'Jenis',
                               border: OutlineInputBorder(),
                             ),
-                            items: (_jenisByKategori[_outputKategori] ??
-                                    const ['UMUM'])
+                            items: _outputJenisOptions
                                 .map(
                                   (j) => DropdownMenuItem(
                                     value: j,
@@ -459,9 +595,18 @@ class _ProduceJewelryPageState extends ConsumerState<ProduceJewelryPage> {
                               border: OutlineInputBorder(),
                             ),
                           ),
+                          const SizedBox(height: 20),
+                          Text(
+                            '3. Kaitan order (opsional)',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 4),
+                          _buildOptionalOrderSection(context, cs),
                           const SizedBox(height: 24),
                           FilledButton.icon(
-                            onPressed: _saving ? null : _submit,
+                            onPressed: (_saving || _materialStock.isEmpty)
+                                ? null
+                                : _submit,
                             icon: _saving
                                 ? const SizedBox(
                                     width: 18,

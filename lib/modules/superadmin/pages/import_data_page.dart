@@ -4,8 +4,10 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/utils/import_data_excel_template.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
+import 'package:vanessa3/utils/save_download_bytes.dart';
 
 class ImportDataPage extends ConsumerStatefulWidget {
   const ImportDataPage({super.key});
@@ -18,6 +20,7 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
   String _selectedDataType = 'customers';
   Map<String, dynamic>? _selectedFile;
   bool _isImporting = false;
+  bool _isDownloadingTemplate = false;
   String _importStatus = '';
   Map<String, dynamic>? _importResult;
 
@@ -97,24 +100,49 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: DropdownButtonFormField<String>(
-                  initialValue: _selectedDataType,
-                  decoration: const InputDecoration(
-                    labelText: 'Pilih jenis data yang akan diimport',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _dataTypes.map((type) {
-                    return DropdownMenuItem(
-                      value: type['value'],
-                      child: Text(type['label']!),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedDataType = value!;
-                      _resetImport();
-                    });
-                  },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedDataType,
+                      decoration: const InputDecoration(
+                        labelText: 'Pilih jenis data yang akan diimport',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _dataTypes.map((type) {
+                        return DropdownMenuItem(
+                          value: type['value'],
+                          child: Text(type['label']!),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedDataType = value!;
+                          _resetImport();
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed:
+                          _isDownloadingTemplate ? null : _downloadTemplate,
+                      icon: _isDownloadingTemplate
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_outlined),
+                      label: Text(
+                        _isDownloadingTemplate
+                            ? 'Menyiapkan template…'
+                            : 'Download template Excel',
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 44),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -290,7 +318,8 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
                   children: [
                     _buildInstructionItem(
                       'Format File',
-                      'File harus dalam format CSV dengan header pada baris pertama',
+                      'CSV atau Excel (XLSX). Baris pertama = header kolom. '
+                      'Gunakan tombol Download template Excel di atas.',
                     ),
                     const SizedBox(height: 12),
                     _buildInstructionItem(
@@ -341,17 +370,39 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
   }
 
   String _getColumnHeaders() {
-    switch (_selectedDataType) {
-      case 'customers':
-        return 'name, phone, email, address';
-      case 'branches':
-        return 'name, code, alias, initials, address, phone_number';
-      case 'items':
-        return 'name, weight, material, purity, status, branch_id';
-      case 'users':
-        return 'username, password_hash, status';
-      default:
-        return '';
+    final cols = importDataTemplateColumns[_selectedDataType];
+    if (cols == null) return '';
+    return cols.join(', ');
+  }
+
+  Future<void> _downloadTemplate() async {
+    setState(() => _isDownloadingTemplate = true);
+    try {
+      final bytes = buildImportDataTemplateXlsx(_selectedDataType);
+      final filename = importTemplateFilename(_selectedDataType);
+      await saveDownloadBytes(
+        filename: filename,
+        bytes: bytes,
+        mimeType:
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Template $filename siap'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal unduh template: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isDownloadingTemplate = false);
     }
   }
 
