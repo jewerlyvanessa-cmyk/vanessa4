@@ -320,16 +320,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final formMaxW = screenW > 600 ? 400.0 : screenW.clamp(280.0, 600.0);
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: ResponsiveLayout.scrollableCenteredPage(
         context: context,
         child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width > 600
-                ? 400
-                : MediaQuery.of(context).size.width * 0.9,
-          ),
+          constraints: BoxConstraints(maxWidth: formMaxW),
           child: Form(
             key: formKey,
             child: Column(

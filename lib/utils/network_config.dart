@@ -16,9 +16,9 @@ class NetworkConfig {
   static const String _localHostDefault = 'localhost';
 
   // Production server (default untuk semua mode build)
-  static const String _prodHost = 'kumpulandoa.my.id';
+  static const String _prodHost = 'mobile.vanessa.id';
 
-  // Default: **false** → `https://kumpulandoa.my.id`.
+  // Default: **false** → `https://mobile.vanessa.id`.
   /// Untuk backend lokal (`http://localhost:3000` / `http://10.0.2.2:3000` di emulator):
   /// `flutter run --dart-define=USE_LOCAL_API=true`
   static bool get _useLocal =>
@@ -26,7 +26,7 @@ class NetworkConfig {
 
   /// `API_PORT` / `API_SCHEME` hanya dipakai jika backend target jelas (host override
   /// atau `USE_LOCAL_API`). Tanpa ini, `API_PORT=3000` saja membuat URL seperti
-  /// `http://kumpulandoa.my.id:3000` yang tidak ada — timeout & login gagal.
+  /// `http://mobile.vanessa.id:3000` yang tidak ada — timeout & login gagal.
   static bool get _apiOverridesApply {
     if (_useLocal) return true;
     return _apiHostRaw.trim().isNotEmpty;

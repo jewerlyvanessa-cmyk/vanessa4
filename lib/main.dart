@@ -114,6 +114,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
           context,
           navigatorChild,
         );
+        navigatorChild = ResponsiveLayout.webMobileChrome(navigatorChild);
 
         // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web
         // tidak tertutup banner merah/oranye.

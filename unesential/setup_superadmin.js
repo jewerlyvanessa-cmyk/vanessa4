@@ -23,7 +23,7 @@ async function setupSuperadminUser() {
   }
 
   try {
-    console.log(`Using DB: ${process.env.DB_NAME || 'vanessa3'} @ ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}`);
+    console.log(`Using DB: ${process.env.DB_NAME || 'vanessa_store'} @ ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}`);
     const passwordHash = await bcrypt.hash(password, 10);
 
     const userResult = await db.query(
@@ -43,8 +43,8 @@ async function setupSuperadminUser() {
 
     const branchInsertResult = await db.query(
       `
-      INSERT INTO branches (name, code, alias, address, status, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+      INSERT INTO branches (name, code, alias, address, status, branch_type, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, 'active', 'pusat', NOW(), NOW())
       ON CONFLICT (code) DO NOTHING
       RETURNING branch_id
       `,

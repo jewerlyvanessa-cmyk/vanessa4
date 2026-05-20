@@ -211,13 +211,23 @@ abstract final class ResponsiveLayout {
     return 120;
   }
 
-  /// Mencegah teks sistem terlalu besar sehingga layout pecah.
+  /// Mencegah teks sistem terlalu besar/kecil sehingga layout pecah (terutama web di HP).
   static MediaQueryData clampMediaQuery(MediaQueryData mq) {
+    final onWeb = kIsWeb;
     return mq.copyWith(
       textScaler: mq.textScaler.clamp(
-        minScaleFactor: 0.9,
-        maxScaleFactor: 1.2,
+        minScaleFactor: onWeb ? 1.0 : 0.9,
+        maxScaleFactor: onWeb ? 1.25 : 1.2,
       ),
+    );
+  }
+
+  /// Safe area + inset keyboard untuk web mobile (notch, gesture bar).
+  static Widget webMobileChrome(Widget child) {
+    if (!kIsWeb) return child;
+    return SafeArea(
+      minimum: EdgeInsets.zero,
+      child: child,
     );
   }
 

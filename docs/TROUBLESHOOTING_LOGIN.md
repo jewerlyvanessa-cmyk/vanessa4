@@ -70,7 +70,7 @@ WebSocket server started on port 8080
 ### **Step 2: Verifikasi Database**
 ```bash
 # Cek koneksi database
-psql -h localhost -U postgres -d vanessa3
+psql -h localhost -U postgres -d vanessa_store
 
 # Query test
 SELECT * FROM users WHERE username = 'admin';
@@ -241,7 +241,7 @@ curl -X POST http://localhost:3000/login \
   -d '{"username":"admin","password":"240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"}'
 
 # 4. Check database
-psql -h localhost -U postgres -d vanessa3 -c "SELECT * FROM users WHERE username='admin';"
+psql -h localhost -U postgres -d vanessa_store -c "SELECT * FROM users WHERE username='admin';"
 ```
 
 ---

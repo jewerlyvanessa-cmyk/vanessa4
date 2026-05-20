@@ -81,7 +81,7 @@ Di repo ini ada **2 fakta** yang perlu diketahui supaya tidak salah konfigurasi:
 - **Backend Express** default listen di **port 3000** (lihat `backend/app.js`: `process.env.PORT || 3000`).
 
 Artinya, environment production/dev bisa salah satu dari skenario berikut:
-- **Ada reverse-proxy / gateway** (mis. Nginx/Cloudflare) yang memetakan `https://kumpulandoa.my.id` (443) → backend Express (3000).
+- **Ada reverse-proxy / gateway** (mis. Nginx/Cloudflare) yang memetakan `https://mobile.vanessa.id` (443) → backend Express (3000).
 - **PORT env backend** di-set berbeda saat deploy (mis. backend listen langsung di 4000/443), dan `NetworkConfig` harus mengikuti.
 
 Dokumen ini **tidak mengubah kode**; bagian ini hanya untuk mencegah miskonfigurasi ketika deploy.
@@ -93,7 +93,7 @@ Skenario paling umum: **TLS termination di Nginx** dan proxy ke Express di local
 ```nginx
 server {
   listen 443 ssl;
-  server_name kumpulandoa.my.id;
+  server_name mobile.vanessa.id;
 
   location / {
     proxy_pass http://127.0.0.1:3000;

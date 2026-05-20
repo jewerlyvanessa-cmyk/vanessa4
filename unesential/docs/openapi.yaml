@@ -8,13 +8,11 @@ info:
   version: 0.1.0
 
 servers:
-  - url: http://localhost:3000
-    description: Local dev (default backend/server.js)
   - url: https://{host}:{port}
     description: Production / reverse-proxy
     variables:
       host:
-        default: kumpulandoa.my.id
+        default: mobile.vanessa.id
       port:
         default: "4000"
 

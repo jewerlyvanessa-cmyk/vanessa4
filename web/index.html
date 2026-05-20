@@ -18,7 +18,10 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Vanessa — manajemen toko & workshop">
+  <!-- Wajib untuk HP (Chrome/MIUI): tanpa ini layout desktop di-scale & teks tampak hilang -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#FFDE21">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -31,8 +34,27 @@
 
   <title>Vanessa</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      background-color: #fafafa;
+    }
+    flutter-view, flt-glass-pane {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
 </head>
 <body>
+  <!-- jsQR untuk scan di browser HP (lebih stabil daripada ZXing/unpkg di mobile) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" crossorigin="anonymous"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
