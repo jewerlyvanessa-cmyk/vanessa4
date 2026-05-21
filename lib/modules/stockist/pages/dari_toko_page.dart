@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:intl/intl.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/transfer_document_receive_sheet.dart';
+import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/transfer_batch_group.dart';
 
 class DariTokoPage extends ConsumerStatefulWidget {
   const DariTokoPage({super.key});
@@ -25,6 +28,9 @@ class _DariTokoPageState extends ConsumerState<DariTokoPage> {
     super.initState();
     _loadTransfers();
   }
+
+  List<TransferCreationBatch> get _batches =>
+      groupTransfersByCreationBatch(_transfers);
 
   Future<void> _loadTransfers() async {
     setState(() {
@@ -64,49 +70,37 @@ class _DariTokoPageState extends ConsumerState<DariTokoPage> {
     }
   }
 
-  Future<void> _updateTransferStatus(int transferId, String status) async {
+  Future<void> _openReceiveSheet(TransferCreationBatch batch) async {
     final userState = ref.read(userStateProvider);
-    final baseUrl = NetworkConfig.baseUrl;
+    final approvedBy = int.tryParse(userState.userId.toString()) ?? 0;
+    await showTransferDocumentReceiveSheet(
+      context: context,
+      batch: batch,
+      isIncoming: true,
+      approvedBy: approvedBy,
+      onCompleted: _loadTransfers,
+    );
+  }
 
-    try {
-      final resp = await http.put(
-        Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'status': status,
-          'approved_by': userState.userId,
-        }),
-      );
-
-      if (!mounted) return;
-
-      if (resp.statusCode == 200) {
-        await _loadTransfers();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Transfer #$transferId: $status')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Gagal update transfer (${resp.statusCode}): ${resp.body}',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
+  String? _batchApprovalExtra(TransferCreationBatch batch) {
+    final status = batch.batchStatus;
+    if (status != 'completed' && status != 'rejected' && status != 'mixed') {
+      return null;
     }
+    final first = batch.lines.first;
+    final who = (first['approved_by_name'] ?? '-').toString();
+    if (batch.batchStatus == 'mixed') {
+      return 'Status per item berbeda';
+    }
+    return status == 'completed' ? 'Diterima: $who' : 'Ditolak: $who';
   }
 
   @override
   Widget build(BuildContext context) {
     final incomingPending =
         _transfers.where((t) => t['status'] == 'pending').length;
+    final batches = _batches;
+    final dateFmt = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
 
     return Scaffold(
       appBar: AppBar(
@@ -154,7 +148,7 @@ class _DariTokoPageState extends ConsumerState<DariTokoPage> {
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _loadTransfers,
-                        child: _transfers.isEmpty
+                        child: batches.isEmpty
                             ? ListView(
                                 physics:
                                     const AlwaysScrollableScrollPhysics(),
@@ -168,64 +162,68 @@ class _DariTokoPageState extends ConsumerState<DariTokoPage> {
                             : LayoutBuilder(
                                 builder: (context, constraints) {
                                   final cs = Theme.of(context).colorScheme;
-final minW = math.max(
+                                  final minW = math.max(
                                     constraints.maxWidth,
-                                    840.0,
+                                    900.0,
                                   );
                                   final dataRows = <DataRow>[];
-                                  for (var i = 0; i < _transfers.length; i++) {
-                                    final transfer =
-                                        _transfers[i] as Map<String, dynamic>;
-                                    final id = int.tryParse(
-                                      transfer['transfer_id'].toString(),
-                                    );
-                                    final status =
-                                        (transfer['status'] ?? '-').toString();
-                                    final fromName =
-                                        (transfer['from_branch_name'] ?? '-')
-                                            .toString();
-                                    final itemName =
-                                        (transfer['item_name'] ??
-                                                transfer['nama_item'] ??
-                                                '-')
-                                            .toString();
-                                    final qty =
-                                        (transfer['quantity'] ??
-                                                transfer['qty'] ??
-                                                '-')
-                                            .toString();
-                                    final canAct =
-                                        id != null && status == 'pending';
-                                    String? extra;
-                                    if (status == 'completed' ||
-                                        status == 'rejected') {
-                                      extra = status == 'completed'
-                                          ? 'Diterima: ${(transfer['approved_by_name'] ?? '-').toString()}'
-                                          : 'Ditolak: ${(transfer['approved_by_name'] ?? '-').toString()}';
-                                    }
+                                  for (var i = 0; i < batches.length; i++) {
+                                    final batch = batches[i];
+                                    final status = batch.batchStatus;
+                                    final extra = _batchApprovalExtra(batch);
+                                    final created = batch.createdAt;
+                                    final dateLabel = created == null
+                                        ? ''
+                                        : dateFmt.format(created);
+                                    final canReceive = batch.pendingCount > 0;
+
                                     dataRows.add(
                                       DataRow(
                                         color:
                                             WidgetStateProperty.resolveWith(
-                                                (s) {
-                                          if (s.contains(
-                                            WidgetState.hovered,
-                                          )) {
-                                            return cs.primary
-                                                .withValues(alpha: 0.06);
-                                          }
-                                          return i.isOdd
-                                              ? cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.45)
-                                              : null;
-                                        }),
+                                          (s) {
+                                            if (s.contains(
+                                              WidgetState.hovered,
+                                            )) {
+                                              return cs.primary
+                                                  .withValues(alpha: 0.06);
+                                            }
+                                            return i.isOdd
+                                                ? cs.surfaceContainerHighest
+                                                    .withValues(alpha: 0.45)
+                                                : null;
+                                          },
+                                        ),
                                         cells: [
                                           DataCell(
-                                            Text(
-                                              '#${id ?? '-'}',
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                              ),
+                                            Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  batch.idsLabel,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                                if (dateLabel.isNotEmpty)
+                                                  Text(
+                                                    dateLabel,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: cs
+                                                          .onSurfaceVariant,
+                                                    ),
+                                                  ),
+                                                Text(
+                                                  '${batch.lineCount} item · pending ${batch.pendingCount}',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: cs.onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                           DataCell(
@@ -234,7 +232,14 @@ final minW = math.max(
                                                   CrossAxisAlignment.start,
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                Text(itemName),
+                                                for (final row
+                                                    in batch.itemRows)
+                                                  Text(
+                                                    '${row.itemName} × ${row.qty}',
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
                                                 if (extra != null)
                                                   Text(
                                                     extra,
@@ -247,12 +252,18 @@ final minW = math.max(
                                               ],
                                             ),
                                           ),
-                                          DataCell(Text(qty)),
-                                          DataCell(Text(fromName)),
+                                          DataCell(
+                                            Text('${batch.totalQty}'),
+                                          ),
+                                          DataCell(
+                                            Text(batch.fromBranchName),
+                                          ),
                                           DataCell(
                                             Chip(
                                               label: Text(
-                                                status,
+                                                status == 'mixed'
+                                                    ? 'beragam'
+                                                    : status,
                                                 style: const TextStyle(
                                                   fontSize: 11,
                                                 ),
@@ -265,36 +276,20 @@ final minW = math.max(
                                             ),
                                           ),
                                           DataCell(
-                                            canAct
-                                                ? Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      IconButton(
-                                                        tooltip: 'Terima',
-                                                        icon: const Icon(
-                                                          Icons.check,
-                                                          color: Colors.green,
-                                                        ),
-                                                        onPressed: () =>
-                                                            _updateTransferStatus(
-                                                          id,
-                                                          'completed',
-                                                        ),
-                                                      ),
-                                                      IconButton(
-                                                        tooltip: 'Tolak',
-                                                        icon: const Icon(
-                                                          Icons.close,
-                                                          color: Colors.red,
-                                                        ),
-                                                        onPressed: () =>
-                                                            _updateTransferStatus(
-                                                          id,
-                                                          'rejected',
-                                                        ),
-                                                      ),
-                                                    ],
+                                            canReceive
+                                                ? FilledButton.tonalIcon(
+                                                    onPressed: () =>
+                                                        _openReceiveSheet(
+                                                      batch,
+                                                    ),
+                                                    icon: const Icon(
+                                                      Icons
+                                                          .playlist_add_check,
+                                                      size: 20,
+                                                    ),
+                                                    label: const Text(
+                                                      'Cek & terima',
+                                                    ),
                                                   )
                                                 : const SizedBox.shrink(),
                                           ),
@@ -338,30 +333,42 @@ final minW = math.max(
                                                     WidgetStateProperty.all(
                                                   cs.surfaceContainerHigh,
                                                 ),
-dataRowMinHeight: 48,
-                                                dataRowMaxHeight: 72,
+                                                dataRowMinHeight: 48,
+                                                dataRowMaxHeight: 120,
                                                 columnSpacing: 10,
                                                 horizontalMargin: 8,
                                                 showCheckboxColumn: false,
                                                 dividerThickness: 0.5,
                                                 columns: [
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('ID'),
+                                                    label: dataTableColumnLabel(
+                                                      'Dokumen',
+                                                    ),
                                                   ),
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('Item'),
+                                                    label: dataTableColumnLabel(
+                                                      'Barang',
+                                                    ),
                                                   ),
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('Qty'),
+                                                    label: dataTableColumnLabel(
+                                                      'Qty total',
+                                                    ),
                                                   ),
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('Dari'),
+                                                    label: dataTableColumnLabel(
+                                                      'Dari',
+                                                    ),
                                                   ),
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('Status'),
+                                                    label: dataTableColumnLabel(
+                                                      'Status',
+                                                    ),
                                                   ),
                                                   DataColumn(
-                                                    label: dataTableColumnLabel('Aksi'),
+                                                    label: dataTableColumnLabel(
+                                                      'Terima',
+                                                    ),
                                                   ),
                                                 ],
                                                 rows: dataRows,
@@ -381,4 +388,3 @@ dataRowMinHeight: 48,
     );
   }
 }
-

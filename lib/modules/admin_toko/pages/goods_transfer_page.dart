@@ -4,12 +4,23 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/admin_toko/pages/goods_transfer_create_page.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
+import 'package:vanessa3/shared_widgets/transfer_document_receive_sheet.dart';
+import 'package:vanessa3/utils/branch_types.dart';
+import 'package:vanessa3/utils/inter_store_transfer_filter.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
+import 'package:vanessa3/utils/transfer_batch_group.dart';
 
+/// [branchTypeScope] — `toko` | `warehouse` | `workshop` untuk transfer antar cabang sejenis.
 class GoodsTransferPage extends ConsumerStatefulWidget {
-  const GoodsTransferPage({super.key});
+  const GoodsTransferPage({
+    super.key,
+    this.branchTypeScope = 'toko',
+  });
+
+  final String branchTypeScope;
 
   @override
   ConsumerState<GoodsTransferPage> createState() => _GoodsTransferPageState();
@@ -28,17 +39,23 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
   }
 
   Future<http.Response> _fetchBranchesList(String baseUrl) async {
+    final q = Uri(queryParameters: {'branch_type': widget.branchTypeScope});
     final primary = await http.get(
-      Uri.parse('$baseUrl/branches'),
+      Uri.parse('$baseUrl/branches').replace(queryParameters: q.queryParameters),
       headers: NetworkConfig.defaultHeaders,
     );
     if (primary.statusCode == 200) return primary;
     final fallback = await http.get(
-      Uri.parse('$baseUrl/api/branches'),
+      Uri.parse('$baseUrl/api/branches').replace(queryParameters: q.queryParameters),
       headers: NetworkConfig.defaultHeaders,
     );
     if (fallback.statusCode == 200) return fallback;
     return primary;
+  }
+
+  List<Map<String, dynamic>> _parseBranchesList(dynamic branchesData) {
+    if (branchesData is! List) return [];
+    return filterBranchesForTypeScope(branchesData, widget.branchTypeScope);
   }
 
   Future<void> _loadData() async {
@@ -51,9 +68,12 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       final userState = ref.read(userStateProvider);
       final baseUrl = NetworkConfig.baseUrl;
 
-      // Load transfer requests
+      final scope = widget.branchTypeScope;
       final transfersResponse = await http.get(
-        Uri.parse('$baseUrl/transfers?branch_id=${userState.branch}'),
+        Uri.parse(
+          '$baseUrl/transfers?branch_id=${userState.branch}'
+          '&branch_type_scope=${Uri.encodeQueryComponent(scope)}',
+        ),
         headers: NetworkConfig.defaultHeaders,
       );
 
@@ -62,17 +82,27 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       if (transfersResponse.statusCode == 200 && branchesResponse.statusCode == 200) {
         final transfersData = jsonDecode(transfersResponse.body);
         final branchesData = jsonDecode(branchesResponse.body);
-        final filteredTransfers = (transfersData is List)
-            ? transfersData.where((e) {
-                if (e is! Map) return false;
-                final status = (e['status'] ?? '').toString().toLowerCase();
-                return status != 'completed';
-              }).toList()
-            : <dynamic>[];
+        final scopedBranches = _parseBranchesList(branchesData);
+        final scopedIds = branchIdsForTypeScope(scopedBranches);
+
+        var filteredTransfers = (transfersData is List)
+            ? filterTransfersForBranchTypeScope(
+                transfersData,
+                scope,
+                scopedIds,
+              )
+            : <Map<String, dynamic>>[];
+
+        filteredTransfers = filteredTransfers
+            .where(
+              (e) =>
+                  (e['status'] ?? '').toString().toLowerCase() != 'completed',
+            )
+            .toList();
 
         setState(() {
           _transferRequests = filteredTransfers;
-          _branches = branchesData;
+          _branches = scopedBranches;
           _isLoading = false;
         });
       } else {
@@ -93,32 +123,6 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
         _isLoading = false;
       });
     }
-  }
-
-  /// Kode & nama: field API jika ada, atau parse "KODE - Nama" dari `item_name`.
-  (String code, String name) _transferCodeAndName(Map<dynamic, dynamic> t) {
-    for (final k in const ['item_code', 'kode_produk', 'product_code']) {
-      final c = t[k]?.toString().trim();
-      if (c != null && c.isNotEmpty) {
-        final n =
-            (t['item_name'] ?? t['nama_item'] ?? '-').toString().trim();
-        return (c, n.isEmpty ? '-' : n);
-      }
-    }
-    final raw = (t['item_name'] ?? t['nama_item'] ?? '-').toString().trim();
-    final sep = raw.indexOf(' - ');
-    if (sep > 0) {
-      final a = raw.substring(0, sep).trim();
-      final b = raw.substring(sep + 3).trim();
-      return (a.isEmpty ? '-' : a, b.isEmpty ? '-' : b);
-    }
-    return ('-', raw.isEmpty ? '-' : raw);
-  }
-
-  int _transferQty(Map<dynamic, dynamic> t) {
-    final q = t['quantity'] ?? t['qty'];
-    if (q is int) return q;
-    return int.tryParse(q?.toString() ?? '') ?? 0;
   }
 
   String _transferStatusLabel(dynamic s) {
@@ -156,25 +160,32 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
   }
 
+  Future<void> _openReceiveSheet(
+    TransferCreationBatch batch,
+    String currentBranchIdStr,
+  ) async {
+    final userState = ref.read(userStateProvider);
+    final approvedBy = int.tryParse(userState.userId.toString()) ?? 0;
+    await showTransferDocumentReceiveSheet(
+      context: context,
+      batch: batch,
+      isIncoming: batch.isIncomingForBranch(currentBranchIdStr),
+      approvedBy: approvedBy,
+      onCompleted: _loadData,
+    );
+  }
+
   void _showTransferHistoryDetail(
-    Map<String, dynamic> transfer,
+    TransferCreationBatch batch,
     String currentBranchIdStr,
   ) {
-    final isIncoming = transfer['to_branch_id']?.toString() == currentBranchIdStr;
-    final (code, name) = _transferCodeAndName(transfer);
-    final qty = _transferQty(transfer);
-    final status = transfer['status'];
-    final fromBranch =
-        transfer['from_branch_name']?.toString() ??
-        transfer['from_branch_id']?.toString() ??
-        '-';
-    final toBranch =
-        transfer['to_branch_name']?.toString() ??
-        transfer['to_branch_id']?.toString() ??
-        '-';
-    final createdAt = _formatTransferDateTime(transfer['created_at']);
-    final updatedAt = _formatTransferDateTime(transfer['updated_at']);
-    final notes = (transfer['notes'] ?? '').toString().trim();
+    final isIncoming = batch.isIncomingForBranch(currentBranchIdStr);
+    final status = batch.batchStatus;
+    final createdAt = batch.createdAt == null
+        ? '-'
+        : _formatTransferDateTime(batch.createdAt!.toIso8601String());
+    final notes = batch.notes;
+    final kurir = batch.courier;
 
     showModalBottomSheet(
       context: context,
@@ -191,53 +202,47 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Detail / Riwayat Transfer',
+                    'Detail dokumen transfer',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
                   ),
                   const SizedBox(height: 12),
-                  _detailRow('ID Transfer', '#${transfer['transfer_id'] ?? '-'}'),
+                  _detailRow('Dokumen', batch.idsLabel),
                   _detailRow('Arah', isIncoming ? 'Masuk' : 'Keluar'),
-                  _detailRow('Kode Barang', code),
-                  _detailRow('Nama Barang', name),
-                  _detailRow('Qty', '$qty'),
-                  _detailRow('Dari', fromBranch),
-                  _detailRow('Ke', toBranch),
+                  _detailRow('Dari', batch.fromBranchName),
+                  _detailRow('Ke', batch.toBranchName),
+                  if (kurir != '-') _detailRow('Kurir', kurir),
                   _detailRow('Status', _transferStatusLabel(status)),
                   if (notes.isNotEmpty) _detailRow('Catatan', notes),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Text(
-                    'Riwayat',
+                    'Barang (${batch.lineCount} item)',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
+                  for (final line in batch.lines)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '• ${(line['item_name'] ?? '-')} × ${line['quantity'] ?? '-'} '
+                        '(#${line['transfer_id'] ?? '-'}) · ${_transferStatusLabel(line['status'])}',
+                      ),
+                    ),
+                  const SizedBox(height: 10),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
                       color: cs.surfaceContainerLow,
-                      border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.5)),
+                      border: Border.all(
+                        color: cs.outlineVariant.withValues(alpha: 0.5),
+                      ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Dibuat: $createdAt'),
-                        const SizedBox(height: 4),
-                        Text('Update terakhir: $updatedAt'),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Status saat ini: ${_transferStatusLabel(status)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: _transferStatusColor(status),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: Text('Dibuat: $createdAt'),
                   ),
                 ],
               ),
@@ -275,58 +280,37 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
   ) {
     final cs = Theme.of(context).colorScheme;
     final extraCompact = narrow && MediaQuery.sizeOf(context).width < 420;
+    final batches = groupTransfersByCreationBatch(_transferRequests);
+    final dateFmt = DateFormat('dd/MM/yy HH:mm', 'id_ID');
     final rows = <DataRow>[];
 
-    for (var i = 0; i < _transferRequests.length; i++) {
-      final t = _transferRequests[i] as Map<dynamic, dynamic>;
-      final transfer = Map<String, dynamic>.from(t);
-      final isIncoming =
-          transfer['to_branch_id']?.toString() == currentBranchIdStr;
-      final transferIdRaw = transfer['transfer_id'];
-      final transferId = transferIdRaw is int
-          ? transferIdRaw
-          : int.tryParse(transferIdRaw?.toString() ?? '');
-      final (code, name) = _transferCodeAndName(transfer);
-      final qty = _transferQty(transfer);
-      final status = transfer['status'];
+    for (var i = 0; i < batches.length; i++) {
+      final batch = batches[i];
+      final isIncoming = batch.isIncomingForBranch(currentBranchIdStr);
+      final status = batch.batchStatus;
       final branchLine = isIncoming
-          ? 'Dari: ${transfer['from_branch_name'] ?? transfer['from_branch_id'] ?? '-'}'
-          : 'Ke: ${transfer['to_branch_name'] ?? transfer['to_branch_id'] ?? '-'}';
+          ? 'Dari: ${batch.fromBranchName}'
+          : 'Ke: ${batch.toBranchName}';
+      final created = batch.createdAt;
+      final dateLabel =
+          created == null ? '' : dateFmt.format(created);
 
       Widget actionsCell() {
-        if (isIncoming && status == 'pending' && transferId != null) {
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.check_circle_outline, color: Colors.green),
-                tooltip: 'Terima',
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(
-                  minWidth: extraCompact ? 30 : 36,
-                  minHeight: extraCompact ? 30 : 36,
-                ),
-                onPressed: () => _approveTransfer(transferId),
-              ),
-              IconButton(
-                icon: const Icon(Icons.cancel_outlined, color: Colors.red),
-                tooltip: 'Tolak',
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(
-                  minWidth: extraCompact ? 30 : 36,
-                  minHeight: extraCompact ? 30 : 36,
-                ),
-                onPressed: () => _rejectTransfer(transferId),
-              ),
-            ],
+        if (isIncoming && batch.pendingCount > 0) {
+          return FilledButton.tonalIcon(
+            onPressed: () => _openReceiveSheet(batch, currentBranchIdStr),
+            icon: const Icon(Icons.playlist_add_check, size: 18),
+            label: Text(
+              extraCompact ? 'Cek' : 'Cek & terima',
+              style: TextStyle(fontSize: extraCompact ? 11 : 12),
+            ),
           );
         }
-        if (status == 'pending' && !isIncoming) {
+        if (batch.pendingCount > 0 && !isIncoming) {
           return Text(
-            'Menunggu',
+            'Menunggu penerima',
             style: TextStyle(
-              fontSize: extraCompact ? 11 : 12,
+              fontSize: extraCompact ? 10 : 11,
               fontWeight: FontWeight.w600,
               color: Colors.orange.shade800,
             ),
@@ -338,7 +322,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       rows.add(
         DataRow(
           onSelectChanged: (_) =>
-              _showTransferHistoryDetail(transfer, currentBranchIdStr),
+              _showTransferHistoryDetail(batch, currentBranchIdStr),
           color: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.hovered)) {
               return cs.primary.withValues(alpha: 0.06);
@@ -348,35 +332,38 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                 : null;
           }),
           cells: [
-            if (!narrow) ...[
-              DataCell(
-                Text(
-                  '#${transfer['transfer_id'] ?? '-'}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: extraCompact ? 12 : 13,
-                  ),
-                ),
-              ),
-              DataCell(
-                Text(
-                  isIncoming ? 'Masuk' : 'Keluar',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: extraCompact ? 11 : 12,
-                    color: isIncoming ? Colors.blue.shade800 : Colors.orange.shade800,
-                  ),
-                ),
-              ),
-            ],
             DataCell(
-              Tooltip(
-                message: code,
-                child: Text(
-                  code,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: extraCompact ? 12 : 13),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    batch.idsLabel,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: extraCompact ? 11 : 13,
+                    ),
+                  ),
+                  if (!narrow && dateLabel.isNotEmpty)
+                    Text(
+                      dateLabel,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            DataCell(
+              Text(
+                isIncoming ? 'Masuk' : 'Keluar',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: extraCompact ? 11 : 12,
+                  color: isIncoming
+                      ? Colors.blue.shade800
+                      : Colors.orange.shade800,
                 ),
               ),
             ),
@@ -385,25 +372,13 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    name,
-                    maxLines: narrow ? 2 : 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: extraCompact ? 12 : 13),
-                  ),
-                  if (narrow) ...[
-                    const SizedBox(height: 2),
+                  for (final row in batch.itemRows)
                     Text(
-                      '${isIncoming ? 'Masuk' : 'Keluar'} · ${_transferStatusLabel(status)}',
-                      maxLines: 1,
+                      '${row.itemName} × ${row.qty}',
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: extraCompact ? 9 : 10,
-                        fontWeight: FontWeight.w600,
-                        color: _transferStatusColor(status),
-                      ),
+                      style: TextStyle(fontSize: extraCompact ? 11 : 12),
                     ),
-                  ],
                 ],
               ),
             ),
@@ -411,7 +386,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: Text(
-                  '$qty',
+                  '${batch.totalQty}',
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: extraCompact ? 12 : 13,
@@ -430,7 +405,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
               ),
               DataCell(
                 Text(
-                  _transferStatusLabel(status),
+                  status == 'mixed' ? 'Beragam' : _transferStatusLabel(status),
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
@@ -446,19 +421,14 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     }
 
     final columns = <DataColumn>[
-      if (!narrow) ...[
-        const DataColumn(
-          label: Text('#', style: TextStyle(fontWeight: FontWeight.w800)),
-        ),
-        const DataColumn(
-          label: Text('Arah', style: TextStyle(fontWeight: FontWeight.w800)),
-        ),
-      ],
       const DataColumn(
-        label: Text('Kode', style: TextStyle(fontWeight: FontWeight.w800)),
+        label: Text('Dokumen', style: TextStyle(fontWeight: FontWeight.w800)),
       ),
       const DataColumn(
-        label: Text('Nama barang', style: TextStyle(fontWeight: FontWeight.w800)),
+        label: Text('Arah', style: TextStyle(fontWeight: FontWeight.w800)),
+      ),
+      const DataColumn(
+        label: Text('Barang', style: TextStyle(fontWeight: FontWeight.w800)),
       ),
       const DataColumn(
         numeric: true,
@@ -472,13 +442,15 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
           label: Text('Status', style: TextStyle(fontWeight: FontWeight.w800)),
         ),
       ],
-      DataColumn(label: SizedBox(width: extraCompact ? 74 : (narrow ? 88 : 100))),
+      DataColumn(
+        label: SizedBox(width: extraCompact ? 88 : (narrow ? 100 : 120)),
+      ),
     ];
 
     return DataTable(
       headingRowColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
-      dataRowMinHeight: extraCompact ? 34 : (narrow ? 40 : 44),
-      dataRowMaxHeight: extraCompact ? 52 : (narrow ? 60 : 64),
+      dataRowMinHeight: extraCompact ? 40 : (narrow ? 48 : 52),
+      dataRowMaxHeight: 120,
       columnSpacing: extraCompact ? 6 : (narrow ? 8 : 14),
       horizontalMargin: extraCompact ? 6 : (narrow ? 8 : 12),
       showCheckboxColumn: false,
@@ -495,7 +467,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Kirim / Terima Barang'),
+        title: Text(goodsTransferPageTitle(widget.branchTypeScope)),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -681,6 +653,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
         builder: (context) => GoodsTransferCreatePage(
           branches: _branches,
           fromBranchId: fromBranchId,
+          branchTypeScope: widget.branchTypeScope,
         ),
       ),
     );
@@ -689,89 +662,5 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     }
   }
 
-  Future<void> _approveTransfer(int transferId) async {
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final userState = ref.read(userStateProvider);
-
-      final response = await http.put(
-        Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'status': 'completed',
-          'approved_by': userState.userId,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Transfer berhasil diterima')),
-          );
-        }
-        _loadData();
-      } else {
-        String msg = 'Gagal menerima transfer';
-        try {
-          final decoded = jsonDecode(response.body);
-          if (decoded is Map && (decoded['detail'] != null || decoded['error'] != null)) {
-            msg = '${decoded['error'] ?? msg}${decoded['detail'] != null ? '\n${decoded['detail']}' : ''}';
-          } else {
-            msg = '$msg (${response.statusCode})';
-          }
-        } catch (_) {
-          msg = '$msg (${response.statusCode}): ${response.body}';
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg)),
-          );
-        }
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $error')),
-        );
-      }
-    }
-  }
-
-  Future<void> _rejectTransfer(int transferId) async {
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final userState = ref.read(userStateProvider);
-
-      final response = await http.put(
-        Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'status': 'rejected',
-          'approved_by': userState.userId,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Transfer berhasil ditolak')),
-          );
-        }
-        _loadData();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Gagal menolak transfer')),
-          );
-        }
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $error')),
-        );
-      }
-    }
-  }
 }
 

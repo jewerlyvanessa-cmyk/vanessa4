@@ -1,13 +1,14 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/store_workshop_receipt_count_provider.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
 import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 /// Order service/custom `ready_for_pickup` dari workshop — admin toko konfirmasi terima fisik
 /// (metadata `store_receipt_confirmed_at`) agar muncul di menu Ambil CS.
@@ -24,6 +25,14 @@ class _ServiceAwaitingStoreReceiptPageState
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   String? _error;
+
+  List<WorkshopOrderDocumentBatch> get _batches => groupWorkshopOrdersByDocument(
+        _rows,
+        flow: 'store_receipt',
+        flowLabel: 'Terima dari workshop',
+        counterpartyBranch: (o) =>
+            (o['branch_id'] ?? '').toString(),
+      );
 
   @override
   void initState() {
@@ -79,36 +88,31 @@ class _ServiceAwaitingStoreReceiptPageState
     }
   }
 
-  Future<void> _confirmReceive(Map<String, dynamic> row) async {
+  Future<void> _openReceiveSheet(WorkshopOrderDocumentBatch batch) async {
     final userState = ref.read(userStateProvider);
-    final orderId = int.tryParse((row['order_id'] ?? '').toString());
-    if (orderId == null) return;
-    try {
-      await ApiService.confirmWorkshopStoreReceipt(
-        orderId: orderId,
-        branchId: userState.branch,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Order #$orderId diterima — CS dapat memproses di menu Ambil',
-          ),
-        ),
-      );
-      ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
+    final branchStr = userState.branch.trim();
+    final branchId = int.tryParse(branchStr) ?? 0;
+    if (branchId <= 0) return;
+
+    await showWorkshopOrderDocumentSheet(
+      context: context,
+      batch: batch,
+      actionKind: WorkshopDocumentActionKind.confirmStoreReceipt,
+      branchId: branchId,
+      branchIdStr: branchStr,
+      extraSubtitle: 'Setelah diterima, order tampil di menu Ambil CS.',
+      onCompleted: () async {
+        ref.read(storeWorkshopReceiptCountProvider.notifier).refresh();
+        await _load();
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final batches = _batches;
+    final pendingOrders = _rows.length;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Terima dari workshop'),
@@ -123,55 +127,74 @@ class _ServiceAwaitingStoreReceiptPageState
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : _rows.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  'Tidak ada kiriman workshop yang menunggu konfirmasi terima di toko.\n\n'
-                  'Muncul setelah admin workshop menekan «Kirim ke Toko». '
-                  'Setelah Anda «Terima», order tampil di menu Ambil CS.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-              ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: _rows.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (context, i) {
-                final row = _rows[i];
-                final oid = (row['order_id'] ?? '—').toString();
-                final cust = (row['customer_name'] ?? '—').toString();
-                final item = (row['item_name'] ?? '—').toString();
-                final st = (row['status'] ?? '').toString();
-                return Card(
-                  child: ListTile(
-                    title: Text('#$oid · $cust', maxLines: 2, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(
-                      '$item\n${OrderStatusUi.label(st)}',
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    isThreeLine: true,
-                    trailing: FilledButton(
-                      onPressed: () => _confirmReceive(row),
-                      child: const Text('Terima'),
-                    ),
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(_error!, textAlign: TextAlign.center),
                   ),
-                );
-              },
-            ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.inventory_2_outlined),
+                          title: const Text('Menunggu konfirmasi terima'),
+                          subtitle: const Text(
+                            'Satu dokumen = beberapa order dikirim workshop '
+                            'pada waktu yang sama. Centang per order sebelum terima.',
+                          ),
+                          trailing: Chip(label: Text('$pendingOrders')),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _load,
+                        child: batches.isEmpty
+                            ? ListView(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.only(top: 48),
+                                children: const [
+                                  Center(
+                                    child: Text(
+                                      'Tidak ada kiriman workshop yang menunggu konfirmasi.\n\n'
+                                      'Muncul setelah admin workshop menekan «Kirim ke Toko».',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : LayoutBuilder(
+                                builder: (context, constraints) {
+                                  return Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      0,
+                                      12,
+                                      12,
+                                    ),
+                                    child: workshopOrderDocumentDataTable(
+                                      context: context,
+                                      batches: batches,
+                                      minWidth: math.max(
+                                        constraints.maxWidth,
+                                        720,
+                                      ),
+                                      actionLabel: 'Cek & terima',
+                                      showAction: (_) => true,
+                                      onOpenDocument: _openReceiveSheet,
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
     );
   }
 }

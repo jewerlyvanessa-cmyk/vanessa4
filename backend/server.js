@@ -2650,6 +2650,10 @@ app.get('/item-conditions', async (req, res) => {
 app.get('/branches', async (req, res) => {
   try {
     await ensureBranchesBranchTypeColumn(db);
+    const typeFilter = String(req.query.branch_type ?? '').trim().toLowerCase();
+    const allowedTypes = new Set(['toko', 'warehouse', 'workshop', 'pusat']);
+    const typeWhere = allowedTypes.has(typeFilter) ? ' WHERE branch_type = $1' : '';
+    const typeParams = allowedTypes.has(typeFilter) ? [typeFilter] : [];
     const qWithLogo = `
       SELECT
         branch_id,
@@ -2663,6 +2667,7 @@ app.get('/branches', async (req, res) => {
         branch_type,
         logo_url
       FROM branches
+      ${typeWhere}
       ORDER BY name
     `;
     const qNoLogo = `
@@ -2678,14 +2683,15 @@ app.get('/branches', async (req, res) => {
         branch_type,
         NULL::text AS logo_url
       FROM branches
+      ${typeWhere}
       ORDER BY name
     `;
     let result;
     try {
-      result = await db.query(qWithLogo);
+      result = await db.query(qWithLogo, typeParams);
     } catch (e) {
       if (String(e.message || '').includes('logo_url')) {
-        result = await db.query(qNoLogo);
+        result = await db.query(qNoLogo, typeParams);
       } else {
         throw e;
       }

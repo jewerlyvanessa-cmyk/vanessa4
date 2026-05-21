@@ -13,7 +13,7 @@ function registerTransfersRoutes(app, deps) {
 
 app.get('/transfers', async (req, res) => {
   try {
-    const { branch_id, status, type, purpose, created_by } = req.query;
+    const { branch_id, status, type, purpose, created_by, branch_type_scope } = req.query;
 
     // Backward-compatible: columns may not exist yet.
     async function hasTransfersColumn(columnName) {
@@ -75,6 +75,23 @@ app.get('/transfers', async (req, res) => {
       query += ` AND (t.from_branch_id = $${paramIndex} OR t.to_branch_id = $${paramIndex})`;
       params.push(branch_id);
       paramIndex++;
+    }
+
+    const scopeRaw = String(branch_type_scope ?? '').trim().toLowerCase();
+    const allowedScopes = new Set(['toko', 'warehouse', 'workshop', 'pusat']);
+    if (allowedScopes.has(scopeRaw)) {
+      query += ` AND COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}`;
+      params.push(scopeRaw);
+      paramIndex++;
+      query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
+      params.push(scopeRaw);
+      paramIndex++;
+      // Permintaan stok toko→warehouse bukan transfer sejenis (antar toko / antar gudang / antar bengkel).
+      if (scopeRaw === 'toko' || scopeRaw === 'warehouse' || scopeRaw === 'workshop') {
+        query += ` AND COALESCE(t.notes, '') NOT ILIKE $${paramIndex}`;
+        params.push('%[PERMINTAAN_STOK]%');
+        paramIndex++;
+      }
     }
 
     if (status) {

@@ -97,6 +97,7 @@ class AppRoutes {
   static const String adminTokoStockMutation = '/admin_toko/stock_mutation';
   static const String adminTokoEmployees = '/admin_toko/employees';
   static const String adminWorkshopEmployees = '/admin_workshop/employees';
+  static const String adminWorkshopGoodsTransfer = '/admin_workshop/goods_transfer';
   static const String kasirPaymentQueue = '/kasir/payment_queue';
   static const String kasirDailyPayments = '/kasir/daily_payments';
   static const String kasirKeuangan = '/kasir/keuangan';
@@ -125,7 +126,8 @@ class AppRoutes {
     manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
     warehouseStock: (context) => const StockPage(),
-    warehouseGoodsTransfer: (context) => const GoodsTransferPage(),
+    warehouseGoodsTransfer: (context) =>
+        const GoodsTransferPage(branchTypeScope: 'warehouse'),
     warehouseStockMutation: (context) => const StockMutationPage(),
     warehouseStockRequests: (context) => const PermintaanStokTokoPage(),
     warehouseFromStore: (context) => const DariTokoPage(),
@@ -142,11 +144,14 @@ class AppRoutes {
     adminTokoWorkshopReceipt: (context) =>
         const ServiceAwaitingStoreReceiptPage(),
     adminTokoStock: (context) => const StockPage(),
-    adminTokoGoodsTransfer: (context) => const GoodsTransferPage(),
+    adminTokoGoodsTransfer: (context) =>
+        const GoodsTransferPage(branchTypeScope: 'toko'),
     adminTokoStockRequest: (context) => const RequestStockWarehousePage(),
     adminTokoStockMutation: (context) => const StockMutationPage(),
     adminTokoEmployees: (context) => const EmployeeManagementPage(),
     adminWorkshopEmployees: (context) => const EmployeeManagementPage(),
+    adminWorkshopGoodsTransfer: (context) =>
+        const GoodsTransferPage(branchTypeScope: 'workshop'),
     kasirPaymentQueue: (context) => const PaymentQueuePage(),
     kasirDailyPayments: (context) => const DailyPaymentsPage(),
     kasirKeuangan: (context) => const KeuanganTokoPage(),

@@ -10,6 +10,11 @@ import 'package:vanessa3/modules/cs/pages/faktur_page.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
+import 'package:vanessa3/utils/order_bill_amount.dart';
+import 'package:vanessa3/utils/payment_order_flow.dart';
+import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
+import 'package:vanessa3/utils/surat_jalan_workshop_print.dart';
+import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
@@ -265,8 +270,31 @@ class _DailyOrdersPaymentsPageState
     decimalDigits: 0,
   ).format(n);
 
-  /// Total tagihan order (selaras kolom tabel: `jumlah` / `total`).
-  num _orderAmount(Map<String, dynamic> o) => _toNum(o['jumlah'] ?? o['total']);
+  /// Total tagihan order (`orders.total`, bukan subtotal baris item).
+  /// Nilai order untuk ringkasan kas: buyback mengurangi (toko bayar pelanggan).
+  num _orderAmountSigned(Map<String, dynamic> o) {
+    final n = orderBillAmountFromRow(o);
+    final t = (o['order_type'] ?? '').toString().trim().toLowerCase();
+    return t == 'buyback' ? -n : n;
+  }
+
+  ({num income, num expense, num net, int count}) _paymentTotals() {
+    final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
+    final summary = payments['summary'] as Map<String, dynamic>? ?? {};
+    final income = _toNum(summary['income_amount']);
+    final expense = _toNum(summary['expense_amount']);
+    if (income > 0 || expense > 0) {
+      final net = _toNum(summary['net_amount']);
+      final trx = _toNum(summary['total_transactions']).toInt();
+      return (
+        income: income,
+        expense: expense,
+        net: net != 0 ? net : income - expense,
+        count: trx > 0 ? trx : _paymentsTransactionsForView().length,
+      );
+    }
+    return summarizePaymentTransactions(_paymentsTransactionsForView());
+  }
 
   num _sumOrderAmountWhere(
     Iterable<Map<String, dynamic>> orders,
@@ -274,7 +302,7 @@ class _DailyOrdersPaymentsPageState
   ) {
     var sum = 0.0;
     for (final o in orders) {
-      if (test(o)) sum += _orderAmount(o).toDouble();
+      if (test(o)) sum += _orderAmountSigned(o).toDouble();
     }
     return sum;
   }
@@ -318,11 +346,10 @@ class _DailyOrdersPaymentsPageState
   String _lineItemName(Map<String, dynamic> row) =>
       _itemFieldStr(row, const ['nama_item', 'item_name', 'name']);
 
-  String _lineItemTotalStr(Map<String, dynamic> row) {
-    final raw = row['item_total'] ?? row['line_total'];
-    if (raw == null) return '—';
-    final d = double.tryParse(raw.toString());
-    if (d != null && d > 0) return _fmtMoney(d);
+  /// Kolom Total di tabel web: total order, bukan subtotal per baris item.
+  String _orderTotalDisplayStr(Map<String, dynamic> row) {
+    final n = orderBillAmountFromRow(row);
+    if (n > 0) return _fmtMoney(n);
     return '—';
   }
 
@@ -463,12 +490,16 @@ class _DailyOrdersPaymentsPageState
         .where((o) => _isOpenOrderStatus(o['status']?.toString()))
         .length;
 
-    num payTotal = 0;
+    num payIncome = 0;
+    num payExpense = 0;
+    num payNet = 0;
     var payTrx = 0;
     if (!widget.ordersOnly) {
-      final payTxs = _paymentsTransactionsForView();
-      payTrx = payTxs.length;
-      payTotal = payTxs.fold<num>(0, (a, p) => a + _toNum(p['amount']));
+      final pay = _paymentTotals();
+      payIncome = pay.income;
+      payExpense = pay.expense;
+      payNet = pay.net;
+      payTrx = pay.count;
     }
 
     final userLabel = user.role.trim().toLowerCase() == 'cs'
@@ -489,7 +520,9 @@ class _DailyOrdersPaymentsPageState
       pendingOrders: pending,
       tokoCount: modeCounts.toko,
       onlineCount: modeCounts.online,
-      paymentTotal: payTotal,
+      paymentIncome: payIncome,
+      paymentExpense: payExpense,
+      paymentNet: payNet,
       paymentTrxCount: payTrx,
       orderRows: orderRows,
       orderRowsAreLineItems: orderRowsAreLineItems,
@@ -568,21 +601,33 @@ class _DailyOrdersPaymentsPageState
     final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
     final transactions =
         payments['transactions'] as List<dynamic>? ?? <dynamic>[];
+    final orderById = _orderByIdDeduped();
+
+    List<Map<String, dynamic>> mapTx(Iterable<dynamic> list) {
+      final out = <Map<String, dynamic>>[];
+      for (final e in list) {
+        if (e is! Map) continue;
+        final p = Map<String, dynamic>.from(e);
+        final oid = p['order_id']?.toString() ?? '';
+        final order = orderById[oid];
+        if ((p['order_type'] ?? '').toString().trim().isEmpty && order != null) {
+          p['order_type'] = order['order_type'];
+        }
+        out.add(p);
+      }
+      return out;
+    }
+
     if (!widget.serviceCustomMode) {
-      return transactions
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      return mapTx(transactions);
     }
     final ids = _serviceCustomOrderIdSet();
-    final out = <Map<String, dynamic>>[];
-    for (final e in transactions) {
-      if (e is! Map) continue;
-      final p = Map<String, dynamic>.from(e);
-      final oid = p['order_id']?.toString() ?? '';
-      if (ids.contains(oid)) out.add(p);
-    }
-    return out;
+    return mapTx(
+      transactions.where((e) {
+        if (e is! Map) return false;
+        return ids.contains(e['order_id']?.toString() ?? '');
+      }),
+    );
   }
 
   int _countItemLineRowsForOrderIds(
@@ -702,6 +747,73 @@ class _DailyOrdersPaymentsPageState
     _openFaktur(context, order);
   }
 
+  String _storeBranchName() {
+    final userState = ref.read(userStateProvider);
+    final id = userState.branch.trim();
+    for (final b in userState.branches) {
+      if (b['branch_id']?.toString() == id) {
+        final n = b['name']?.toString().trim();
+        if (n != null && n.isNotEmpty) return n;
+      }
+    }
+    return id.isEmpty ? 'Toko' : 'Cabang $id';
+  }
+
+  Future<void> _printWorkshopSuratJalan(List<Map<String, dynamic>> orders) async {
+    if (orders.isEmpty) return;
+    final userState = ref.read(userStateProvider);
+    final branches = await resolveWorkshopSuratJalanBranches(
+      storeBranchId: userState.branch.trim(),
+      storeBranchName: _storeBranchName(),
+    );
+    if (!mounted) return;
+    await printSuratJalanWorkshopOrders(
+      context,
+      orders: orders,
+      branches: branches,
+    );
+  }
+
+  Future<void> _openBatchSendToWorkshop(
+    List<Map<String, dynamic>> orders,
+  ) async {
+    final pending = orders
+        .where((o) => _nextAdminTokoWorkshopStatus(o) == 'awaiting_warehouse')
+        .toList();
+    if (pending.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada order untuk dikirim ke workshop')),
+      );
+      return;
+    }
+
+    final batch = WorkshopOrderDocumentBatch(
+      lines: pending,
+      groupKey: 'send_workshop_manual',
+      flowLabel: 'Kirim ke workshop',
+    );
+
+    final userState = ref.read(userStateProvider);
+    final branchId = int.tryParse(userState.branch);
+    if (branchId == null) return;
+
+    final suratJalan = await resolveWorkshopSuratJalanBranches(
+      storeBranchId: userState.branch.trim(),
+      storeBranchName: _storeBranchName(),
+    );
+
+    if (!mounted) return;
+    await showWorkshopOrderDocumentSheet(
+      context: context,
+      batch: batch,
+      actionKind: WorkshopDocumentActionKind.sendToWorkshop,
+      branchId: branchId,
+      branchIdStr: userState.branch.trim(),
+      suratJalanBranches: suratJalan,
+      onCompleted: _loadDailyData,
+    );
+  }
+
   Future<void> _updateWorkshopStatusAdminToko(
     Map<String, dynamic> row,
     String nextStatus,
@@ -722,6 +834,9 @@ class _DailyOrdersPaymentsPageState
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Order #$orderId -> $nextStatus')),
           );
+        }
+        if (nextStatus == 'awaiting_warehouse' && mounted) {
+          await _printWorkshopSuratJalan([row]);
         }
         await _loadDailyData();
       } else {
@@ -819,9 +934,18 @@ class _DailyOrdersPaymentsPageState
           )
         : 0;
     final svcCustom = dedupedAll.where(_isServiceCustomOrder).length;
-    final kirimWorkshopCount = dedupedAll
+    final kirimWorkshopPending = dedupedAll
         .where((o) => _nextAdminTokoWorkshopStatus(o) == 'awaiting_warehouse')
-        .length;
+        .toList();
+    final kirimWorkshopCount = kirimWorkshopPending.length;
+    final sudahKirimWorkshop = dedupedAll
+        .where(
+          (o) =>
+              _isServiceCustomOrder(o) &&
+              (o['status'] ?? '').toString().trim().toLowerCase() ==
+                  'awaiting_warehouse',
+        )
+        .toList();
 
     final stripIds = stripOrders
         .map((o) => o['order_id']?.toString() ?? '')
@@ -829,19 +953,11 @@ class _DailyOrdersPaymentsPageState
         .toSet();
     final lineCount = _countItemLineRowsForOrderIds(ordersRaw, stripIds);
 
-    num payTotal = 0;
-    int payTrx = 0;
-    if (!widget.ordersOnly) {
-      final payments = _dailyData['payments'] as Map<String, dynamic>? ?? {};
-      final summary = payments['summary'] as Map<String, dynamic>? ?? {};
-      final payTxs = _paymentsTransactionsForView();
-      payTotal = widget.serviceCustomMode
-          ? payTxs.fold<num>(0, (a, p) => a + _toNum(p['amount']))
-          : _toNum(summary['total_amount']);
-      payTrx = widget.serviceCustomMode
-          ? payTxs.length
-          : _toNum(summary['total_transactions']).toInt();
-    }
+    final pay = widget.ordersOnly ? null : _paymentTotals();
+    final payIncome = pay?.income ?? 0;
+    final payExpense = pay?.expense ?? 0;
+    final payNet = pay?.net ?? 0;
+    final payTrx = pay?.count ?? 0;
 
     final cs = Theme.of(context).colorScheme;
     final showModeChips = widget.serviceCustomMode || totalOrders > 0;
@@ -927,7 +1043,7 @@ class _DailyOrdersPaymentsPageState
           ),
           iconColor: Colors.deepOrange.shade800,
         ),
-      if (kirimWorkshopCount > 0)
+      if (kirimWorkshopCount > 0) ...[
         _summaryFilterChip(
           context,
           label: 'Kirim workshop $kirimWorkshopCount',
@@ -938,10 +1054,37 @@ class _DailyOrdersPaymentsPageState
           ),
           iconColor: Colors.brown.shade700,
         ),
+        if (widget.serviceCustomMode) ...[
+          ActionChip(
+            avatar: Icon(Icons.playlist_add_check, size: 18, color: cs.primary),
+            label: Text('Kirim dokumen ($kirimWorkshopCount)'),
+            onPressed: () => _openBatchSendToWorkshop(kirimWorkshopPending),
+          ),
+          if (sudahKirimWorkshop.isNotEmpty)
+            ActionChip(
+              avatar: Icon(Icons.print_outlined, size: 18, color: cs.primary),
+              label: Text('Cetak surat jalan (${sudahKirimWorkshop.length})'),
+              onPressed: () => _printWorkshopSuratJalan(sudahKirimWorkshop),
+            ),
+        ],
+      ],
       if (!widget.ordersOnly) ...[
         _miniChip(
           context,
-          _fmtMoney(payTotal),
+          'Masuk ${_fmtMoney(payIncome)}',
+          Icons.south_west,
+          color: Colors.green.shade800,
+        ),
+        if (payExpense > 0)
+          _miniChip(
+            context,
+            'Keluar ${_fmtMoney(payExpense)}',
+            Icons.north_east,
+            color: Colors.red.shade700,
+          ),
+        _miniChip(
+          context,
+          'Net ${_fmtMoney(payNet)}',
           Icons.payments_outlined,
           color: cs.primary,
         ),
@@ -1147,7 +1290,7 @@ class _DailyOrdersPaymentsPageState
                 ],
                 rows: orders.map((o) {
                   final no = _displayOrderNumber(o);
-                  final total = _toNum(o['jumlah'] ?? o['total']);
+                  final total = orderBillAmountFromRow(o);
                   void openRow() => _openOrderDetail(context, o);
                   return DataRow(
                     cells: [
@@ -1240,7 +1383,7 @@ class _DailyOrdersPaymentsPageState
               Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: cell(
-                  _lineItemTotalStr(row),
+                  _orderTotalDisplayStr(row),
                   maxLines: 1,
                   align: TextAlign.end,
                 ),
@@ -1328,6 +1471,13 @@ class _DailyOrdersPaymentsPageState
           (order?['order_type'] ?? p['order_type'] ?? '—').toString();
       final statusRaw = order?['status']?.toString();
       final amt = _toNum(p['amount']);
+      final isOut = paymentIsExpenseOrderType(orderType);
+      final amtStyle = TextStyle(
+        fontSize: 12,
+        height: 1.2,
+        color: isOut ? Colors.red.shade700 : Colors.green.shade800,
+        fontWeight: isOut ? FontWeight.w700 : FontWeight.w600,
+      );
       return DataRow(
         cells: [
           DataCell(
@@ -1340,10 +1490,14 @@ class _DailyOrdersPaymentsPageState
           ),
           DataCell(
             Text(
-              orderType,
+              isOut ? '$orderType · keluar' : orderType,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, height: 1.2),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.2,
+                color: isOut ? Colors.red.shade700 : null,
+              ),
             ),
           ),
           DataCell(
@@ -1356,8 +1510,8 @@ class _DailyOrdersPaymentsPageState
           ),
           DataCell(
             Text(
-              _fmtMoney(amt),
-              style: const TextStyle(fontSize: 12, height: 1.2),
+              isOut ? '− ${_fmtMoney(amt)}' : _fmtMoney(amt),
+              style: amtStyle,
             ),
           ),
           DataCell(

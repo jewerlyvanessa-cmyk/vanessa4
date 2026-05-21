@@ -233,7 +233,6 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
       fromBranchName: fromName ?? 'Cabang ${userState.branch}',
       toBranchName: toName ?? 'Cabang $dest',
       fromBranchIdForLogo: userState.branch.toString().trim(),
-      toBranchIdForLogo: dest.trim(),
       courier: courier,
       notes: _notesController.text.trim(),
     );

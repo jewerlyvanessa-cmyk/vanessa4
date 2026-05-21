@@ -15,7 +15,16 @@ router.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, poo
 router.get('/branches', async (req, res) => {
   try {
     await ensureBranchesBranchTypeColumn(pool);
-    const result = await pool.query(`
+    const typeFilter = String(req.query.branch_type ?? '').trim().toLowerCase();
+    const allowedTypes = new Set(['toko', 'warehouse', 'workshop', 'pusat']);
+    const params = [];
+    let where = '';
+    if (allowedTypes.has(typeFilter)) {
+      where = ' WHERE branch_type = $1';
+      params.push(typeFilter);
+    }
+    const result = await pool.query(
+      `
       SELECT
         branch_id,
         name,
@@ -29,8 +38,11 @@ router.get('/branches', async (req, res) => {
         created_at,
         updated_at
       FROM branches
+      ${where}
       ORDER BY name ASC
-    `);
+    `,
+      params
+    );
     const rows = result.rows.map((row) => ({
       branch_id: row.branch_id != null ? String(row.branch_id) : '',
       name: row.name,

@@ -6,7 +6,6 @@ import '../../stockist/pages/service_incoming_page.dart';
 import 'material_stock_page.dart';
 import 'workshop_productions_page.dart';
 import 'workshop_reports_page.dart';
-import '../../admin_toko/pages/goods_transfer_page.dart';
 import 'return_to_store_page.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
@@ -93,12 +92,8 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
           subtitle: 'Transfer antar cabang workshop (bengkel)',
           icon: Icons.hub_outlined,
           iconColor: Colors.blueGrey,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const GoodsTransferPage(),
-            ),
-          ),
+          onTap: () =>
+              pushAppRoute(context, AppRoutes.adminWorkshopGoodsTransfer),
         ),
       ],
     );

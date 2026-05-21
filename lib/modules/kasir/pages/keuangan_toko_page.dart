@@ -13,6 +13,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/file_uploader.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/kasir_scope_filter.dart';
 import 'package:vanessa3/utils/store_operational_print.dart';
 
 // Conditional imports for platform-specific packages
@@ -466,14 +467,14 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
         return;
       }
       final decoded = jsonDecode(res.body);
-      final list = <Map<String, dynamic>>[];
-      if (decoded is List) {
-        for (final e in decoded) {
-          if (e is Map) list.add(Map<String, dynamic>.from(e));
-        }
+      final uid = scope['user_id'];
+      final filteredUid = int.tryParse(uid ?? '');
+      List<Map<String, dynamic>> entries = [];
+      if (decoded is List && filteredUid != null && filteredUid > 0) {
+        entries = filterKasirOperationalForUser(decoded, filteredUid);
       }
       setState(() {
-        _entries = list;
+        _entries = entries;
         _loadingList = false;
       });
     } on UnauthorizedException catch (_) {

@@ -289,7 +289,8 @@ class PdfLaporanHeaderSubtitleLine {
 }
 
 /// Header multi-halaman seragam laporan cabang: logo kiri + judul & subjudul rata kanan
-/// (sama pola Order Today). Logo kanan opsional (mis. surat jalan dua cabang).
+/// (sama pola Order Today). Logo kanan opsional (hanya untuk ikon kecil; jangan
+/// dipakai dua banner cabang lebar — mis. surat jalan cukup logo pengirim).
 pw.Widget Function(pw.Context)? pdfMultiPageHeaderLaporanCabang({
   required String title,
   Uint8List? leftLogoBytes,

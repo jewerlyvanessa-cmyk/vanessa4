@@ -1,15 +1,13 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
 import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 class ReturnToStorePage extends ConsumerStatefulWidget {
   const ReturnToStorePage({super.key});
@@ -96,153 +94,69 @@ class _ReturnToStorePageState extends ConsumerState<ReturnToStorePage> {
         .toList();
   }
 
-  Future<void> _setReadyForPickup(Map<String, dynamic> row) async {
-    try {
-      final us = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
-      final oid = row['order_id']?.toString().trim();
-      if (oid == null || oid.isEmpty) return;
+  Future<void> _openReturnSheet(WorkshopOrderDocumentBatch batch) async {
+    final us = ref.read(userStateProvider);
+    final branchId = int.tryParse(us.branch.trim());
+    if (branchId == null) return;
 
-      final resp = await http.put(
-        Uri.parse('$baseUrl/workshop-orders/$oid/status'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'status': 'ready_for_pickup',
-          'branch_id': us.branch,
-        }),
-      );
-      if (resp.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Order #$oid -> Siap Diambil')),
-          );
-        }
-        await _load();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Gagal update: ${resp.body}')));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
+    await showWorkshopOrderDocumentSheet(
+      context: context,
+      batch: batch,
+      actionKind: WorkshopDocumentActionKind.returnToStore,
+      branchId: branchId,
+      branchIdStr: us.branch.trim(),
+      extraSubtitle: 'Toko akan menerima di menu «Terima dari workshop».',
+      onCompleted: _load,
+    );
   }
 
-  String _fmtTime(dynamic ts) {
-    if (ts == null) return '-';
-    try {
-      return DateFormat(
-        'dd MMM HH:mm',
-        'id_ID',
-      ).format(DateTime.parse(ts.toString()).toLocal());
-    } catch (_) {
-      return '-';
-    }
-  }
-
-  Widget _table(BuildContext context, List<Map<String, dynamic>> rows) {
+  Widget _doneWorkshopBatchesTable(BuildContext context, List<Map<String, dynamic>> rows) {
     if (rows.isEmpty) {
-      return const Center(child: Text('Tidak ada data'));
+      return const Center(child: Text('Tidak ada order selesai workshop'));
     }
-    final cs = Theme.of(context).colorScheme;
-    final narrow = MediaQuery.sizeOf(context).width < 600;
+    final batches = groupWorkshopOrdersByDocument(
+      rows,
+      flow: 'return_store',
+      flowLabel: 'Kirim ke toko',
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: workshopOrderDocumentDataTable(
+            context: context,
+            batches: batches,
+            minWidth: constraints.maxWidth,
+            actionLabel: 'Cek & kirim',
+            showAction: (_) => true,
+            onOpenDocument: _openReturnSheet,
+          ),
+        );
+      },
+    );
+  }
 
-    final columns = narrow
-        ? <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
-            DataColumn(label: dataTableColumnLabel('Pelanggan')),
-            const DataColumn(label: SizedBox(width: 44)),
-          ]
-        : <DataColumn>[
-            DataColumn(label: dataTableColumnLabel('Order')),
-            DataColumn(label: dataTableColumnLabel('Waktu')),
-            DataColumn(label: dataTableColumnLabel('Pelanggan')),
-            DataColumn(label: dataTableColumnLabel('Item')),
-            DataColumn(label: dataTableColumnLabel('Status')),
-            const DataColumn(label: SizedBox(width: 44)),
-          ];
-
-    final dataRows = rows.map((r) {
-      final oid = r['order_id']?.toString() ?? '—';
-      final cust = (r['customer_name'] ?? '—').toString();
-      final item = (r['item_name'] ?? '—').toString();
-      final st = (r['status'] ?? '').toString();
-      final stLabel = (st == 'ready_for_pickup')
-          ? 'Kirim ke Toko (Siap Diambil)'
-          : OrderStatusUi.label(st);
-      final stColor = OrderStatusUi.color(st);
-
-      final action = (st.toLowerCase() == 'done_workshop')
-          ? IconButton(
-              tooltip: 'Kirim ke toko',
-              icon: const Icon(Icons.local_shipping_outlined),
-              onPressed: () => _setReadyForPickup(r),
-            )
-          : const SizedBox(width: 40);
-
-      return DataRow(
-        cells: narrow
-            ? [
-                DataCell(Text('#$oid')),
-                DataCell(
-                  Text(cust, maxLines: 2, overflow: TextOverflow.ellipsis),
-                ),
-                DataCell(action),
-              ]
-            : [
-                DataCell(Text('#$oid')),
-                DataCell(Text(_fmtTime(r['updated_at'] ?? r['created_at']))),
-                DataCell(
-                  Text(cust, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-                DataCell(
-                  Text(item, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-                DataCell(
-                  Text(
-                    stLabel,
-                    style: TextStyle(
-                      color: stColor,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                DataCell(action),
-              ],
-      );
-    }).toList();
-
-    final table = DataTable(
-      headingRowColor: WidgetStateProperty.all(cs.surfaceContainerHigh),
-      headingTextStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
-        fontWeight: FontWeight.w800,
-        fontSize: AppTypography.bodySmall,
-      ),
-      dataRowMinHeight: 44,
-      dataRowMaxHeight: 62,
-      columnSpacing: narrow ? 10 : 14,
-      horizontalMargin: 10,
-      showCheckboxColumn: false,
-      dividerThickness: 0.6,
-      columns: columns,
-      rows: dataRows,
+  Widget _readyTable(BuildContext context, List<Map<String, dynamic>> rows) {
+    if (rows.isEmpty) {
+      return const Center(child: Text('Tidak ada order siap diambil di toko'));
+    }
+    final batches = groupWorkshopOrdersByDocument(
+      rows,
+      flow: 'return_ready',
+      flowLabel: 'Sudah dikirim ke toko',
     );
 
-    final scrolls = SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: table,
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: workshopOrderDocumentDataTable(
+        context: context,
+        batches: batches,
+        minWidth: MediaQuery.sizeOf(context).width - 24,
+        actionLabel: '—',
+        showAction: (_) => false,
+        onOpenDocument: (_) {},
       ),
     );
-    return kIsWeb ? Scrollbar(child: scrolls) : scrolls;
   }
 
   @override
@@ -291,7 +205,10 @@ class _ReturnToStorePageState extends ConsumerState<ReturnToStorePage> {
             : _error != null
             ? Center(child: Text(_error!))
             : TabBarView(
-                children: [_table(context, done), _table(context, ready)],
+                children: [
+                  _doneWorkshopBatchesTable(context, done),
+                  _readyTable(context, ready),
+                ],
               ),
       ),
     );

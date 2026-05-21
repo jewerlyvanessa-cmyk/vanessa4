@@ -11,6 +11,17 @@ import 'package:vanessa3/utils/terbilang.dart';
 
 final Map<String, Uint8List> _imageByteCache = <String, Uint8List>{};
 
+/// Faktur order — portrait toko: **lebar 21 cm** × **panjang 11 cm** (area cetak).
+/// Di PDF: parameter pertama = lebar, kedua = panjang/tinggi halaman.
+const double kFakturLebarCm = 21;
+const double kFakturPanjangCm = 11;
+
+PdfPageFormat get kFakturPageFormat => PdfPageFormat(
+      kFakturLebarCm * PdfPageFormat.cm,
+      kFakturPanjangCm * PdfPageFormat.cm,
+      marginAll: 0.5 * PdfPageFormat.cm,
+    );
+
 bool _bytesLookLikeRasterImage(Uint8List b) {
   if (b.length < 6) return false;
   if (b[0] == 0xff && b[1] == 0xd8) return true;
@@ -1223,19 +1234,19 @@ Future<void> printFakturOrder(
 
     doc.addPage(
       pw.Page(
-        // Use the default size from InvoicePixelPerfect: 1100 x 650
-        pageFormat: PdfPageFormat(21 * PdfPageFormat.cm, 11 * PdfPageFormat.cm),
-        margin: pw.EdgeInsets.all(0.5 * PdfPageFormat.cm),
+        // Desain InvoicePixelPerfect 1100×650 — skala ke lebar 21 cm × panjang 11 cm.
+        pageFormat: kFakturPageFormat,
         build: (ctx) {
           const designW = 1100.0;
           const designH = 650.0;
-          final pageW = 21 * PdfPageFormat.cm;
-          final pageH = 11 * PdfPageFormat.cm;
+          final pageW = kFakturLebarCm * PdfPageFormat.cm;
+          final pageH = kFakturPanjangCm * PdfPageFormat.cm;
+          final margin = 0.5 * PdfPageFormat.cm;
 
           // Fixed conversion (no adaptive scaling):
           // map "design pixels" -> printable area (after margins).
-          final contentW = pageW - (1.0 * PdfPageFormat.cm);
-          final contentH = pageH - (1.0 * PdfPageFormat.cm);
+          final contentW = pageW - (2 * margin);
+          final contentH = pageH - (2 * margin);
           final kx = contentW / designW;
           final ky = contentH / designH;
           double pxX(double v) => v * kx;
@@ -2363,7 +2374,8 @@ Future<void> printFakturOrder(
       if (info.canPrint) {
         await Printing.layoutPdf(
           name: filename,
-          onLayout: (format) async => pdfBytes,
+          format: kFakturPageFormat,
+          onLayout: (_) async => pdfBytes,
         );
       } else {
         await Printing.sharePdf(bytes: pdfBytes, filename: filename);

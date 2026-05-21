@@ -10,11 +10,10 @@ Future<void> printSuratJalanTransfer(
   required String fromBranchName,
   required String toBranchName,
   String fromBranchIdForLogo = '',
-  String toBranchIdForLogo = '',
 }) async {
   try {
-    final left = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
-    final right = await loadBranchLogoRasterBytesForPdf(toBranchIdForLogo);
+    // Satu banner cabang pengirim saja — asset logo cabang lebar penuh (bukan ikon kecil).
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
     final doc = pw.Document();
 
     String dateStr(dynamic created) {
@@ -36,8 +35,7 @@ Future<void> printSuratJalanTransfer(
         margin: const pw.EdgeInsets.all(40),
         header: pdfMultiPageHeaderLaporanCabang(
           title: 'SURAT JALAN',
-          leftLogoBytes: left,
-          rightLogoBytes: right,
+          leftLogoBytes: logoBytes,
         ),
         build: (ctx) => [
           pw.Text('No Transfer: ${transfer['transfer_id'] ?? '-'}'),
@@ -108,15 +106,13 @@ Future<void> printSuratJalanTransfers(
   required String fromBranchName,
   required String toBranchName,
   required String fromBranchIdForLogo,
-  required String toBranchIdForLogo,
   required String courier,
   String notes = '',
 }) async {
   if (transfers.isEmpty) return;
 
   try {
-    final left = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
-    final right = await loadBranchLogoRasterBytesForPdf(toBranchIdForLogo);
+    final logoBytes = await loadBranchLogoRasterBytesForPdf(fromBranchIdForLogo);
     final doc = pw.Document();
 
     String dateStr(dynamic created) {
@@ -148,8 +144,7 @@ Future<void> printSuratJalanTransfers(
         margin: const pw.EdgeInsets.all(40),
         header: pdfMultiPageHeaderLaporanCabang(
           title: 'SURAT JALAN',
-          leftLogoBytes: left,
-          rightLogoBytes: right,
+          leftLogoBytes: logoBytes,
         ),
         build: (ctx) => [
           pw.Text(

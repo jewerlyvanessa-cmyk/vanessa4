@@ -4,10 +4,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/shared_widgets/transfer_document_receive_sheet.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
+import 'package:vanessa3/utils/transfer_batch_group.dart';
 
 /// Stockist di warehouse: respon permintaan stok dari toko (transfer keluar pending).
 class PermintaanStokTokoPage extends ConsumerStatefulWidget {
@@ -80,43 +83,19 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
     }
   }
 
-  Future<void> _updateTransferStatus(int transferId, String status) async {
+  List<TransferCreationBatch> get _batches =>
+      groupTransfersByCreationBatch(_transfers);
+
+  Future<void> _openProcessSheet(TransferCreationBatch batch) async {
     final userState = ref.read(userStateProvider);
-    final baseUrl = NetworkConfig.baseUrl;
-
-    try {
-      final resp = await http.put(
-        Uri.parse('$baseUrl/transfers/$transferId'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'status': status,
-          'approved_by': userState.userId,
-        }),
-      );
-
-      if (!mounted) return;
-
-      if (resp.statusCode == 200) {
-        await _loadTransfers();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Permintaan #$transferId: $status')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Gagal memproses (${resp.statusCode}): ${resp.body}',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    }
+    final approvedBy = int.tryParse(userState.userId.toString()) ?? 0;
+    await showTransferDocumentReceiveSheet(
+      context: context,
+      batch: batch,
+      isIncoming: false,
+      approvedBy: approvedBy,
+      onCompleted: _loadTransfers,
+    );
   }
 
   String _userNotes(String? rawNotes) {
@@ -146,9 +125,14 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
     return out.join('\n');
   }
 
+  String _batchNotesLine(TransferCreationBatch batch) =>
+      _userNotes(batch.notes);
+
   @override
   Widget build(BuildContext context) {
     final pendingCount = _transfers.length;
+    final batches = _batches;
+    final dateFmt = DateFormat('dd/MM/yyyy HH:mm', 'id_ID');
 
     return Scaffold(
       appBar: AppBar(
@@ -201,7 +185,7 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _loadTransfers,
-                        child: _transfers.isEmpty
+                        child: batches.isEmpty
                             ? ListView(
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 padding: const EdgeInsets.only(top: 48),
@@ -219,39 +203,16 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                     920.0,
                                   );
                                   final dataRows = <DataRow>[];
-                                  for (var i = 0; i < _transfers.length; i++) {
-                                    final transfer =
-                                        _transfers[i] as Map<String, dynamic>;
-                                    final id = int.tryParse(
-                                      transfer['transfer_id'].toString(),
-                                    );
-                                    final status =
-                                        (transfer['status'] ?? '-').toString();
-                                    final toName =
-                                        (transfer['to_branch_name'] ?? '-')
-                                            .toString();
-                                    final itemName =
-                                        (transfer['item_name'] ??
-                                                transfer['nama_item'] ??
-                                                '-')
-                                            .toString();
-                                    final qty =
-                                        (transfer['quantity'] ??
-                                                transfer['qty'] ??
-                                                '-')
-                                            .toString();
-                                    final notesLine = _userNotes(
-                                      transfer['notes']?.toString(),
-                                    );
-                                    final canAct =
-                                        id != null && status == 'pending';
-                                    String? extra;
-                                    if (status == 'completed' ||
-                                        status == 'rejected') {
-                                      extra = status == 'completed'
-                                          ? 'Oleh: ${(transfer['approved_by_name'] ?? '-').toString()}'
-                                          : 'Ditolak: ${(transfer['approved_by_name'] ?? '-').toString()}';
-                                    }
+                                  for (var i = 0; i < batches.length; i++) {
+                                    final batch = batches[i];
+                                    final status = batch.batchStatus;
+                                    final notesLine = _batchNotesLine(batch);
+                                    final created = batch.createdAt;
+                                    final dateLabel = created == null
+                                        ? ''
+                                        : dateFmt.format(created);
+                                    final canAct = batch.pendingCount > 0;
+
                                     dataRows.add(
                                       DataRow(
                                         color:
@@ -270,30 +231,20 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                         }),
                                         cells: [
                                           DataCell(
-                                            Text(
-                                              '#${id ?? '-'}',
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          DataCell(
                                             Column(
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                Text(itemName),
                                                 Text(
-                                                  'Catatan: $notesLine',
-                                                  style: TextStyle(
-                                                    fontSize: 11,
-                                                    color: cs.onSurfaceVariant,
+                                                  batch.idsLabel,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w600,
                                                   ),
                                                 ),
-                                                if (extra != null)
+                                                if (dateLabel.isNotEmpty)
                                                   Text(
-                                                    extra,
+                                                    dateLabel,
                                                     style: TextStyle(
                                                       fontSize: 11,
                                                       color: cs
@@ -303,12 +254,40 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                               ],
                                             ),
                                           ),
-                                          DataCell(Text(qty)),
-                                          DataCell(Text(toName)),
+                                          DataCell(
+                                            Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                for (final row
+                                                    in batch.itemRows)
+                                                  Text(
+                                                    '${row.itemName} × ${row.qty}',
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                Text(
+                                                  'Catatan: $notesLine',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: cs.onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          DataCell(
+                                            Text('${batch.totalQty}'),
+                                          ),
+                                          DataCell(Text(batch.toBranchName)),
                                           DataCell(
                                             Chip(
                                               label: Text(
-                                                status,
+                                                status == 'mixed'
+                                                    ? 'beragam'
+                                                    : status,
                                                 style: const TextStyle(
                                                   fontSize: 11,
                                                 ),
@@ -322,36 +301,19 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                           ),
                                           DataCell(
                                             canAct
-                                                ? Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      IconButton(
-                                                        tooltip:
-                                                            'Setujui & proses stok',
-                                                        icon: const Icon(
-                                                          Icons.check,
-                                                          color: Colors.green,
-                                                        ),
-                                                        onPressed: () =>
-                                                            _updateTransferStatus(
-                                                          id,
-                                                          'completed',
-                                                        ),
-                                                      ),
-                                                      IconButton(
-                                                        tooltip: 'Tolak',
-                                                        icon: const Icon(
-                                                          Icons.close,
-                                                          color: Colors.red,
-                                                        ),
-                                                        onPressed: () =>
-                                                            _updateTransferStatus(
-                                                          id,
-                                                          'rejected',
-                                                        ),
-                                                      ),
-                                                    ],
+                                                ? FilledButton.tonalIcon(
+                                                    onPressed: () =>
+                                                        _openProcessSheet(
+                                                      batch,
+                                                    ),
+                                                    icon: const Icon(
+                                                      Icons
+                                                          .playlist_add_check,
+                                                      size: 20,
+                                                    ),
+                                                    label: const Text(
+                                                      'Cek & proses',
+                                                    ),
                                                   )
                                                 : const SizedBox.shrink(),
                                           ),
@@ -396,7 +358,7 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                                   cs.surfaceContainerHigh,
                                                 ),
                                                 dataRowMinHeight: 52,
-                                                dataRowMaxHeight: 88,
+                                                dataRowMaxHeight: 120,
                                                 columnSpacing: 10,
                                                 horizontalMargin: 8,
                                                 showCheckboxColumn: false,
@@ -404,17 +366,17 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                                 columns: [
                                                   DataColumn(
                                                     label: dataTableColumnLabel(
-                                                      'ID',
+                                                      'Dokumen',
                                                     ),
                                                   ),
                                                   DataColumn(
                                                     label: dataTableColumnLabel(
-                                                      'Item',
+                                                      'Barang',
                                                     ),
                                                   ),
                                                   DataColumn(
                                                     label: dataTableColumnLabel(
-                                                      'Qty',
+                                                      'Qty total',
                                                     ),
                                                   ),
                                                   DataColumn(
@@ -429,7 +391,7 @@ class _PermintaanStokTokoPageState extends ConsumerState<PermintaanStokTokoPage>
                                                   ),
                                                   DataColumn(
                                                     label: dataTableColumnLabel(
-                                                      'Aksi',
+                                                      'Proses',
                                                     ),
                                                   ),
                                                 ],

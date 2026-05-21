@@ -4,7 +4,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
+import 'package:vanessa3/utils/order_bill_amount.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/utils/payment_order_flow.dart';
 
 String _money(num v) =>
     NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0)
@@ -33,18 +35,7 @@ String _orderItemName(Map<String, dynamic> row, {required bool lineItems}) {
   return (row['nama_item'] ?? '—').toString();
 }
 
-num _orderTotal(Map<String, dynamic> row, {required bool lineItems}) {
-  if (lineItems) {
-    final raw = row['item_total'] ?? row['line_total'];
-    if (raw != null) {
-      final n = raw is num ? raw : num.tryParse(raw.toString());
-      if (n != null && n > 0) return n;
-    }
-  }
-  final j = row['jumlah'] ?? row['total'];
-  if (j is num) return j;
-  return num.tryParse(j?.toString() ?? '') ?? 0;
-}
+num _orderTotal(Map<String, dynamic> row) => orderBillAmountFromRow(row);
 
 String _paymentMethodLabel(String method) {
   switch (method.trim().toLowerCase()) {
@@ -77,7 +68,9 @@ Future<void> printDailyOrdersPaymentsReportPdf(
   required int pendingOrders,
   required int tokoCount,
   required int onlineCount,
-  required num paymentTotal,
+  required num paymentIncome,
+  required num paymentExpense,
+  required num paymentNet,
   required int paymentTrxCount,
   required List<Map<String, dynamic>> orderRows,
   required bool orderRowsAreLineItems,
@@ -145,7 +138,9 @@ Future<void> printDailyOrdersPaymentsReportPdf(
             pw.Text('Toko: $tokoCount · Online: $onlineCount'),
             if (!ordersOnly) ...[
               pw.SizedBox(height: 4),
-              pw.Text('Pembayaran: ${_money(paymentTotal)} ($paymentTrxCount trx)'),
+              pw.Text(
+                'Pembayaran masuk: ${_money(paymentIncome)} · keluar: ${_money(paymentExpense)} · net: ${_money(paymentNet)} ($paymentTrxCount trx)',
+              ),
             ],
             pw.SizedBox(height: 14),
             pw.Text(
@@ -162,10 +157,7 @@ Future<void> printDailyOrdersPaymentsReportPdf(
               pw.TableHelper.fromTextArray(
                 headers: const ['No. Nota', 'Order', 'Item', 'Total', 'Status'],
                 data: orderTable.map((o) {
-                  final total = _orderTotal(
-                    o,
-                    lineItems: orderRowsAreLineItems,
-                  );
+                  final total = _orderTotal(o);
                   return [
                     _orderNota(o),
                     (o['order_type'] ?? '—').toString(),
@@ -227,11 +219,13 @@ Future<void> printDailyOrdersPaymentsReportPdf(
                     final n = amt is num
                         ? amt
                         : num.tryParse(amt?.toString() ?? '') ?? 0;
+                    final type = (p['order_type'] ?? '—').toString();
+                    final out = paymentIsExpenseOrderType(type);
                     return [
                       _orderNota(p),
-                      (p['order_type'] ?? '—').toString(),
+                      out ? '$type (keluar)' : type,
                       (p['nama_item'] ?? '—').toString(),
-                      n == 0 ? '—' : _money(n),
+                      n == 0 ? '—' : (out ? '− ${_money(n)}' : _money(n)),
                       _paymentMethodLabel(
                         (p['payment_method'] ?? p['method'] ?? '').toString(),
                       ),

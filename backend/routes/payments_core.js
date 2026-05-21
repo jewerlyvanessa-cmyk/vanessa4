@@ -695,6 +695,7 @@ app.get('/payments/daily', async (req, res) => {
         p.payment_id,
         p.order_id,
         MAX(o.order_number) as order_number,
+        MAX(lower(trim(coalesce(o.order_type::text, '')))) as order_type,
         p.amount,
         p.method,
         ${paymentDateSelect},
@@ -712,22 +713,54 @@ app.get('/payments/daily', async (req, res) => {
       ORDER BY ${hasPaymentDateColDaily ? 'p.payment_date' : 'p.created_at'} DESC
     `;
 
+    const totalsQuery = `
+      SELECT
+        COUNT(*)::int as total_transactions,
+        COALESCE(SUM(CASE
+          WHEN lower(trim(coalesce(o.order_type::text, ''))) IN ('jual', 'service', 'custom')
+            THEN p.amount ELSE 0 END), 0) as income_amount,
+        COALESCE(SUM(CASE
+          WHEN lower(trim(coalesce(o.order_type::text, ''))) = 'buyback'
+            THEN p.amount ELSE 0 END), 0) as expense_amount
+      FROM payments p
+      JOIN orders o ON p.order_id = o.order_id
+      WHERE ${branchScopeSqlDaily}
+        AND ${paymentDateMatch('$2')}
+        AND p.status = 'completed'
+        __USER_FILTER__
+    `;
+
     const detailParams = [parsedBranchDaily, targetDate];
     const detailUserSql =
       userFilter.mode !== 'none' &&
       (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
         ? appendPaymentsUserFilter(detailParams, userFilter)
         : '';
-    const detailResult = await db.query(
-      detailQuery.replace('__USER_FILTER__', detailUserSql),
-      detailParams,
-    );
+    const totalsParams = [parsedBranchDaily, targetDate];
+    const totalsUserSql =
+      userFilter.mode !== 'none' &&
+      (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
+        ? appendPaymentsUserFilter(totalsParams, userFilter)
+        : '';
 
-    // Hitung total keseluruhan
-    const totalAmount = summaryResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount || 0), 0);
-    const totalTransactions = summaryResult.rows.reduce((sum, row) => sum + parseInt(row.total_transactions || 0), 0);
+    const [detailResult, totalsResult] = await Promise.all([
+      db.query(
+        detailQuery.replace('__USER_FILTER__', detailUserSql),
+        detailParams,
+      ),
+      db.query(
+        totalsQuery.replace('__USER_FILTER__', totalsUserSql),
+        totalsParams,
+      ),
+    ]);
 
-    // Format payment methods sebagai object
+    const totalsRow = totalsResult.rows[0] || {};
+    const incomeAmount = parseFloat(totalsRow.income_amount || 0);
+    const expenseAmount = parseFloat(totalsRow.expense_amount || 0);
+    const totalTransactions = parseInt(totalsRow.total_transactions || 0, 10);
+    const netAmount = incomeAmount - expenseAmount;
+
+    // Format payment methods sebagai object (nominal per metode, tetap positif)
     const paymentMethods = {};
     summaryResult.rows.forEach(row => {
       paymentMethods[row.method] = parseFloat(row.total_amount || 0);
@@ -735,7 +768,10 @@ app.get('/payments/daily', async (req, res) => {
 
     res.status(200).json({
       summary: {
-        total_amount: totalAmount,
+        total_amount: incomeAmount + expenseAmount,
+        income_amount: incomeAmount,
+        expense_amount: expenseAmount,
+        net_amount: netAmount,
         total_transactions: totalTransactions,
         payment_methods: paymentMethods,
         by_method: summaryResult.rows.map(row => ({

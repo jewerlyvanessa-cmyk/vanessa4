@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
@@ -15,10 +16,12 @@ class GoodsTransferCreatePage extends ConsumerStatefulWidget {
     super.key,
     required this.branches,
     required this.fromBranchId,
+    this.branchTypeScope = 'toko',
   });
 
   final List<dynamic> branches;
   final dynamic fromBranchId;
+  final String branchTypeScope;
 
   @override
   ConsumerState<GoodsTransferCreatePage> createState() =>
@@ -56,10 +59,13 @@ class _GoodsTransferCreatePageState
 
   List<Map<String, dynamic>> get _destinationBranches {
     final from = widget.fromBranchId?.toString();
+    final scope = widget.branchTypeScope;
     return widget.branches
         .where((b) {
+          if (b is! Map) return false;
           final id = b['branch_id']?.toString();
-          return id != null && id != from;
+          if (id == null || id.isEmpty || id == from) return false;
+          return branchMatchesTypeScope(b['branch_type']?.toString(), scope);
         })
         .map((b) => Map<String, dynamic>.from(b as Map))
         .toList();
@@ -173,6 +179,20 @@ class _GoodsTransferCreatePageState
     if (dest == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pilih cabang tujuan')),
+      );
+      return;
+    }
+
+    final destOk = _destinationBranches.any(
+      (b) => b['branch_id']?.toString() == dest.toString(),
+    );
+    if (!destOk) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Cabang tujuan harus bertipe ${branchTypeLabel(widget.branchTypeScope)}',
+          ),
+        ),
       );
       return;
     }
@@ -427,7 +447,7 @@ class _GoodsTransferCreatePageState
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        title: const Text('Kirim Barang'),
+        title: Text('Kirim Barang — ${branchTypeLabel(widget.branchTypeScope)}'),
       ),
       body: Form(
         key: _formKey,

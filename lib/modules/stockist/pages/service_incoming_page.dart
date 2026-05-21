@@ -1,13 +1,15 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
 import 'package:vanessa3/providers/workshop_service_incoming_provider.dart';
-import 'package:vanessa3/utils/order_status_ui.dart';
+import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
+import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 /// Service/custom dari toko: menunggu persetujuan admin workshop → antrian pekerjaan (`sent-to-workshop`).
 class ServiceIncomingPage extends ConsumerStatefulWidget {
@@ -21,6 +23,14 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
   String? _error;
+
+  List<WorkshopOrderDocumentBatch> get _batches => groupWorkshopOrdersByDocument(
+        _rows,
+        flow: 'workshop_incoming',
+        flowLabel: 'Persetujuan service dari toko',
+        counterpartyBranch: (o) =>
+            (o['pickup_branch_id'] ?? o['branch_id'] ?? '').toString(),
+      );
 
   @override
   void initState() {
@@ -63,52 +73,30 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
     }
   }
 
-  Future<void> _approve(Map<String, dynamic> row) async {
-    final oid = row['order_id']?.toString();
-    if (oid == null || oid.isEmpty) return;
+  Future<void> _openApproveSheet(WorkshopOrderDocumentBatch batch) async {
     final branch = ref.read(userStateProvider).branch;
     final branchId = int.tryParse(branch);
     if (branchId == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cabang tidak valid')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cabang tidak valid')),
+      );
       return;
     }
-    try {
-      final res = await http.put(
-        Uri.parse('${NetworkConfig.baseUrl}/workshop-orders/$oid/status'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode({
-          'branch_id': branchId,
-          'status': 'sent-to-workshop',
-        }),
-      );
-      if (!mounted) return;
-      if (res.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Order #$oid masuk antrian pekerjaan — buka menu Antrian pekerjaan (admin) atau Antrian kerja (tukang).',
-            ),
-          ),
-        );
+
+    await showWorkshopOrderDocumentSheet(
+      context: context,
+      batch: batch,
+      actionKind: WorkshopDocumentActionKind.approveIncoming,
+      branchId: branchId,
+      branchIdStr: branch,
+      extraSubtitle:
+          'Setelah disetujui, order masuk antrian pekerjaan workshop.',
+      onCompleted: () async {
         await _load();
         ref.read(workshopServiceIncomingCountProvider.notifier).refresh();
         ref.read(workshopDashboardProvider.notifier).refresh();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal: ${res.body}')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
+      },
+    );
   }
 
   Widget _hintAfterApprove() {
@@ -123,8 +111,8 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Setelah disetujui, order masuk «Antrian pekerjaan» (belum ditugaskan ke tukang). '
-                'Saat tukang memulai pekerjaan, order pindah ke «Update progress» tukang dan muncul di «On progress» admin workshop.',
+                'Order dari toko yang dikirim bersamaan ditampilkan satu dokumen. '
+                'Centang tiap order yang sudah dicek fisik sebelum menyetujui.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -136,6 +124,8 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final batches = _batches;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Persetujuan service dari toko'),
@@ -149,49 +139,58 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? Center(child: Text(_error!))
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _hintAfterApprove(),
-                Expanded(
-                  child: _rows.isEmpty
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text(
-                              'Tidak ada order menunggu persetujuan workshop',
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: _rows.length,
-                          itemBuilder: (context, i) {
-                            final row = _rows[i];
-                            final st = (row['status'] ?? '').toString();
-                            return Card(
-                              child: ListTile(
-                                title: Text(
-                                  '#${row['order_id']} · ${row['item_name'] ?? '—'}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
+              ? Center(child: Text(_error!))
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _hintAfterApprove(),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _load,
+                        child: batches.isEmpty
+                            ? ListView(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.only(top: 48),
+                                children: const [
+                                  Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(24),
+                                      child: Text(
+                                        'Tidak ada order menunggu persetujuan workshop',
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                                subtitle: Text(
-                                  '${row['customer_name'] ?? ''} · ${OrderStatusUi.label(st)}',
-                                ),
-                                trailing: FilledButton(
-                                  onPressed: () => _approve(row),
-                                  child: const Text('Setuju'),
-                                ),
+                                ],
+                              )
+                            : LayoutBuilder(
+                                builder: (context, constraints) {
+                                  return Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      8,
+                                      12,
+                                      12,
+                                    ),
+                                    child: workshopOrderDocumentDataTable(
+                                      context: context,
+                                      batches: batches,
+                                      minWidth: math.max(
+                                        constraints.maxWidth,
+                                        720,
+                                      ),
+                                      actionLabel: 'Cek & setuju',
+                                      showAction: (_) => true,
+                                      onOpenDocument: _openApproveSheet,
+                                    ),
+                                  );
+                                },
                               ),
-                            );
-                          },
-                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
     );
   }
 }

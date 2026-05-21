@@ -11,6 +11,7 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
+import 'package:vanessa3/utils/kasir_scope_filter.dart';
 
 /// Laporan keuangan kasir: pembayaran order + catatan keuangan toko (non-order).
 class KasirReportsPage extends ConsumerStatefulWidget {
@@ -155,28 +156,20 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
       final payDecoded = jsonDecode(payRes.body);
       final opsDecoded = jsonDecode(opsRes.body);
 
-      final payments = <Map<String, dynamic>>[];
+      var payments = <Map<String, dynamic>>[];
       if (payDecoded is Map) {
         final tx = payDecoded['transactions'];
         if (tx is List) {
-          for (final e in tx) {
-            if (e is Map) payments.add(Map<String, dynamic>.from(e));
-          }
+          payments = filterKasirPaymentsForUser(tx, userId);
         }
       }
 
-      final ops = <Map<String, dynamic>>[];
+      var ops = <Map<String, dynamic>>[];
       if (opsDecoded is List) {
-        for (final e in opsDecoded) {
-          if (e is Map) ops.add(Map<String, dynamic>.from(e));
-        }
+        ops = filterKasirOperationalForUser(opsDecoded, userId);
       }
 
-      final summary = payDecoded is Map
-          ? Map<String, dynamic>.from(
-              (payDecoded['summary'] as Map?)?.cast<String, dynamic>() ?? {},
-            )
-          : <String, dynamic>{};
+      final summary = summarizeKasirPaymentTransactions(payments);
 
       setState(() {
         _payments = payments;

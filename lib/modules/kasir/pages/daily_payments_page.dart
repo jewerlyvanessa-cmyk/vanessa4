@@ -9,6 +9,7 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
+import 'package:vanessa3/utils/kasir_scope_filter.dart';
 
 class DailyPaymentsPage extends ConsumerStatefulWidget {
   const DailyPaymentsPage({super.key});
@@ -328,13 +329,14 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
         return;
       }
 
+      final uid = userId;
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
       // Pembayaran completed: cabang aktif + yang divalidasi user login (validated_by).
       final response = await ApiClient.get(
         '/payments/daily-summary',
         query: {
           'branch_id': branchId,
-          'user_id': userId.toString(),
+          'user_id': uid.toString(),
           'date': dateStr,
         },
       );
@@ -343,11 +345,10 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
         final data = jsonDecode(response.body);
         setState(() {
           final tx = (data['transactions'] as List?) ?? [];
-          _dailyPayments = tx
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          _summary = data['summary'] ?? {};
+          // Cadangan klien: production kadang masih mengembalikan seluruh cabang.
+          final filtered = filterKasirPaymentsForUser(tx, uid);
+          _dailyPayments = filtered;
+          _summary = summarizeKasirPaymentTransactions(filtered);
           // Ringkasan metode pembayaran: pakai rule yang sama seperti total.
           // - jual/service/custom = masuk
           // - buyback = keluar
