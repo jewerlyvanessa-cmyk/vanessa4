@@ -70,6 +70,30 @@ async function ordersHasPickedUpAtColumn(client) {
   return _cachedOrdersPickedUpAtColumnExists;
 }
 
+let _cachedPaymentsPaymentDateColumnExists = null;
+async function paymentsHasPaymentDateColumn(client) {
+  if (_cachedPaymentsPaymentDateColumnExists !== null) {
+    return _cachedPaymentsPaymentDateColumnExists;
+  }
+  try {
+    const r = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'payments'
+          AND column_name = 'payment_date'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedPaymentsPaymentDateColumnExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedPaymentsPaymentDateColumnExists = false;
+  }
+  return _cachedPaymentsPaymentDateColumnExists;
+}
+
 let _cachedPaymentsRevenueBranchColumnExists = null;
 async function paymentsHasRevenueBranchColumn(client) {
   if (_cachedPaymentsRevenueBranchColumnExists !== null) {
@@ -97,6 +121,7 @@ async function paymentsHasRevenueBranchColumn(client) {
 module.exports = {
   paymentsHasProofUrlColumn,
   paymentsHasValidatedByColumn,
+  paymentsHasPaymentDateColumn,
   ordersHasPickedUpAtColumn,
   paymentsHasRevenueBranchColumn,
 };

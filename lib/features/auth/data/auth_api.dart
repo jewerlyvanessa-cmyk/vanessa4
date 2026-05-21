@@ -15,8 +15,19 @@ class AuthApi {
       body: jsonEncode({'username': username, 'password': password}),
     );
     if (res.statusCode != 200) {
+      String message = 'Login failed';
+      try {
+        final err = ApiClient.decodeJsonObject(res);
+        final detail = (err['detail'] ?? err['details'] ?? err['error'] ?? '')
+            .toString()
+            .trim();
+        if (detail.isNotEmpty) message = detail;
+      } catch (_) {
+        final body = res.body.trim();
+        if (body.isNotEmpty) message = body;
+      }
       throw ApiException(
-        'Login failed',
+        message,
         statusCode: res.statusCode,
         cause: res.body,
       );

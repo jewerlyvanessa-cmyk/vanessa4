@@ -117,6 +117,25 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     return 'Cabang $bid';
   }
 
+  /// Query scope: cabang aktif + entri milik user login (selaras laporan kasir).
+  Map<String, String>? _listScopeQuery() {
+    final u = ref.read(userStateProvider);
+    final branchId = u.branch.trim();
+    final userId = u.userId;
+    if (userId == null) return null;
+    if (branchId.isEmpty) return null;
+    return {
+      'branch_id': branchId,
+      'user_id': userId.toString(),
+    };
+  }
+
+  String _scopeSubtitle() {
+    final u = ref.read(userStateProvider);
+    final cashier = u.username.isEmpty ? 'Kasir' : u.username;
+    return '${_branchLabel()} · $cashier${u.userId != null ? ' (ID ${u.userId})' : ''}';
+  }
+
   Future<void> _pickDateRange() async {
     final now = DateTime.now();
     final today = managerReportDateOnly(now);
@@ -405,11 +424,14 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   }
 
   Future<void> _loadEntries() async {
-    final branch = ref.read(userStateProvider).branch;
-    if (branch.isEmpty) {
+    final scope = _listScopeQuery();
+    if (scope == null) {
+      final u = ref.read(userStateProvider);
       setState(() {
         _loadingList = false;
-        _listError = 'Branch tidak dikonfigurasi.';
+        _listError = u.userId == null
+            ? 'User belum login. Silakan login ulang.'
+            : 'Cabang aktif tidak tersedia. Ganti cabang lewat profil lalu coba lagi.';
         _entries = [];
       });
       return;
@@ -427,7 +449,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
       final res = await ApiClient.get(
         '/store-operational',
         query: {
-          'branch_id': branch,
+          ...scope,
           ...periodQ,
         },
       );
@@ -473,11 +495,24 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final branch = ref.read(userStateProvider).branch;
+    final userState = ref.read(userStateProvider);
+    final branch = userState.branch.trim();
+    if (userState.userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User belum login. Silakan login ulang.')),
+        );
+      }
+      return;
+    }
     if (branch.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Branch tidak dikonfigurasi.')),
+          const SnackBar(
+            content: Text(
+              'Cabang aktif tidak tersedia. Ganti cabang lewat profil.',
+            ),
+          ),
         );
       }
       return;
@@ -563,6 +598,14 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(userStateProvider, (prev, next) {
+      if (prev?.branch != next.branch || prev?.userId != next.userId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadEntries();
+        });
+      }
+    });
+
     final cs = Theme.of(context).colorScheme;
     final money = NumberFormat.currency(
       locale: 'id_ID',
@@ -590,6 +633,21 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Keuangan Toko'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(28),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                _scopeSubtitle(),
+                style: Theme.of(context).textTheme.labelSmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.print_outlined),
@@ -609,7 +667,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
           padding: const EdgeInsets.all(16),
           children: [
             Text(
-              'Catat pemasukan dan pengeluaran operasional cabang (di luar alur pembayaran order pelanggan).',
+              'Catat pemasukan/pengeluaran operasional — hanya entri Anda di cabang aktif (di luar pembayaran order).',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant,
                     fontSize: AppTypography.bodySmall,

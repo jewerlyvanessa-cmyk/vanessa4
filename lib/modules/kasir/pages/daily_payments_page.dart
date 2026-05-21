@@ -311,6 +311,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
     try {
       final userState = ref.read(userStateProvider);
       final userId = userState.userId;
+      final branchId = userState.branch.trim();
       if (userId == null) {
         setState(() {
           _error = 'User belum login. Silakan login ulang.';
@@ -318,14 +319,22 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
         });
         return;
       }
+      if (branchId.isEmpty) {
+        setState(() {
+          _error =
+              'Cabang aktif tidak tersedia. Ganti cabang lewat profil lalu coba lagi.';
+          _isLoading = false;
+        });
+        return;
+      }
 
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
-      // Backend (role kasir): default hanya transaksi dengan payments.validated_by = user login,
-      // tanggal pakai zona bisnis GMT+7 (WIB / Asia/Jakarta). Opsional: validated_by_only=0.
+      // Pembayaran completed: cabang aktif + yang divalidasi user login (validated_by).
       final response = await ApiClient.get(
         '/payments/daily-summary',
         query: {
-          'branch_id': userState.branch,
+          'branch_id': branchId,
+          'user_id': userId.toString(),
           'date': dateStr,
         },
       );
@@ -460,10 +469,37 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
   @override
   Widget build(BuildContext context) {
     final isServerHealthy = ref.watch(healthCheckProvider);
+    final user = ref.watch(userStateProvider);
+    ref.listen(userStateProvider, (prev, next) {
+      if (prev?.branch != next.branch || prev?.userId != next.userId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadDailyPayments();
+        });
+      }
+    });
+
+    final cashierLabel = user.username.isEmpty ? 'Kasir' : user.username;
+    final scopeLabel =
+        '${_branchLabel()} · $cashierLabel${user.userId != null ? ' (ID ${user.userId})' : ''}';
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pembayaran Hari Ini'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(28),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                scopeLabel,
+                style: Theme.of(context).textTheme.labelSmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ),
         actions: [
           Row(
             children: [
@@ -517,17 +553,29 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  child: Column(
                     children: [
-                      const Icon(Icons.calendar_today),
-                      const SizedBox(width: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(
+                            DateFormat(
+                              'EEEE, dd MMMM yyyy',
+                              'id_ID',
+                            ).format(_selectedDate),
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
                       Text(
-                        DateFormat(
-                          'EEEE, dd MMMM yyyy',
-                          'id_ID',
-                        ).format(_selectedDate),
-                        style: Theme.of(context).textTheme.titleMedium,
+                        'Hanya pembayaran Anda di cabang ini',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey.shade700,
+                            ),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),

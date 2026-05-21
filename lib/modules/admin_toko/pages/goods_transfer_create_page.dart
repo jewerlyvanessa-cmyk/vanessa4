@@ -79,7 +79,7 @@ class _GoodsTransferCreatePageState
     try {
       final status = _selectedSourceType == 'buyback' ? 'buyback' : 'ready';
       final uri = Uri.parse(
-        '${NetworkConfig.baseUrl}/items?branch_id=${widget.fromBranchId}&status=$status&limit=200',
+        '${NetworkConfig.baseUrl}/items?branch_id=${widget.fromBranchId}&status=$status&in_stock_only=1&limit=200',
       );
       final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {

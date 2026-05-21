@@ -658,6 +658,8 @@ dataRowMinHeight:
         return Colors.purple;
       case 'admin_warehouse':
         return Colors.brown;
+      case 'stockist':
+        return Colors.blueGrey;
       case 'tukang':
         return Colors.red;
       case 'manajer':
@@ -679,6 +681,8 @@ dataRowMinHeight:
         return 'Admin Workshop';
       case 'admin_warehouse':
         return 'Admin Warehouse';
+      case 'stockist':
+        return 'Stockist';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -686,7 +690,7 @@ dataRowMinHeight:
       case 'superadmin':
         return 'Super Admin';
       default:
-        return 'Unknown';
+        return role?.isNotEmpty == true ? role! : 'Unknown';
     }
   }
 
@@ -834,6 +838,7 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
     'admin_toko',
     'admin_workshop',
     'admin_warehouse',
+    'stockist',
     'tukang',
     'manajer',
   ];
@@ -909,6 +914,8 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
         return 'Admin Workshop';
       case 'admin_warehouse':
         return 'Admin Warehouse';
+      case 'stockist':
+        return 'Stockist';
       case 'tukang':
         return 'Tukang';
       case 'manajer':
@@ -997,6 +1004,7 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
     'admin_toko',
     'admin_workshop',
     'admin_warehouse',
+    'stockist',
     'tukang',
     'manajer',
   ];
@@ -1069,6 +1077,8 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
         return 'Admin Workshop';
       case 'admin_warehouse':
         return 'Admin Warehouse';
+      case 'stockist':
+        return 'Stockist';
       case 'tukang':
         return 'Tukang';
       case 'manajer':

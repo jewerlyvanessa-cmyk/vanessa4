@@ -2,10 +2,13 @@
 -- Aman dijalankan berulang (IF NOT EXISTS).
 --
 -- PENTING — jika muncul "current transaction is aborted":
---   Jalankan SATU baris ini dulu di tab query baru, lalu Execute:
---   ROLLBACK;
+--   1. Buka tab/query BARU (jangan pakai tab yang error)
+--   2. Jalankan HANYA:  ROLLBACK;
+--   3. Tab BARU lagi → jalankan patch_items_ownership_only.sql (lebih aman)
+--      atau file ini dari awal
 --
--- (Tanpa BEGIN/COMMIT agar tiap perintah commit sendiri di Database Client)
+-- Jangan centang "Execute in transaction" / "Auto-commit off" di client SQL.
+-- Dari terminal (disarankan): psql ... -f patch_items_ownership_only.sql
 
 -- branches
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
@@ -44,6 +47,35 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS metadata JSONB;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS photo_produk TEXT;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS created_by BIGINT REFERENCES users (user_id);
 ALTER TABLE items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS ownership TEXT DEFAULT 'unknown';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS stock_type TEXT DEFAULT 'non_inventory';
+ALTER TABLE items ADD COLUMN IF NOT EXISTS is_quick_registered BOOLEAN DEFAULT FALSE;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS is_estimated BOOLEAN DEFAULT FALSE;
+
+UPDATE items SET ownership = 'unknown' WHERE ownership IS NULL;
+UPDATE items SET stock_type = 'non_inventory' WHERE stock_type IS NULL;
+UPDATE items SET is_quick_registered = FALSE WHERE is_quick_registered IS NULL;
+UPDATE items SET is_estimated = FALSE WHERE is_estimated IS NULL;
+
+DO $$
+BEGIN
+  ALTER TABLE items
+    ADD CONSTRAINT items_ownership_check
+    CHECK (ownership IN ('toko', 'pelanggan', 'unknown'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE items
+    ADD CONSTRAINT items_stock_type_check
+    CHECK (stock_type IN ('inventory', 'non_inventory'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_items_ownership ON items (ownership);
 
 -- orders
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::JSONB;

@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/modules/cs/pages/faktur_page.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
@@ -84,55 +85,6 @@ class _DailyOrdersPaymentsPageState
     }).toList();
   }
 
-  /// CS: pembayaran hanya untuk order yang tersisa di [csOrdersList] (milik CS).
-  Map<String, dynamic> _filterPaymentsForCsOrders(
-    Map<String, dynamic> payments,
-    List<dynamic> csOrdersList,
-  ) {
-    final allowed = <String>{};
-    for (final e in csOrdersList) {
-      if (e is! Map) continue;
-      final id = Map<String, dynamic>.from(e)['order_id']?.toString() ?? '';
-      if (id.isNotEmpty) allowed.add(id);
-    }
-    final txsRaw = payments['transactions'] as List<dynamic>? ?? [];
-    final filtered = <Map<String, dynamic>>[];
-    for (final e in txsRaw) {
-      if (e is! Map) continue;
-      final m = Map<String, dynamic>.from(e);
-      final oid = m['order_id']?.toString() ?? '';
-      if (allowed.contains(oid)) filtered.add(m);
-    }
-    final methodAmount = <String, double>{};
-    final methodCounts = <String, int>{};
-    for (final m in filtered) {
-      final meth = (m['method'] ?? 'unknown').toString();
-      final amt = _toNum(m['amount']).toDouble();
-      methodAmount[meth] = (methodAmount[meth] ?? 0) + amt;
-      methodCounts[meth] = (methodCounts[meth] ?? 0) + 1;
-    }
-    final totalAmt = filtered.fold<num>(0, (a, m) => a + _toNum(m['amount']));
-    final out = Map<String, dynamic>.from(payments);
-    out['transactions'] = filtered;
-    out['summary'] = {
-      'total_amount': totalAmt,
-      'total_transactions': filtered.length,
-      'payment_methods': {
-        for (final e in methodAmount.entries) e.key: e.value,
-      },
-      'by_method': methodAmount.entries
-          .map(
-            (e) => {
-              'method': e.key,
-              'total_amount': e.value,
-              'method_count': methodCounts[e.key] ?? 0,
-            },
-          )
-          .toList(),
-    };
-    return out;
-  }
-
   @override
   void initState() {
     super.initState();
@@ -153,30 +105,45 @@ class _DailyOrdersPaymentsPageState
       final userState = ref.read(userStateProvider);
       final baseUrl = NetworkConfig.baseUrl;
 
-      final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+      final dateStr = _selectedDate == BusinessCalendar.todayWibDateOnly()
+          ? BusinessCalendar.todayYmd()
+          : DateFormat('yyyy-MM-dd').format(_selectedDate);
+
+      final ordersQuery = <String, String>{
+        'branch_id': userState.branch,
+        'date': dateStr,
+      };
+      if (userState.role.trim().toLowerCase() == 'cs' &&
+          userState.userId != null) {
+        ordersQuery['user_id'] = userState.userId.toString();
+      }
 
       var ordersResponse = await http.get(
-        Uri.parse(
-          '$baseUrl/api/orders/daily?branch_id=${userState.branch}&date=$dateStr',
-        ),
+        Uri.parse('$baseUrl/api/orders/daily')
+            .replace(queryParameters: ordersQuery),
         headers: NetworkConfig.defaultHeaders,
       );
       if (ordersResponse.statusCode == 404) {
         ordersResponse = await http.get(
-          Uri.parse(
-            '$baseUrl/orders/daily?branch_id=${userState.branch}&date=$dateStr',
-          ),
+          Uri.parse('$baseUrl/orders/daily')
+              .replace(queryParameters: ordersQuery),
           headers: NetworkConfig.defaultHeaders,
         );
       }
 
       http.Response? paymentsResponse;
       if (!widget.ordersOnly) {
-        paymentsResponse = await http.get(
-          Uri.parse(
-            '$baseUrl/payments/daily?date=$dateStr&branch_id=${userState.branch}',
-          ),
-          headers: NetworkConfig.defaultHeaders,
+        final payQuery = <String, String>{
+          'date': dateStr,
+          'branch_id': userState.branch,
+        };
+        if (userState.role.trim().toLowerCase() == 'cs' &&
+            userState.userId != null) {
+          payQuery['user_id'] = userState.userId.toString();
+        }
+        paymentsResponse = await ApiClient.get(
+          '/payments/daily',
+          query: payQuery,
         );
       }
 
@@ -203,25 +170,41 @@ class _DailyOrdersPaymentsPageState
           paymentsData = Map<String, dynamic>.from(
             jsonDecode(paymentsResponse!.body) as Map,
           );
-          if (userState.role.trim().toLowerCase() == 'cs' &&
-              userState.userId != null &&
-              ordersData is List<dynamic>) {
-            paymentsData = _filterPaymentsForCsOrders(
-              paymentsData,
-              ordersData,
-            );
-          }
         }
 
         setState(() {
           _dailyData = {'orders': ordersData, 'payments': paymentsData};
-          // Reset subfilter ke "semua" (di halaman Service/Custom = semua order service/custom).
+          // Reset subfilter ke "semua" — Order Today harus tampilkan semua status, bukan hanya selesai.
           _orderFilter = _AdminOrderFilter.all;
           _isLoading = false;
         });
       } else {
+        String msg = 'Gagal memuat data harian';
+        if (ordersResponse.statusCode == 403 ||
+            paymentsResponse?.statusCode == 403) {
+          msg =
+              'Cabang tidak diizinkan. Ganti cabang lewat menu profil lalu coba lagi.';
+        } else if (ordersResponse.statusCode >= 500 ||
+            (paymentsResponse?.statusCode ?? 0) >= 500) {
+          msg =
+              'Server error (${ordersResponse.statusCode}/${paymentsResponse?.statusCode ?? 0}). Pastikan API production sudah di-deploy ulang.';
+          try {
+            final errBody = ordersResponse.statusCode >= 500
+                ? ordersResponse.body
+                : paymentsResponse?.body ?? '';
+            final err = jsonDecode(errBody) as Map;
+            final d = (err['error'] ?? err['detail'] ?? '').toString().trim();
+            if (d.isNotEmpty) msg = d;
+          } catch (_) {}
+        } else if (ordersResponse.statusCode == 400) {
+          try {
+            final err = jsonDecode(ordersResponse.body) as Map;
+            final d = (err['error'] ?? err['detail'] ?? '').toString().trim();
+            if (d.isNotEmpty) msg = d;
+          } catch (_) {}
+        }
         setState(() {
-          _error = 'Gagal memuat data harian';
+          _error = msg;
           _isLoading = false;
         });
       }
@@ -348,6 +331,17 @@ class _DailyOrdersPaymentsPageState
     return t == 'service' || t == 'custom';
   }
 
+  static bool _isCompletedOrderStatus(String? status) {
+    final s = (status ?? '').toString().trim().toLowerCase();
+    return s == 'completed' || s == 'sold';
+  }
+
+  static bool _isOpenOrderStatus(String? status) {
+    final s = (status ?? '').toString().trim().toLowerCase();
+    if (s.isEmpty) return true;
+    return s != 'completed' && s != 'sold' && s != 'cancelled';
+  }
+
   bool _orderMatchesFilter(Map<String, dynamic> o) {
     if (widget.serviceCustomMode && !_isServiceCustomOrder(o)) {
       return false;
@@ -361,10 +355,9 @@ class _DailyOrdersPaymentsPageState
       case _AdminOrderFilter.online:
         return (o['mode'] ?? '').toString().trim().toLowerCase() == 'online';
       case _AdminOrderFilter.completed:
-        return (o['status'] ?? '').toString().trim().toLowerCase() ==
-            'completed';
+        return _isCompletedOrderStatus(o['status']?.toString());
       case _AdminOrderFilter.pending:
-        return (o['status'] ?? '').toString().trim().toLowerCase() == 'pending';
+        return _isOpenOrderStatus(o['status']?.toString());
       case _AdminOrderFilter.serviceCustom:
         return _isServiceCustomOrder(o);
       case _AdminOrderFilter.kirimWorkshop:
@@ -464,17 +457,10 @@ class _DailyOrdersPaymentsPageState
         : _filterDeduped(_dedupeOrdersById(ordersRaw));
     final modeCounts = _orderModeCounts(dedupedForSummary);
     final completed = dedupedForSummary
-        .where(
-          (o) =>
-              (o['status'] ?? '').toString().trim().toLowerCase() ==
-              'completed',
-        )
+        .where((o) => _isCompletedOrderStatus(o['status']?.toString()))
         .length;
     final pending = dedupedForSummary
-        .where(
-          (o) =>
-              (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
-        )
+        .where((o) => _isOpenOrderStatus(o['status']?.toString()))
         .length;
 
     num payTotal = 0;
@@ -754,6 +740,58 @@ class _DailyOrdersPaymentsPageState
     }
   }
 
+  /// Filter ringkas di dashboard CS (Order Today) — default Semua, bukan hanya selesai.
+  Widget _ordersOnlyEmbedFilterStrip(BuildContext context) {
+    final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
+    final deduped = _dedupeOrdersById(ordersRaw);
+    final open = deduped
+        .where((o) => _isOpenOrderStatus(o['status']?.toString()))
+        .length;
+    final done = deduped
+        .where((o) => _isCompletedOrderStatus(o['status']?.toString()))
+        .length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _summaryFilterChip(
+            context,
+            label: 'Semua ${deduped.length}',
+            icon: Icons.receipt_long_outlined,
+            selected: _orderFilter == _AdminOrderFilter.all,
+            onSelected: (_) => _setOrderFilter(_AdminOrderFilter.all),
+          ),
+          if (open > 0)
+            _summaryFilterChip(
+              context,
+              label: 'Belum selesai $open',
+              icon: Icons.hourglass_top_outlined,
+              selected: _orderFilter == _AdminOrderFilter.pending,
+              onSelected: (sel) => _setOrderFilter(
+                sel ? _AdminOrderFilter.pending : _AdminOrderFilter.all,
+              ),
+              iconColor: Colors.orange.shade800,
+            ),
+          if (done > 0)
+            _summaryFilterChip(
+              context,
+              label: 'Selesai $done',
+              icon: Icons.check_circle_outline,
+              selected: _orderFilter == _AdminOrderFilter.completed,
+              onSelected: (sel) => _setOrderFilter(
+                sel ? _AdminOrderFilter.completed : _AdminOrderFilter.all,
+              ),
+              iconColor: Colors.green.shade700,
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _compactSummaryStrip(BuildContext context) {
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
     final dedupedAll = _dedupeOrdersById(ordersRaw);
@@ -763,32 +801,21 @@ class _DailyOrdersPaymentsPageState
     final totalOrders = stripOrders.length;
     final modeCounts = _orderModeCounts(stripOrders);
     final completed = stripOrders
-        .where(
-          (o) =>
-              (o['status'] ?? '').toString().trim().toLowerCase() ==
-              'completed',
-        )
+        .where((o) => _isCompletedOrderStatus(o['status']?.toString()))
         .length;
     final pending = stripOrders
-        .where(
-          (o) =>
-              (o['status'] ?? '').toString().trim().toLowerCase() == 'pending',
-        )
+        .where((o) => _isOpenOrderStatus(o['status']?.toString()))
         .length;
     final completedAmount = widget.ordersOnly
         ? _sumOrderAmountWhere(
             stripOrders,
-            (o) =>
-                (o['status'] ?? '').toString().trim().toLowerCase() ==
-                'completed',
+            (o) => _isCompletedOrderStatus(o['status']?.toString()),
           )
         : 0;
     final pendingAmount = widget.ordersOnly
         ? _sumOrderAmountWhere(
             stripOrders,
-            (o) =>
-                (o['status'] ?? '').toString().trim().toLowerCase() ==
-                'pending',
+            (o) => _isOpenOrderStatus(o['status']?.toString()),
           )
         : 0;
     final svcCustom = dedupedAll.where(_isServiceCustomOrder).length;
@@ -993,10 +1020,29 @@ class _DailyOrdersPaymentsPageState
     );
   }
 
+  String _emptyOrdersHint() {
+    final dateLabel = DateFormat('d MMM yyyy', 'id_ID').format(_selectedDate);
+    final role = ref.read(userStateProvider).role.trim().toLowerCase();
+    final csNote = role == 'cs'
+        ? '\n(CS hanya melihat order yang Anda buat.)'
+        : '';
+    return 'Tidak ada order pada $dateLabel.$csNote\n'
+        'Coba tanggal kemarin di pemilih tanggal, atau refresh setelah membuat order.';
+  }
+
   Widget _ordersTable(BuildContext context) {
     final ordersRaw = _dailyData['orders'] as List<dynamic>? ?? [];
     if (ordersRaw.isEmpty) {
-      return const Center(child: Text('Tidak ada order'));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _emptyOrdersHint(),
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+        ),
+      );
     }
 
     final tableRaw = _rawOrdersForTable(ordersRaw);
@@ -1396,6 +1442,7 @@ class _DailyOrdersPaymentsPageState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (!widget.embedInParent) _compactSummaryStrip(context),
+          if (widget.embedInParent) _ordersOnlyEmbedFilterStrip(context),
           Expanded(child: _ordersTable(context)),
         ],
       );
@@ -1500,7 +1547,25 @@ class _DailyOrdersPaymentsPageState
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
                       child: Text(
-                        _isLoading ? '…' : '$orderCount order',
+                        _isLoading
+                            ? '…'
+                            : () {
+                                final open = dedupedOrders
+                                    .where(
+                                      (o) => _isOpenOrderStatus(
+                                        o['status']?.toString(),
+                                      ),
+                                    )
+                                    .length;
+                                final done = orderCount - open;
+                                if (open > 0 && done > 0) {
+                                  return '$orderCount order · $open belum selesai';
+                                }
+                                if (open > 0) {
+                                  return '$orderCount order · belum selesai';
+                                }
+                                return '$orderCount order';
+                              }(),
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                               fontWeight: FontWeight.w700,
                               color: cs.onSurfaceVariant,

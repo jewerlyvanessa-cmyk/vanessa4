@@ -124,6 +124,14 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   @override
   Widget build(BuildContext context) {
     final userState = ref.watch(userStateProvider);
+    ref.listen(userStateProvider, (prev, next) {
+      final active = next.branch.toString().trim();
+      if (active.isEmpty || active == _selectedBranchId) return;
+      setState(() => _selectedBranchId = active);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadItems();
+      });
+    });
     final branches = userState.branches;
     String branchName = _selectedBranchId ?? '-';
     if ((_selectedBranchId ?? '').isNotEmpty && branches.isNotEmpty) {

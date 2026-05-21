@@ -3,13 +3,17 @@
 const db = require('../db');
 const { assertUserCanAccessBranchForOrders } = require('../routes/order_branch_scope');
 const { ORDER_CALENDAR_TIMEZONE } = require('./business_timezone');
+const {
+  timestampOnBusinessDateSql,
+  timestampOnBusinessDateBetweenSql,
+  paymentActivityDateSql,
+  paymentActivityDateBetweenSql,
+} = require('./order_calendar_date_sql');
+const { paymentsHasPaymentDateColumn } = require('./payments_schema_helpers');
+const { resolveCsOrderUserFilterFromReq } = require('./order_scope_helpers');
 
 function orderTodayUserFilterFromJwt(req) {
-  const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-  if (role !== 'cs') return null;
-  const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
-  if (!Number.isFinite(uid) || uid <= 0) return null;
-  return uid;
+  return resolveCsOrderUserFilterFromReq(req);
 }
 
 /**
@@ -62,32 +66,15 @@ async function computeOrderTodayStats(req) {
           }).format(new Date())
           : null;
 
-    const orderCreatedDateEq = (paramRef) => `
-      (
-        o.created_at::date = ${paramRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-      )
-    `;
-    const paymentCreatedDateEq = (paramRef) => `
-      (
-        p.created_at::date = ${paramRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date = ${paramRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-      )
-    `;
-    const orderCreatedDateBetween = (fromRef, toRef) => `
-      (
-        o.created_at::date BETWEEN ${fromRef}::date AND ${toRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date BETWEEN ${fromRef}::date AND ${toRef}::date
-      )
-    `;
-    const paymentCreatedDateBetween = (fromRef, toRef) => `
-      (
-        p.created_at::date BETWEEN ${fromRef}::date AND ${toRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at))::date BETWEEN ${fromRef}::date AND ${toRef}::date
-        OR (timezone('${ORDER_CALENDAR_TIMEZONE}', p.created_at AT TIME ZONE 'UTC'))::date BETWEEN ${fromRef}::date AND ${toRef}::date
-      )
-    `;
+    const hasPaymentDateCol = await paymentsHasPaymentDateColumn(db);
+    const orderCreatedDateEq = (paramRef) =>
+      timestampOnBusinessDateSql('o.created_at', paramRef);
+    const paymentCreatedDateEq = (paramRef) =>
+      paymentActivityDateSql('p', paramRef, hasPaymentDateCol);
+    const orderCreatedDateBetween = (fromRef, toRef) =>
+      timestampOnBusinessDateBetweenSql('o.created_at', fromRef, toRef);
+    const paymentCreatedDateBetween = (fromRef, toRef) =>
+      paymentActivityDateBetweenSql('p', fromRef, toRef, hasPaymentDateCol);
 
     // IN (bukan EXISTS berkorelasi) → sering lebih mudah dioptimalkan planner untuk semi-join.
     const dayMatchSql = useRange
@@ -141,13 +128,13 @@ async function computeOrderTodayStats(req) {
         COALESCE(SUM(CASE
           WHEN o.order_type = 'jual'
             AND lower(trim(coalesce(o.status::text, ''))) IN ('completed', 'sold')
-            THEN COALESCE(o.jumlah, o.total, 0)
+            THEN COALESCE(o.total, 0)
           ELSE 0
         END), 0) as revenue_jual_completed,
         COALESCE(SUM(CASE
           WHEN o.order_type = 'buyback'
             AND lower(trim(coalesce(o.status::text, ''))) = 'completed'
-            THEN COALESCE(o.jumlah, o.total, 0)
+            THEN COALESCE(o.total, 0)
           ELSE 0
         END), 0) as expense_buyback_completed
       FROM orders o

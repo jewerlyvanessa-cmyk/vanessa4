@@ -68,8 +68,18 @@ class _StockPageState extends ConsumerState<StockPage> {
           _isLoading = false;
         });
       } else {
+        var msg = 'Gagal memuat data stok: ${response.statusCode}';
+        if (response.statusCode == 403) {
+          msg =
+              'Cabang tidak diizinkan. Ganti cabang lewat menu profil (switch cabang/role) lalu coba lagi.';
+        }
+        try {
+          final err = jsonDecode(response.body) as Map;
+          final d = (err['error'] ?? '').toString().trim();
+          if (d.isNotEmpty) msg = d;
+        } catch (_) {}
         setState(() {
-          _error = 'Gagal memuat data stok: ${response.statusCode}';
+          _error = msg;
           _isLoading = false;
         });
       }

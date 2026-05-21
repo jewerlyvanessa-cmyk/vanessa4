@@ -50,7 +50,7 @@ Future<List<Map<String, dynamic>>> fetchStockItemsByCode({
       .toList();
 }
 
-/// Daftar stok inventaris cabang (sama query seperti halaman Stok warehouse).
+/// Daftar stok cabang aktif (sama query seperti halaman Stok stockist / admin toko).
 /// [status] opsional, mis. `ready` — disaring juga di klien (ready + qty > 0).
 Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
   required String branchId,
@@ -64,7 +64,6 @@ Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
   final uri = Uri.parse('${NetworkConfig.baseUrl}/items').replace(
     queryParameters: <String, String>{
       'branch_id': bid,
-      'stock_type': 'inventory',
       'limit': '$limit',
       if (statusTrim.isNotEmpty) 'status': statusTrim,
     },

@@ -91,11 +91,24 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
   }
 
   Future<void> _load() async {
-    final branch = ref.read(userStateProvider).branch;
+    final userState = ref.read(userStateProvider);
+    final branch = userState.branch.trim();
+    final userId = userState.userId;
+    if (userId == null) {
+      setState(() {
+        _loading = false;
+        _error = 'User belum login. Silakan login ulang.';
+        _payments = [];
+        _operational = [];
+        _paymentSummary = {};
+      });
+      return;
+    }
     if (branch.isEmpty) {
       setState(() {
         _loading = false;
-        _error = 'Branch tidak dikonfigurasi.';
+        _error =
+            'Cabang aktif tidak tersedia. Ganti cabang lewat profil lalu coba lagi.';
         _payments = [];
         _operational = [];
         _paymentSummary = {};
@@ -110,13 +123,18 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
 
     try {
       final periodQ = managerReportPeriodQueryParams(_periodStart, _periodEnd);
+      final scopeQ = <String, String>{
+        'branch_id': branch,
+        'user_id': userId.toString(),
+      };
+      final payQuery = <String, String>{...scopeQ, ...periodQ};
       final payRes = await ApiClient.get(
         '/payments/daily-summary',
-        query: {'branch_id': branch, ...periodQ},
+        query: payQuery,
       );
       final opsRes = await ApiClient.get(
         '/store-operational',
-        query: {'branch_id': branch, ...periodQ},
+        query: {...scopeQ, ...periodQ},
       );
 
       if (payRes.statusCode != 200) {
@@ -455,6 +473,19 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final user = ref.watch(userStateProvider);
+    ref.listen(userStateProvider, (prev, next) {
+      if (prev?.branch != next.branch || prev?.userId != next.userId) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _load();
+        });
+      }
+    });
+
+    final cashierLabel = user.username.isEmpty ? 'Kasir' : user.username;
+    final scopeLabel =
+        '${_branchLabel()} · $cashierLabel${user.userId != null ? ' (ID ${user.userId})' : ''}';
+
     final cs = Theme.of(context).colorScheme;
     final ops = _operationalTotals();
     final payIncome = _toNum(_paymentSummary['income_amount']);
@@ -467,6 +498,21 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Laporan Keuangan'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(28),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                scopeLabel,
+                style: Theme.of(context).textTheme.labelSmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ),
         actions: [
           if (!_loading && _error.isEmpty)
             IconButton(
@@ -506,7 +552,7 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
                     padding: const EdgeInsets.all(16),
                     children: [
                       Text(
-                        'Gabungan pembayaran order pelanggan dan catatan keuangan operasional toko (non-order).',
+                        'Gabungan pembayaran order dan keuangan toko (non-order) — hanya data Anda di cabang aktif.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: cs.onSurfaceVariant,
                             ),

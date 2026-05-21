@@ -54,9 +54,22 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
     }).map((b) => Map<String, dynamic>.from(b as Map)).toList();
   }
 
+  static int _itemQty(Map<String, dynamic> it) {
+    final q = it['quantity'];
+    if (q is int) return q;
+    return int.tryParse(q?.toString() ?? '') ?? 0;
+  }
+
+  static List<Map<String, dynamic>> _onlyInStock(
+    List<Map<String, dynamic>> list,
+  ) {
+    return list.where((it) => _itemQty(it) > 0).toList();
+  }
+
   Future<List<Map<String, dynamic>>> _loadWarehouseItems() async {
     final warehouseId = ref.read(userStateProvider).branch.toString();
     final baseUrl = NetworkConfig.baseUrl;
+    const stockQ = 'in_stock_only=1&limit=200';
 
     Future<List<Map<String, dynamic>>> fetch(String url) async {
       final resp = await http.get(
@@ -70,17 +83,15 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
       }
       final decoded = jsonDecode(resp.body);
       if (decoded is! List) return <Map<String, dynamic>>[];
-      return decoded
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .toList();
+      return _onlyInStock(
+        decoded
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList(),
+      );
     }
 
-    final withStockType = await fetch(
-      '$baseUrl/items?branch_id=$warehouseId&stock_type=inventory&limit=200',
-    );
-    if (withStockType.isNotEmpty) return withStockType;
-    return fetch('$baseUrl/items?branch_id=$warehouseId&limit=200');
+    return fetch('$baseUrl/items?branch_id=$warehouseId&$stockQ');
   }
 
   static String _itemLabel(Map<String, dynamic> it) {

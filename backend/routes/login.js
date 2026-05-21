@@ -3,6 +3,11 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { requireLoginBody } = require('../middleware/require_login_body');
+const {
+  getBranchesColumnFlags,
+  branchSelectFields,
+  userBranchRolesHasIsPrimary,
+} = require('../lib/branches_schema_helpers');
 
 let _cachedUsersRoleColumnExists = null;
 let _cachedUsersBranchIdColumnExists = null;
@@ -73,13 +78,18 @@ function registerLoginRoutes(app, deps) {
 
   app.post('/login', loginLimiter, requireLoginBody, async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const username = (req.body.username ?? '').toString().trim();
+      const password = (req.body.password ?? '').toString();
 
       const usersCols = await usersHasRoleAndBranchColumns(db);
+      const hasIsPrimary = await userBranchRolesHasIsPrimary(db);
       const userRoleSelect = usersCols.hasRole ? 'u.role as user_role,' : '';
       const userBranchSelect = usersCols.hasBranchId
         ? 'u.branch_id as user_branch_id,'
         : '';
+      const primaryOrder = hasIsPrimary
+        ? 'ORDER BY ubr.is_primary DESC NULLS LAST'
+        : 'ORDER BY ubr.branch_id ASC NULLS LAST';
       const query = `
       SELECT
         u.*,
@@ -90,7 +100,7 @@ function registerLoginRoutes(app, deps) {
       FROM users u
       LEFT JOIN user_branch_roles ubr ON u.user_id = ubr.user_id
       WHERE u.username = $1
-      ORDER BY ubr.is_primary DESC NULLS LAST
+      ${primaryOrder}
       LIMIT 1
     `;
       const result = await db.query(query, [username]);
@@ -100,12 +110,12 @@ function registerLoginRoutes(app, deps) {
       }
 
       const user = result.rows[0];
-      const resolvedRole =
+      let resolvedRole =
         (user.branch_role ?? user.user_role ?? user.role ?? '')
           .toString()
           .trim()
           .toLowerCase();
-      const resolvedBranchId = (
+      let resolvedBranchId = (
         user.branch_role_branch_id ??
         user.user_branch_id ??
         user.branch_id ??
@@ -113,6 +123,21 @@ function registerLoginRoutes(app, deps) {
       )
         .toString()
         .trim();
+
+      // LEFT JOIN bisa mengembalikan baris user tanpa ubr; ambil assignment pertama jika ada.
+      if (!resolvedRole || !resolvedBranchId) {
+        const fbOrder = hasIsPrimary
+          ? 'ORDER BY is_primary DESC NULLS LAST, branch_id ASC'
+          : 'ORDER BY branch_id ASC';
+        const fb = await db.query(
+          `SELECT role, branch_id FROM user_branch_roles WHERE user_id = $1 ${fbOrder} LIMIT 1`,
+          [user.user_id]
+        );
+        if (fb.rows.length > 0) {
+          resolvedRole = (fb.rows[0].role ?? '').toString().trim().toLowerCase();
+          resolvedBranchId = (fb.rows[0].branch_id ?? '').toString().trim();
+        }
+      }
 
       if (!resolvedRole || !resolvedBranchId) {
         return res.status(403).json({
@@ -122,13 +147,19 @@ function registerLoginRoutes(app, deps) {
         });
       }
       let isPasswordValid = false;
-      const passwordHash = user.password_hash || '';
+      const passwordHash = (user.password_hash || '').toString();
       const allowLegacyPlaintext =
         process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD === 'true' ||
         (process.env.NODE_ENV !== 'production' &&
           process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD !== 'false');
       if (passwordHash.startsWith('$2')) {
-        isPasswordValid = await bcrypt.compare(password, passwordHash);
+        // Hash dari PHP/Laravel ($2y$) atau bcrypt lama ($2a$) — normalisasi ke $2b$ untuk bcryptjs.
+        const hashForCompare = passwordHash.startsWith('$2y$')
+          ? `$2b$${passwordHash.slice(4)}`
+          : passwordHash.startsWith('$2a$')
+            ? `$2b$${passwordHash.slice(4)}`
+            : passwordHash;
+        isPasswordValid = await bcrypt.compare(password, hashForCompare);
       } else if (allowLegacyPlaintext) {
         isPasswordValid = password === passwordHash;
         if (isPasswordValid) {
@@ -152,20 +183,27 @@ function registerLoginRoutes(app, deps) {
         'SELECT DISTINCT role FROM user_branch_roles WHERE user_id = $1',
         [user.user_id]
       );
+
+      const branchFlags = await getBranchesColumnFlags(db);
+      const branchFields = branchSelectFields(branchFlags);
+      const groupByParts = ['ubr.branch_id', 'b.name'];
+      if (branchFlags.alias) groupByParts.push('b.alias');
+      if (branchFlags.initials) groupByParts.push('b.initials');
+
       const branchesWithRolesResult = await db.query(
-        `SELECT ubr.branch_id, b.name, b.alias, b.initials, array_agg(ubr.role) as roles
+        `SELECT ubr.branch_id, ${branchFields}, array_agg(ubr.role) as roles
         FROM user_branch_roles ubr
         JOIN branches b ON ubr.branch_id = b.branch_id
         WHERE ubr.user_id = $1
-        GROUP BY ubr.branch_id, b.name, b.alias, b.initials`,
+        GROUP BY ${groupByParts.join(', ')}`,
         [user.user_id]
       );
       const roles = rolesResult.rows.map((r) => r.role);
       const branches = branchesWithRolesResult.rows.map((b) => ({
         branch_id: b.branch_id,
         name: b.name,
-        alias: b.alias,
-        initials: b.initials,
+        alias: branchFlags.alias ? b.alias : null,
+        initials: branchFlags.initials ? b.initials : null,
         roles: b.roles,
       }));
 
@@ -193,8 +231,18 @@ function registerLoginRoutes(app, deps) {
       };
       res.status(200).json(loginResponse);
     } catch (error) {
-      console.error('Error during login:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      console.error('Error during login:', {
+        code: error?.code,
+        message: error?.message,
+        detail: error?.detail,
+      });
+      const isProd = process.env.NODE_ENV === 'production';
+      res.status(500).json({
+        error: 'Internal server error',
+        detail: isProd
+          ? 'Login gagal di server. Cek log API dan jalankan patch_vanessa3_production_complete.sql.'
+          : (error?.detail || error?.message || String(error)),
+      });
     }
   });
 

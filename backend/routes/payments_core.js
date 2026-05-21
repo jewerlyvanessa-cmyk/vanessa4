@@ -3,15 +3,46 @@
 const {
   paymentsHasProofUrlColumn,
   paymentsHasValidatedByColumn,
+  paymentsHasPaymentDateColumn,
   ordersHasPickedUpAtColumn,
   paymentsHasRevenueBranchColumn,
 } = require('../lib/payments_schema_helpers');
+const {
+  paymentActivityDateSql,
+  paymentActivityDateBetweenSql,
+} = require('../lib/order_calendar_date_sql');
 
 const {
   ordersHasPickupBranchColumn,
   ordersSupportsWorkshopStatuses,
 } = require('../lib/orders_workshop_helpers');
 const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
+const {
+  getItemsColumnFlags,
+  incrementBuybackItemStock,
+} = require('../lib/items_schema_helpers');
+const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
+const {
+  resolvePaymentActorUserId,
+  resolvePaymentsUserFilterMode,
+  appendPaymentsUserFilter,
+} = require('../lib/order_scope_helpers');
+
+/** User yang memproses pembayaran (JWT → body fallback). */
+function resolvePaymentValidatorUserId(req) {
+  const candidates = [
+    req.user?.user_id,
+    req.user?.id,
+    req.body?.user_id,
+    req.body?.created_by,
+    req.body?.validated_by,
+  ];
+  for (const raw of candidates) {
+    const n = parseInt(String(raw ?? ''), 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return resolvePaymentActorUserId(req);
+}
 
 /** POST /payments, GET /payments */
 function registerPaymentsCoreRoutes(app, deps) {
@@ -134,9 +165,7 @@ app.post('/payments', async (req, res) => {
     await client.query('BEGIN');
 
     // Insert pembayaran ke database (backward-compatible with older DBs)
-    const validatedByRaw = req.user?.user_id ?? req.user?.id ?? null;
-    const validatedByParsed = validatedByRaw != null ? parseInt(String(validatedByRaw), 10) : NaN;
-    const validatedBy = Number.isFinite(validatedByParsed) ? validatedByParsed : null;
+    const validatedBy = resolvePaymentValidatorUserId(req);
     const cols = ['order_id', 'amount', 'method', 'status', 'notes'];
     const values = ['$1', '$2', '$3', '$4', '$5'];
     const params = [parsedOrderId, amountNum, method, paymentStatus, finalNotes];
@@ -152,6 +181,11 @@ app.post('/payments', async (req, res) => {
       cols.push('validated_by');
       values.push(`$${++idx}`);
       params.push(validatedBy);
+      if (validatedBy == null) {
+        console.warn(
+          '[payments] validated_by kosong — pembayaran tidak akan muncul jika filter validated_by_only=1',
+        );
+      }
     }
 
     if (hasRevColPay) {
@@ -160,8 +194,11 @@ app.post('/payments', async (req, res) => {
       params.push(revenueBranchIdParam);
     }
 
-    cols.push('payment_date');
-    values.push('CURRENT_TIMESTAMP');
+    const hasPaymentDateColInsert = await paymentsHasPaymentDateColumn(client);
+    if (hasPaymentDateColInsert) {
+      cols.push('payment_date');
+      values.push('CURRENT_TIMESTAMP');
+    }
 
     const insertQuery = `
       INSERT INTO payments (${cols.join(', ')})
@@ -198,6 +235,7 @@ app.post('/payments', async (req, res) => {
       // BUYBACK: stock in happens ONLY when paid by kasir (completed)
       // Stock in but NOT ready for sale: items.status stays 'buyback' (not in allowed sale statuses).
       if ((orderType ?? '').toString().trim().toLowerCase() === 'buyback') {
+        const itemsColFlags = await getItemsColumnFlags(client);
         const itemsRes = await client.query(
           `
             SELECT oi.item_id, oi.qty
@@ -224,18 +262,11 @@ app.post('/payments', async (req, res) => {
           const prevQty = prev.rows.length > 0 ? parseInt(prev.rows[0].quantity, 10) : 0;
           const prevStatus = prev.rows.length > 0 ? (prev.rows[0].status ?? 'unknown').toString() : 'unknown';
 
-          const upd = await client.query(
-            `
-              UPDATE items
-              SET quantity = COALESCE(quantity, 0) + $1,
-                  status = 'buyback',
-                  ownership = 'toko',
-                  stock_type = 'inventory',
-                  updated_at = NOW()
-              WHERE item_id = $2
-              RETURNING COALESCE(quantity, 0) AS quantity
-            `,
-            [qtyVal, itemId]
+          const upd = await incrementBuybackItemStock(
+            client,
+            itemsColFlags,
+            itemId,
+            qtyVal
           );
           const nextQty = upd.rows.length > 0 ? parseInt(upd.rows[0].quantity, 10) : prevQty + qtyVal;
 
@@ -374,31 +405,20 @@ app.get('/payments', async (req, res) => {
 // Get daily payments for kasir and admin toko
 app.get('/payments/daily-summary', async (req, res) => {
   try {
-    const { branch_id, date, user_id } = req.query;
+    const { date } = req.query;
 
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    const jwtBranchRaw = String(req.user?.branch_id ?? '').trim();
-    const queryBranchRaw = String(branch_id ?? '').trim();
-    // Kasir: utamakan cabang di JWT (sinkron dengan switch-context), hindari branch_id query yang stale.
-    const effectiveBranchRaw =
-      role === 'kasir' && jwtBranchRaw.length > 0 ? jwtBranchRaw : queryBranchRaw;
-    if (!effectiveBranchRaw) {
-      return res.status(400).json({ error: 'branch_id is required' });
+    const scope = await assertUserCanAccessBranchForOrders(req, req.query.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
     }
-    const parsedBranchId = parseInt(effectiveBranchRaw, 10);
-    if (!Number.isFinite(parsedBranchId) || parsedBranchId <= 0) {
-      return res.status(400).json({ error: 'branch_id must be a positive number' });
-    }
-
-    const bizTz = ORDER_CALENDAR_TIMEZONE;
+    const parsedBranchId = scope.branchId;
 
     const datePat = /^\d{4}-\d{2}-\d{2}$/;
     const dfRaw = String(req.query.date_from ?? '').trim();
     const dtRaw = String(req.query.date_to ?? '').trim();
     const MAX_PAYMENT_RANGE_DAYS = 93;
+    const hasPaymentDateCol = await paymentsHasPaymentDateColumn(db);
 
-    // Hari transaksi: cocokkan created_at ATAU payment_date (zona bisnis), selaras perilaku /payments/daily
-    // dan menangkap row yang tanggal keduanya tidak selaras karena timezone / migrasi.
     /** @type {string} */
     let paymentDateSql;
     /** @type {string[]} */
@@ -416,37 +436,19 @@ app.get('/payments/daily-summary', async (req, res) => {
         });
       }
       dateArgs = [dfRaw, dtRaw];
-      paymentDateSql = `(
-        (timezone('${bizTz}', p.created_at))::date BETWEEN $2::date AND $3::date
-        OR (
-          p.payment_date IS NOT NULL AND (
-            (timezone('${bizTz}', p.payment_date))::date BETWEEN $2::date AND $3::date
-            OR (timezone('${bizTz}', p.payment_date AT TIME ZONE 'UTC'))::date BETWEEN $2::date AND $3::date
-            OR p.payment_date::date BETWEEN $2::date AND $3::date
-          )
-        )
-      )`;
+      paymentDateSql = paymentActivityDateBetweenSql('p', '$2', '$3', hasPaymentDateCol);
     } else {
       const single = String(date ?? '').trim();
       const targetDate = datePat.test(single)
         ? single
         : new Intl.DateTimeFormat('en-CA', {
-          timeZone: bizTz,
+          timeZone: ORDER_CALENDAR_TIMEZONE,
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
         }).format(new Date());
       dateArgs = [targetDate];
-      paymentDateSql = `(
-        (timezone('${bizTz}', p.created_at))::date = $2::date
-        OR (
-          p.payment_date IS NOT NULL AND (
-            (timezone('${bizTz}', p.payment_date))::date = $2::date
-            OR (timezone('${bizTz}', p.payment_date AT TIME ZONE 'UTC'))::date = $2::date
-            OR p.payment_date::date = $2::date
-          )
-        )
-      )`;
+      paymentDateSql = paymentActivityDateSql('p', '$2', hasPaymentDateCol);
     }
 
     const hasProofCol = await paymentsHasProofUrlColumn(db);
@@ -459,71 +461,31 @@ app.get('/payments/daily-summary', async (req, res) => {
       ? `(o.branch_id::bigint = $1::bigint OR (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint))`
       : `o.branch_id::bigint = $1::bigint`;
 
-    const validatedOnlyRaw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
-    const validatedOffExplicit =
-      validatedOnlyRaw === '0' || validatedOnlyRaw === 'false' || validatedOnlyRaw === 'no';
-    const validatedOnlyFromQuery =
-      validatedOnlyRaw === '1' || validatedOnlyRaw === 'true' || validatedOnlyRaw === 'yes';
-    // Kasir: default hanya pembayaran yang divalidasi user login (Bayar Today).
-    // Kirim validated_by_only=0 untuk semua pembayaran completed di cabang (mis. admin ringkas).
-    const validatedOnly =
-      role === 'kasir'
-        ? !validatedOffExplicit && (validatedOnlyFromQuery || validatedOnlyRaw === '')
-        : validatedOnlyFromQuery;
+    const userFilter = resolvePaymentsUserFilterMode(req, {
+      hasValidatedByCol,
+    });
+    if (
+      userFilter.mode === 'kasir_validated' &&
+      !hasValidatedByCol
+    ) {
+      console.warn(
+        '[payments/daily-summary] payments.validated_by tidak ada — tampilkan semua pembayaran cabang.',
+      );
+    }
 
     const orderTypeRaw = (req.query.order_type ?? '').toString().trim().toLowerCase();
     const allowedOrderTypes = new Set(['jual', 'buyback', 'service', 'custom']);
     const orderTypeFilter =
       orderTypeRaw && allowedOrderTypes.has(orderTypeRaw) ? orderTypeRaw : null;
 
-    const userIdFilterRaw = (user_id ?? '').toString().trim();
-    let userIdFromQuery =
-      userIdFilterRaw.length > 0 ? parseInt(userIdFilterRaw, 10) : null;
-    if (userIdFilterRaw.length > 0 && (userIdFromQuery == null || Number.isNaN(userIdFromQuery))) {
-      return res.status(400).json({ error: 'user_id must be a number' });
-    }
-
-    let userIdFilter = null;
-    if (validatedOnly) {
-      if (!hasValidatedByCol) {
-        return res.status(400).json({
-          error: 'Kolom payments.validated_by belum tersedia',
-          details:
-            'Jalankan migration backend/migrations/20260502_000006_add_payments_validated_by.sql agar filter pembayaran per kasir bisa dipakai.',
-        });
-      }
-      const tokenUserId = req.user?.user_id ?? req.user?.id;
-      const parsedTokenUserId =
-        tokenUserId != null ? parseInt(String(tokenUserId), 10) : NaN;
-      if (tokenUserId == null || Number.isNaN(parsedTokenUserId)) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-          details: 'Token tidak berisi user_id; silakan login ulang.',
-        });
-      }
-      userIdFilter = parsedTokenUserId;
-    } else if (userIdFromQuery != null) {
-      if (!hasValidatedByCol) {
-        console.warn(
-          '[payments/daily-summary] Ignoring user_id query filter: payments.validated_by column missing.',
-        );
-      } else {
-        userIdFilter = userIdFromQuery;
-      }
-    }
-
     const listParams = [parsedBranchId, ...dateArgs];
     let listExtraWhere = '';
     listExtraWhere += ` AND p.status = 'completed'`;
-    if (userIdFilter != null) {
-      const pIdx = listParams.length + 1;
-      // Kasir + filter default: tampilkan juga pembayaran lama tanpa validated_by (NULL).
-      if (role === 'kasir' && validatedOnly) {
-        listExtraWhere += ` AND (p.validated_by = $${pIdx} OR p.validated_by IS NULL)`;
-      } else {
-        listExtraWhere += ` AND p.validated_by = $${pIdx}`;
-      }
-      listParams.push(userIdFilter);
+    if (
+      userFilter.mode !== 'none' &&
+      (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
+    ) {
+      listExtraWhere += appendPaymentsUserFilter(listParams, userFilter);
     }
     if (orderTypeFilter) {
       listExtraWhere += ` AND o.order_type = $${listParams.length + 1}`;
@@ -545,11 +507,11 @@ app.get('/payments/daily-summary', async (req, res) => {
         p.updated_at,
         o.order_number,
         o.order_type,
-        c.name as customer_name,
+        COALESCE(c.name, '—') as customer_name,
         c.phone
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
-      JOIN customers c ON o.customer_id = c.customer_id
+      LEFT JOIN customers c ON o.customer_id = c.customer_id
       WHERE ${branchScopeSqlSummary}
         AND ${paymentDateSql}
         ${listExtraWhere}
@@ -558,14 +520,11 @@ app.get('/payments/daily-summary', async (req, res) => {
 
     const summaryParams = [parsedBranchId, ...dateArgs];
     let summaryExtraWhere = '';
-    if (userIdFilter != null) {
-      const pIdx = summaryParams.length + 1;
-      if (role === 'kasir' && validatedOnly) {
-        summaryExtraWhere += ` AND (p.validated_by = $${pIdx} OR p.validated_by IS NULL)`;
-      } else {
-        summaryExtraWhere += ` AND p.validated_by = $${pIdx}`;
-      }
-      summaryParams.push(userIdFilter);
+    if (
+      userFilter.mode !== 'none' &&
+      (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
+    ) {
+      summaryExtraWhere += appendPaymentsUserFilter(summaryParams, userFilter);
     }
     if (orderTypeFilter) {
       summaryExtraWhere += ` AND o.order_type = $${summaryParams.length + 1}`;
@@ -666,36 +625,17 @@ app.get('/payments/daily-summary', async (req, res) => {
 });
 app.get('/payments/daily', async (req, res) => {
   try {
-    const { date, branch_id } = req.query;
+    const { date } = req.query;
 
     if (!date) {
       return res.status(400).json({ error: 'date and branch_id are required' });
     }
 
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    const jwtBranchRawDaily = String(req.user?.branch_id ?? '').trim();
-    const queryBranchRawDaily = String(branch_id ?? '').trim();
-    const effectiveBranchDaily =
-      role === 'kasir' && jwtBranchRawDaily.length > 0
-        ? jwtBranchRawDaily
-        : queryBranchRawDaily;
-    if (!effectiveBranchDaily) {
-      return res.status(400).json({ error: 'date and branch_id are required' });
+    const scope = await assertUserCanAccessBranchForOrders(req, req.query.branch_id);
+    if (!scope.ok) {
+      return res.status(scope.status).json(scope.body);
     }
-    const parsedBranchDaily = parseInt(effectiveBranchDaily, 10);
-    if (!Number.isFinite(parsedBranchDaily) || parsedBranchDaily <= 0) {
-      return res.status(400).json({ error: 'branch_id must be a positive number' });
-    }
-    const tokenUserIdRaw = req.user?.user_id ?? req.user?.id;
-    const tokenUserId =
-      tokenUserIdRaw != null ? parseInt(String(tokenUserIdRaw), 10) : NaN;
-
-    // IMPORTANT:
-    // Jangan pakai `new Date('yyyy-MM-dd')` + toISOString() untuk filter harian.
-    // JS akan menganggap string itu UTC midnight → bergeser jika bisnis pakai zona GMT+7 (ORDER_CALENDAR_TIMEZONE)
-    // dan kolom DB bertipe TIMESTAMP tanpa timezone / tersimpan "waktu lokal".
-    const BUSINESS_TZ = ORDER_CALENDAR_TIMEZONE;
-
+    const parsedBranchDaily = scope.branchId;
     const targetDate = String(date).trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
       return res
@@ -705,24 +645,21 @@ app.get('/payments/daily', async (req, res) => {
 
     // Match tanggal secara robust untuk TIMESTAMP (tanpa timezone) dan TIMESTAMPTZ.
     // Kita cocokkan baik interpretasi "naive local", maupun "naive sebenarnya UTC".
-    const paymentDateMatch = (paramRef) => `
-      (
-        (timezone('${BUSINESS_TZ}', p.payment_date))::date = ${paramRef}::date
-        OR (timezone('${BUSINESS_TZ}', p.payment_date AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-        OR p.payment_date::date = ${paramRef}::date
-      )
-    `;
+    const hasPaymentDateColDaily = await paymentsHasPaymentDateColumn(db);
+    const paymentDateMatch = (paramRef) =>
+      paymentActivityDateSql('p', paramRef, hasPaymentDateColDaily);
+    const paymentDateSelect = hasPaymentDateColDaily
+      ? 'p.payment_date'
+      : 'p.created_at AS payment_date';
 
     const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
     const hasRevBranchColDaily = await paymentsHasRevenueBranchColumn(db);
     const branchScopeSqlDaily = hasRevBranchColDaily
       ? `(o.branch_id::bigint = $1::bigint OR (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint))`
       : `o.branch_id::bigint = $1::bigint`;
-    const kasirScope =
-      role === 'kasir' &&
-      hasValidatedByCol &&
-      Number.isFinite(tokenUserId) &&
-      tokenUserId > 0;
+    const userFilter = resolvePaymentsUserFilterMode(req, {
+      hasValidatedByCol,
+    });
 
     // Query untuk summary pembayaran harian
     const summaryQuery = `
@@ -736,15 +673,21 @@ app.get('/payments/daily', async (req, res) => {
       WHERE ${branchScopeSqlDaily}
         AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
-        ${kasirScope ? 'AND (p.validated_by = $3 OR p.validated_by IS NULL)' : ''}
+        __USER_FILTER__
       GROUP BY method
       ORDER BY total_amount DESC
     `;
 
-    const summaryParams = kasirScope
-      ? [parsedBranchDaily, targetDate, tokenUserId]
-      : [parsedBranchDaily, targetDate];
-    const summaryResult = await db.query(summaryQuery, summaryParams);
+    const summaryParams = [parsedBranchDaily, targetDate];
+    const summaryUserSql =
+      userFilter.mode !== 'none' &&
+      (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
+        ? appendPaymentsUserFilter(summaryParams, userFilter)
+        : '';
+    const summaryResult = await db.query(
+      summaryQuery.replace('__USER_FILTER__', summaryUserSql),
+      summaryParams,
+    );
 
     // Query untuk detail transaksi
     const detailQuery = `
@@ -754,7 +697,7 @@ app.get('/payments/daily', async (req, res) => {
         MAX(o.order_number) as order_number,
         p.amount,
         p.method,
-        p.payment_date,
+        ${paymentDateSelect},
         COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
         c.name as customer_name
       FROM payments p
@@ -764,15 +707,21 @@ app.get('/payments/daily', async (req, res) => {
       WHERE ${branchScopeSqlDaily}
         AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
-        ${kasirScope ? 'AND (p.validated_by = $3 OR p.validated_by IS NULL)' : ''}
-      GROUP BY p.payment_id, p.order_id, p.amount, p.method, p.payment_date, c.name
-      ORDER BY p.payment_date DESC
+        __USER_FILTER__
+      GROUP BY p.payment_id, p.order_id, p.amount, p.method, ${hasPaymentDateColDaily ? 'p.payment_date' : 'p.created_at'}, c.name
+      ORDER BY ${hasPaymentDateColDaily ? 'p.payment_date' : 'p.created_at'} DESC
     `;
 
-    const detailParams = kasirScope
-      ? [parsedBranchDaily, targetDate, tokenUserId]
-      : [parsedBranchDaily, targetDate];
-    const detailResult = await db.query(detailQuery, detailParams);
+    const detailParams = [parsedBranchDaily, targetDate];
+    const detailUserSql =
+      userFilter.mode !== 'none' &&
+      (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
+        ? appendPaymentsUserFilter(detailParams, userFilter)
+        : '';
+    const detailResult = await db.query(
+      detailQuery.replace('__USER_FILTER__', detailUserSql),
+      detailParams,
+    );
 
     // Hitung total keseluruhan
     const totalAmount = summaryResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount || 0), 0);

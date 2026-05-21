@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
-/// Counter naik setelah order CS berhasil dibuat/diubah relevan;
-/// [DailyOrdersPaymentsPage] mendengarkan untuk memuat ulang `/orders/daily`.
+/// Counter naik setelah order berhasil dibuat/diubah;
+/// [DailyOrdersPaymentsPage] & dashboard order-today mendengarkan untuk reload.
 class CsDailyOrdersListRevisionNotifier extends StateNotifier<int> {
   CsDailyOrdersListRevisionNotifier() : super(0);
 
@@ -17,3 +17,7 @@ final csDailyOrdersListRevisionProvider =
 void bumpCsDailyOrdersListRevision(WidgetRef ref) {
   ref.read(csDailyOrdersListRevisionProvider.notifier).bump();
 }
+
+/// Alias — dipanggil setelah order baru agar Order Today / Order & Payments refresh.
+void bumpDailyOrdersListRevision(WidgetRef ref) =>
+    bumpCsDailyOrdersListRevision(ref);

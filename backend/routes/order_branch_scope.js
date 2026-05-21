@@ -5,13 +5,21 @@ const db = require('../db');
  * Superadmin: bebas. Lainnya: harus punya baris di user_branch_roles.
  */
 async function assertUserCanAccessBranchForOrders(req, branchIdRaw) {
-  const bid = parseInt(String(branchIdRaw ?? '').trim(), 10);
+  const queryBid = parseInt(String(branchIdRaw ?? '').trim(), 10);
+  const jwtBid = parseInt(String(req.user?.branch_id ?? '').trim(), 10);
+  const bid =
+    Number.isFinite(queryBid) && queryBid > 0
+      ? queryBid
+      : Number.isFinite(jwtBid) && jwtBid > 0
+        ? jwtBid
+        : NaN;
   if (!Number.isFinite(bid) || bid <= 0) {
     return { ok: false, status: 400, body: { error: 'branch_id wajib dan harus angka valid' } };
   }
 
   const role = (req.user?.role || '').toString().trim().toLowerCase();
-  if (role === 'superadmin') {
+  // Manajer / superadmin: laporan lintas cabang (read-only agregasi).
+  if (role === 'superadmin' || role === 'manajer') {
     return { ok: true, branchId: bid };
   }
 
@@ -30,6 +38,8 @@ async function assertUserCanAccessBranchForOrders(req, branchIdRaw) {
       `,
       [uid, bid]
     );
+    // Admin toko / CS / kasir: izinkan cabang dari query jika ada di user_branch_roles
+    // (UI bisa ganti cabang sebelum JWT di-refresh lewat switch-context).
     if (r.rows.length === 0) {
       return {
         ok: false,

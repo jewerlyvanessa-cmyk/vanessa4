@@ -5,6 +5,12 @@ const {
   orderItemLineAmountSql,
 } = require('./order_items_sql');
 const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
+const {
+  timestampOnBusinessDateSql,
+  paymentActivityDateSql,
+} = require('../lib/order_calendar_date_sql');
+const { paymentsHasPaymentDateColumn } = require('../lib/payments_schema_helpers');
+const { resolveCsOrderUserFilterFromReq } = require('../lib/order_scope_helpers');
 
 /** @type {boolean | null} */
 let _cachedPaymentsRevenueBranchColumn = null;
@@ -38,11 +44,7 @@ async function paymentsHasRevenueBranchColumn() {
  * - Role lain: seluruh order untuk branch yang diminta.
  */
 function dailyOrdersUserFilterFromJwt(req) {
-  const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-  if (role !== 'cs') return null;
-  const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
-  if (!Number.isFinite(uid) || uid <= 0) return null;
-  return uid;
+  return resolveCsOrderUserFilterFromReq(req);
 }
 
 function nullItemPad() {
@@ -108,6 +110,9 @@ function mergeOrdersAndItemsFlat(orderRows, itemRows) {
  *
  * Performa: default dua query (order + item) agar tidak mem-bloat hash join. Fallback satu query:
  *   ?legacy_join=1
+ *
+ * Status order: semua status (pending, completed, dll.) — bukan hanya completed.
+ * Order masuk jika dibuat pada tanggal itu ATAU ada pembayaran completed pada tanggal itu.
  */
 /**
  * @returns {Promise<{ ok: true, rows: any[] } | { ok: false, status: number, body: object }>}
@@ -133,20 +138,12 @@ async function fetchOrdersDailyPayload(req) {
 
   const lineSql = orderItemLineAmountSql('oi');
 
-  const createdDateMatch = (paramRef) => `
-        (
-          o.created_at::date = ${paramRef}::date
-          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', o.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-        )
-      `;
+  const createdDateMatch = (paramRef) =>
+    timestampOnBusinessDateSql('o.created_at', paramRef);
 
-  const paymentDateMatch = (alias, paramRef) => `
-        (
-          (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at))::date = ${paramRef}::date
-          OR (timezone('${ORDER_CALENDAR_TIMEZONE}', ${alias}.created_at AT TIME ZONE 'UTC'))::date = ${paramRef}::date
-          OR ${alias}.created_at::date = ${paramRef}::date
-        )
-      `;
+  const hasPaymentDateCol = await paymentsHasPaymentDateColumn(db);
+  const paymentDateMatch = (alias, paramRef) =>
+    paymentActivityDateSql(alias, paramRef, hasPaymentDateCol);
 
   const hasRevBranch = await paymentsHasRevenueBranchColumn();
   const nowDateRef = `(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`;

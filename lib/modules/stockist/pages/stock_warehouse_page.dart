@@ -676,13 +676,33 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
       final userState = ref.read(userStateProvider);
       final baseUrl = NetworkConfig.baseUrl;
 
+      final branchId = userState.branch.toString().trim();
+      if (branchId.isEmpty) {
+        setState(() {
+          _items = [];
+          _error = 'Cabang aktif tidak tersedia — ganti cabang lewat profil.';
+          _isLoading = false;
+        });
+        return;
+      }
+
       final uri = Uri.parse(
-        '$baseUrl/items?branch_id=${userState.branch}&stock_type=inventory&limit=200',
+        '$baseUrl/items?branch_id=$branchId&limit=200',
       );
       final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
+        var msg = 'Gagal memuat stok (${resp.statusCode})';
+        if (resp.statusCode == 403) {
+          msg =
+              'Cabang tidak diizinkan. Ganti cabang lewat menu profil lalu coba lagi.';
+        }
+        try {
+          final err = jsonDecode(resp.body) as Map;
+          final d = (err['error'] ?? '').toString().trim();
+          if (d.isNotEmpty) msg = d;
+        } catch (_) {}
         setState(() {
-          _error = 'Gagal memuat stok (${resp.statusCode})';
+          _error = msg;
           _isLoading = false;
         });
         return;
@@ -740,9 +760,35 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
 
   @override
   Widget build(BuildContext context) {
+    final user = ref.watch(userStateProvider);
+    ref.listen(userStateProvider, (prev, next) {
+      if (prev?.branch != next.branch) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadItems();
+        });
+      }
+    });
+
+    final branchId = user.branch.toString().trim();
+    final branchLabel = stockBranchDisplayName(
+          branches: user.branches,
+          branchId: branchId,
+        ) ??
+        (branchId.isEmpty ? null : 'Cabang $branchId');
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stok'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Stok'),
+            if (branchLabel != null && branchLabel.isNotEmpty)
+              Text(
+                branchLabel,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Cetak laporan stok',
@@ -816,11 +862,10 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
                         detailBuilder: (context, items) =>
                             StockInventoryGroupedTable(
                           filteredItems: items,
-                          branchIdForMutations:
-                              ref.read(userStateProvider).branch,
+                          branchIdForMutations: branchId,
                           branchDisplayNameForHistory: stockBranchDisplayName(
-                            branches: ref.watch(userStateProvider).branches,
-                            branchId: ref.watch(userStateProvider).branch,
+                            branches: user.branches,
+                            branchId: branchId,
                           ),
                           onReload: _loadItems,
                         ),

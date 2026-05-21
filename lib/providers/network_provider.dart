@@ -65,14 +65,16 @@ class NetworkStatusNotifier extends StateNotifier<NetworkState> {
       // Di jaringan nyata, Google 204 sering timeout / diblokir sementara API bisnis
       // masih hidup — jangan anggap offline hanya karena cek Google gagal.
       final googleOnline = await NetworkConnectivity.isOnline();
-      var isBackendReachable = await NetworkConnectivity.isBackendReachable(
-        NetworkConfig.baseUrl,
+      // WebSocket hidup = server merespons; jangan tandai offline hanya karena
+      // /health/live gagal di browser (CORS / preflight).
+      final wsAlive = WebSocketNotifier.wsBackendAliveWithin(
+        WebSocketNotifier.wsBackendProofTtl,
       );
-      if (!isBackendReachable &&
-          WebSocketNotifier.wsBackendAliveWithin(
-            WebSocketNotifier.wsBackendProofTtl,
-          )) {
-        isBackendReachable = true;
+      var isBackendReachable = wsAlive;
+      if (!isBackendReachable) {
+        isBackendReachable = await NetworkConnectivity.isBackendReachable(
+          NetworkConfig.baseUrl,
+        );
       }
       final isOnline = googleOnline || isBackendReachable;
 

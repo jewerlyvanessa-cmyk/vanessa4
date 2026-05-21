@@ -28,6 +28,9 @@ const createDashboardOrdersRoute = require('./routes/dashboard_orders');
 const branchesRoute = require('./routes/branches'); // Import branches route
 const userInfoRoute = require('./routes/userInfo');
 const getOrdersDaily = require('./routes/orders_daily_handler');
+const {
+  assertUserCanAccessBranchForOrders,
+} = require('./routes/order_branch_scope');
 const { registerWorkshopRoutes } = require('./routes/workshop');
 const { registerTransfersRoutes } = require('./routes/transfers');
 const { registerPaymentsCoreRoutes } = require('./routes/payments_core');
@@ -41,6 +44,15 @@ const {
   paymentsHasRevenueBranchColumn,
 } = require('./lib/orders_workshop_helpers');
 const { ordersHasPickedUpAtColumn } = require('./lib/payments_schema_helpers');
+const {
+  getItemsColumnFlags,
+  itemSelectStockFields,
+  updateItemStatusAndStock,
+  insertManualOrderItem,
+  formatDbErrorForClient,
+  defaultItemsPhotoColumnName,
+} = require('./lib/items_schema_helpers');
+const { resolveNotaOrder } = require('./lib/order_nota_helpers');
 const { handleBranchLogoGet } = require('./lib/branch_logo_http_lazy');
 const {
   normalizeBranchType,
@@ -993,6 +1005,13 @@ app.get('/store-operational', async (req, res) => {
     const fromRaw = (req.query.date_from ?? '').toString().trim();
     const toRaw = (req.query.date_to ?? '').toString().trim();
 
+    const userIdRaw = (req.query.user_id ?? '').toString().trim();
+    const filterUserId = parseInt(userIdRaw, 10);
+    const hasUserFilter =
+      userIdRaw.length > 0 &&
+      Number.isFinite(filterUserId) &&
+      filterUserId > 0;
+
     let result;
     if (datePat.test(fromRaw) && datePat.test(toRaw)) {
       if (fromRaw > toRaw) {
@@ -1000,6 +1019,11 @@ app.get('/store-operational', async (req, res) => {
           error: 'date_from tidak boleh lebih besar dari date_to',
         });
       }
+      const rangeParams = [branchId, fromRaw, toRaw];
+      if (hasUserFilter) rangeParams.push(filterUserId);
+      const rangeUserSql = hasUserFilter
+        ? ` AND user_id = $${rangeParams.length}::bigint`
+        : '';
       result = await db.query(
         `
         SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
@@ -1007,9 +1031,10 @@ app.get('/store-operational', async (req, res) => {
         WHERE branch_id = $1
           AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
           AND created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+          ${rangeUserSql}
         ORDER BY created_at DESC
       `,
-        [branchId, fromRaw, toRaw]
+        rangeParams
       );
     } else {
       const targetDate = datePat.test(dateRaw)
@@ -1020,6 +1045,11 @@ app.get('/store-operational', async (req, res) => {
             month: '2-digit',
             day: '2-digit',
           }).format(new Date());
+      const dayParams = [branchId, targetDate];
+      if (hasUserFilter) dayParams.push(filterUserId);
+      const dayUserSql = hasUserFilter
+        ? ` AND user_id = $${dayParams.length}::bigint`
+        : '';
       result = await db.query(
         `
         SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
@@ -1027,9 +1057,10 @@ app.get('/store-operational', async (req, res) => {
         WHERE branch_id = $1
           AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
           AND created_at < (($2::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+          ${dayUserSql}
         ORDER BY created_at DESC
       `,
-        [branchId, targetDate]
+        dayParams
       );
     }
 
@@ -1367,44 +1398,10 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       }
     }
 
-    await client.query('BEGIN');
-
     // Backward-compatible: DB may have items.photo_url (old) or items.photo_produk (new)
     const itemsPhotoCol = await getItemsPhotoColumn(client);
-    const itemsPhotoColName = itemsPhotoCol || 'photo_url';
-
-    // Persist upload metadata (safe: filename is server-generated)
-    let _uploadId = null;
-    if (req.file) {
-      const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
-      const urlPath = `/uploads/${req.file.filename}`;
-
-      // Best-effort: some environments may not have `uploads` table.
-      // IMPORTANT: a failed query inside a transaction aborts the whole transaction
-      // in PostgreSQL, so we must use a SAVEPOINT.
-      await client.query('SAVEPOINT uploads_insert');
-      try {
-        const upRes = await client.query(
-          `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING upload_id`,
-          [
-            req.file.filename,
-            req.file.originalname || null,
-            req.file.mimetype || null,
-            typeof req.file.size === 'number' ? req.file.size : null,
-            urlPath,
-            Number.isFinite(uploaderUserId) ? uploaderUserId : null,
-          ]
-        );
-        _uploadId = upRes.rows[0]?.upload_id ?? null;
-        await client.query('RELEASE SAVEPOINT uploads_insert');
-      } catch (_) {
-        _uploadId = null;
-        await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
-        await client.query('RELEASE SAVEPOINT uploads_insert');
-      }
-    }
+    const itemsColFlags = await getItemsColumnFlags(client);
+    const itemStockSelect = itemSelectStockFields(itemsColFlags);
 
     const {
       order_type,
@@ -1422,6 +1419,18 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       item_id: _item_id,
       item_data: _item_data,
     } = orderData;
+
+    const resolvedOrderUserId = (() => {
+      const fromBody = parseInt(String(user_id ?? ''), 10);
+      if (Number.isFinite(fromBody) && fromBody > 0) return fromBody;
+      const fromJwt = parseInt(
+        String(req.user?.user_id ?? req.user?.id ?? ''),
+        10
+      );
+      if (Number.isFinite(fromJwt) && fromJwt > 0) return fromJwt;
+      return null;
+    })();
+
     const refOrderNumberRaw = String(
       orderData.reference_order_number ??
       orderData.nota_lama ??
@@ -1469,23 +1478,57 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     }
 
     // Validate required fields
-    if (!customer_id || !branch_id || !user_id) {
-      return res.status(400).json({ error: 'Missing required fields: customer_id, branch_id, user_id' });
+    if (!customer_id || !branch_id || resolvedOrderUserId == null) {
+      return res.status(400).json({
+        error: 'Missing required fields: customer_id, branch_id, user_id',
+      });
     }
 
     if (!order_items || !Array.isArray(order_items) || order_items.length === 0) {
       return res.status(400).json({ error: 'Order must have at least one item' });
     }
 
-    // Generate nota_order if not provided
-    let nota_order = order_number;
-    if (!nota_order) {
-      const notaResult = await client.query(
-        'SELECT generate_nota_order($1, $2) as nota_order',
-        [branch_id, order_type]
-      );
-      nota_order = notaResult.rows[0].nota_order;
+    await client.query('BEGIN');
+
+    const itemsPhotoColName = defaultItemsPhotoColumnName(itemsPhotoCol);
+    const orderItemsPhotoCol = await getOrderItemsPhotoColumn(client);
+    const orderItemsPhotoColName = orderItemsPhotoCol || 'photo_produk';
+
+    // Persist upload metadata (safe: filename is server-generated)
+    let _uploadId = null;
+    if (req.file) {
+      const uploaderUserId = req.user?.user_id ? parseInt(req.user.user_id, 10) : null;
+      const urlPath = `/uploads/${req.file.filename}`;
+
+      await client.query('SAVEPOINT uploads_insert');
+      try {
+        const upRes = await client.query(
+          `INSERT INTO uploads (storage_key, original_name, mime_type, size_bytes, url_path, uploaded_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING upload_id`,
+          [
+            req.file.filename,
+            req.file.originalname || null,
+            req.file.mimetype || null,
+            typeof req.file.size === 'number' ? req.file.size : null,
+            urlPath,
+            Number.isFinite(uploaderUserId) ? uploaderUserId : null,
+          ]
+        );
+        _uploadId = upRes.rows[0]?.upload_id ?? null;
+        await client.query('RELEASE SAVEPOINT uploads_insert');
+      } catch (_) {
+        _uploadId = null;
+        await client.query('ROLLBACK TO SAVEPOINT uploads_insert');
+        await client.query('RELEASE SAVEPOINT uploads_insert');
+      }
     }
+
+    let nota_order = await resolveNotaOrder(client, {
+      branch_id,
+      order_type,
+      order_number,
+    });
 
     // Create order
     const rawRequestedStatus = (requestedStatus ?? '')
@@ -1510,7 +1553,17 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         order_type, customer_id, status, order_number, branch_id, user_id, diskon, mode, total
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *`,
-      [order_type, customer_id, initialStatus, nota_order, branch_id, user_id, diskon, mode, 0] // total will be calculated later
+      [
+        order_type,
+        customer_id,
+        initialStatus,
+        nota_order,
+        branch_id,
+        resolvedOrderUserId,
+        diskon,
+        mode,
+        0,
+      ] // total will be calculated later
     );
 
     const order = orderResult.rows[0];
@@ -1674,7 +1727,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
         const existingItem = await client.query(
           `SELECT
              name, kode_produk, weight, material, purity, kategori, jenis, tipe, ${itemsPhotoColName} as photo_produk,
-             quantity, status, ownership, stock_type
+             quantity, status${itemStockSelect}
            FROM items WHERE item_id = $1`,
           [final_item_id]
         );
@@ -1701,8 +1754,8 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             // Stock fields (used for quantity decrement / status decisions)
             item_quantity: dbItem.quantity,
             item_status: dbItem.status,
-            item_ownership: dbItem.ownership,
-            item_stock_type: dbItem.stock_type,
+            item_ownership: dbItem.ownership ?? null,
+            item_stock_type: dbItem.stock_type ?? null,
           };
         }
       }
@@ -1725,36 +1778,35 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           const initialItemQty = order_type === 'buyback'
             ? 0
             : (parseInt(itemData.quantity, 10) || 1);
-          const itemResult = await client.query(
-            `INSERT INTO items (
-              name, kode_produk, weight, material, purity, kategori, jenis, tipe,
-              ownership, stock_type, status, is_quick_registered, branch_id, source, quantity, ${itemsPhotoColName}
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-            RETURNING item_id`,
-            [
-              itemData.nama_item,
-              itemData.kode_produk,
-              itemData.weight,
-              itemData.material,
-              itemData.purity,
-              itemData.kategori,
-              itemData.jenis,
-              itemData.tipe,
-              itemData.ownership || 'unknown',
-              itemData.stock_type || 'non_inventory',
-              itemData.status || 'unregistered',
-              itemData.is_quick_registered || false,
+          final_item_id = await insertManualOrderItem(
+            client,
+            itemsColFlags,
+            itemsPhotoColName,
+            {
+              nama_item: itemData.nama_item,
+              kode_produk: itemData.kode_produk,
+              weight: itemData.weight,
+              material: itemData.material,
+              purity: itemData.purity,
+              kategori: itemData.kategori,
+              jenis: itemData.jenis,
+              tipe: itemData.tipe,
+              ownership: itemData.ownership || 'unknown',
+              stock_type: itemData.stock_type || 'non_inventory',
+              status: itemData.status || 'unregistered',
+              is_quick_registered: itemData.is_quick_registered || false,
               branch_id,
-              'manual',
               initialItemQty,
-              itemData.photo_produk,
-            ]
+              photo_produk: itemData.photo_produk,
+            }
           );
-          final_item_id = itemResult.rows[0].item_id;
         } catch (e) {
           // Handle unique constraint on kode_produk: find existing item
           if (e && e.code === '23505') {
-            const existing = await client.query(`SELECT item_id FROM items WHERE kode_produk = $1 LIMIT 1`, [itemData.kode_produk]);
+            const existing = await client.query(
+              `SELECT item_id FROM items WHERE kode_produk = $1 AND branch_id = $2 LIMIT 1`,
+              [itemData.kode_produk, branch_id]
+            );
             if (existing.rows.length > 0) {
               final_item_id = existing.rows[0].item_id;
             } else {
@@ -1805,12 +1857,12 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           itemData.status || 'unregistered'
         ).toString();
 
-        await client.query(
-          `UPDATE items SET
-            status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
-           WHERE item_id = $4`,
-          [newItemStatus, newOwnership, newStockType, final_item_id]
-        );
+        await updateItemStatusAndStock(client, itemsColFlags, {
+          itemId: final_item_id,
+          status: newItemStatus,
+          ownership: newOwnership,
+          stockType: newStockType,
+        });
 
         // Riwayat status: dari status baris setelah INSERT (bukan placeholder 'unknown')
         await client.query(
@@ -1965,7 +2017,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
       await client.query(
         `INSERT INTO order_items (
           order_id, item_id, nama_item, kode_produk, qty, weight, harga_per_gram,
-          subtotal, diskon, total, photo_produk, kategori, jenis, tipe, material, purity
+          subtotal, diskon, total, ${orderItemsPhotoColName}, kategori, jenis, tipe, material, purity
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           order.order_id,
@@ -2015,6 +2067,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
           );
 
           if (decRes.rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(400).json({
               error: 'Insufficient stock quantity',
               detail: `Stock ${prevQty} < order quantity ${qtyVal}`,
@@ -2030,12 +2083,12 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
             const newOwnership = 'pelanggan';
             const newStockType = 'non_inventory';
 
-            await client.query(
-              `UPDATE items SET
-                status = $1, ownership = $2, stock_type = $3, updated_at = NOW()
-               WHERE item_id = $4`,
-              [newItemStatus, newOwnership, newStockType, final_item_id]
-            );
+            await updateItemStatusAndStock(client, itemsColFlags, {
+              itemId: final_item_id,
+              status: newItemStatus,
+              ownership: newOwnership,
+              stockType: newStockType,
+            });
 
             await client.query(
               `INSERT INTO stock_history (item_id, old_status, new_status, changed_by, notes)
@@ -2077,11 +2130,10 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     const diskonOrder = parseFloat(diskon) || 0;
     const orderTotal = orderItemsTotal * (1 - diskonOrder / 100);
 
-    // Update orders.total and keep orders.jumlah consistent.
-    // We always *try* to set jumlah; if the column is GENERATED ALWAYS (or missing),
-    // the DB will reject the update — then we fallback to updating total only.
+    // orders.jumlah may be GENERATED ALWAYS (vanessa3_schema) — never UPDATE it then.
     const jumlahRounded = roundUpToNearest5000(orderTotal);
-    try {
+    const jumlahMode = await _getOrdersJumlahColumnMode(client);
+    if (jumlahMode === 'plain') {
       await client.query(
         `UPDATE orders
          SET total = $1,
@@ -2090,7 +2142,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
          WHERE order_id = $3`,
         [orderTotal, jumlahRounded, order.order_id]
       );
-    } catch (_) {
+    } else {
       await client.query(
         `UPDATE orders SET total = $1, updated_at = NOW() WHERE order_id = $2`,
         [orderTotal, order.order_id]
@@ -2163,7 +2215,13 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating order:', error);
+    console.error('Error creating order:', {
+      code: error?.code,
+      message: error?.message,
+      detail: error?.detail,
+      table: error?.table,
+      column: error?.column,
+    });
     if (error && error.stack) {
       console.error(error.stack);
     }
@@ -2177,7 +2235,7 @@ app.post('/orders', upload.single('photo'), async (req, res) => {
 
     res.status(500).json({
       error: 'Internal server error',
-      detail: error.message
+      detail: formatDbErrorForClient(error),
     });
   } finally {
     client.release();
@@ -2703,6 +2761,7 @@ app.get('/items', async (req, res) => {
       search,
       limit,
       sellable_only,
+      in_stock_only,
       created_by,
       mine,
       start_date,
@@ -2723,7 +2782,6 @@ app.get('/items', async (req, res) => {
     let params = [];
     let conditions = [];
 
-    const jwtBranchId = String(req.user?.branch_id ?? '').trim();
     const branchScopedRoles = new Set([
       'admin_warehouse',
       'stockist',
@@ -2736,17 +2794,14 @@ app.get('/items', async (req, res) => {
       branch_id != null ? String(branch_id).trim() : '';
 
     if (branchScopedRoles.has(roleNorm)) {
-      if (!jwtBranchId) {
-        return res.status(400).json({
-          error: 'Cabang aktif tidak ditemukan pada sesi login',
-        });
+      const scope = await assertUserCanAccessBranchForOrders(
+        req,
+        effectiveBranchId || req.user?.branch_id
+      );
+      if (!scope.ok) {
+        return res.status(scope.status).json(scope.body);
       }
-      if (effectiveBranchId && effectiveBranchId !== jwtBranchId) {
-        return res.status(403).json({
-          error: 'Hanya boleh melihat stok cabang aktif Anda',
-        });
-      }
-      effectiveBranchId = jwtBranchId;
+      effectiveBranchId = String(scope.branchId);
     }
 
     if (effectiveBranchId) {
@@ -2763,7 +2818,21 @@ app.get('/items', async (req, res) => {
       params.push(item_code);
     }
 
-    // stock_type is not available in older schema; ignore when present
+    const itemsColFlagsList = await getItemsColumnFlags(db);
+    if (_stock_type) {
+      if (itemsColFlagsList.stockType) {
+        conditions.push(`i.stock_type = $${params.length + 1}`);
+        params.push(String(_stock_type).trim());
+      }
+    }
+
+    const inStockOnly =
+      in_stock_only === 'true' ||
+      in_stock_only === '1' ||
+      req.query.quantity_gt === '0';
+    if (inStockOnly) {
+      conditions.push('COALESCE(i.quantity, 0) > 0');
+    }
 
     if (status) {
       conditions.push(`i.status = $${params.length + 1}`);

@@ -14,11 +14,10 @@ class NetworkConnectivity {
     try {
       // Ping ke Google untuk memastikan koneksi internet (non-web only).
       // Use a lightweight endpoint commonly returning 204.
+      // Jangan kirim header non-simple (mis. Cache-Control) — di web memicu
+      // preflight CORS yang ditolak browser meski server hidup.
       final response = await http
-          .get(
-            Uri.parse('https://clients3.google.com/generate_204'),
-            headers: {'Cache-Control': 'no-cache'},
-          )
+          .get(Uri.parse('https://clients3.google.com/generate_204'))
           .timeout(const Duration(seconds: 5));
 
       return response.statusCode == 204 || response.statusCode == 200;
@@ -48,7 +47,7 @@ class NetworkConnectivity {
     try {
       final liveUrl = '$root/health/live';
       final live = await http
-          .get(Uri.parse(liveUrl), headers: {'Cache-Control': 'no-cache'})
+          .get(Uri.parse(liveUrl))
           .timeout(liveTimeout);
       if (live.statusCode == 200) return true;
     } catch (e) {
@@ -59,7 +58,7 @@ class NetworkConnectivity {
     try {
       final healthUrl = '$root/health';
       final response = await http
-          .get(Uri.parse(healthUrl), headers: {'Cache-Control': 'no-cache'})
+          .get(Uri.parse(healthUrl))
           .timeout(healthTimeout);
 
       return response.statusCode == 200;
@@ -67,7 +66,7 @@ class NetworkConnectivity {
       // Try base URL as fallback
       try {
         final response = await http
-            .get(Uri.parse(baseUrl), headers: {'Cache-Control': 'no-cache'})
+            .get(Uri.parse(baseUrl))
             .timeout(healthTimeout);
 
         return response.statusCode >= 200 && response.statusCode < 400;
@@ -83,7 +82,7 @@ class NetworkConnectivity {
     try {
       final startTime = DateTime.now();
       final response = await http
-          .get(Uri.parse(baseUrl), headers: {'Cache-Control': 'no-cache'})
+          .get(Uri.parse(baseUrl))
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode >= 200 && response.statusCode < 400) {
