@@ -39,6 +39,7 @@ const { registerOrdersCoreRoutes } = require('./routes/orders_core');
 const { registerServerMiscRoutes } = require('./routes/server_misc');
 const { registerAdminApiRoutes } = require('./routes/admin_api');
 const { registerItemsRoutes } = require('./routes/items');
+const { registerSuppliersRoutes } = require('./routes/suppliers');
 
 
 const authRequired = authenticateToken(SECRET_KEY);
@@ -146,7 +147,13 @@ app.use('/items', authRequired);
 app.use('/item-conditions', authRequired);
 app.use('/order-items', authRequired);
 app.use('/stock-mutations', authRequired);
-app.use('/reports', authRequired, requireRoles('superadmin', 'manajer'));
+app.use('/reports', authRequired, requireRoles('superadmin', 'manajer', 'owner'));
+const suppliersAuth = [
+  authRequired,
+  requireRoles('superadmin', 'admin_warehouse', 'manajer'),
+];
+app.use('/suppliers', ...suppliersAuth);
+app.use('/api/suppliers', ...suppliersAuth);
 app.use('/api', authRequired);
 registerLoginRoutes(app, { db, loginLimiter, SECRET_KEY, JWT_EXPIRES_IN });
 app.use(
@@ -170,7 +177,7 @@ app.use(
 );
 app.use('/technicians', authRequired, requireRoles('superadmin', 'admin_workshop'));
 app.use('/test-db', authRequired, requireRoles('superadmin'));
-app.use(['/orders', '/payments', '/transfers', '/items', '/stock-mutations', '/employees', '/branches', '/users', '/store-operational'], writeApiLimiter);
+app.use(['/orders', '/payments', '/transfers', '/items', '/stock-mutations', '/employees', '/branches', '/users', '/store-operational', '/suppliers'], writeApiLimiter);
 
 function sendNotificationToClients(message, options = {}) {
   console.log(`Broadcasting message: ${message}`);
@@ -182,6 +189,7 @@ registerServerMiscRoutes(app, { db, upload });
 registerPaymentsCoreRoutes(app, { db, notifyClients: sendNotificationToClients });
 registerTransfersRoutes(app, { db });
 registerItemsRoutes(app, { db });
+registerSuppliersRoutes(app, { db });
 registerBranchesServerRoutes(app, { db, requireRoles, upload });
 registerEmployeesRoutes(app, { db });
 registerOrdersCoreRoutes(app, {

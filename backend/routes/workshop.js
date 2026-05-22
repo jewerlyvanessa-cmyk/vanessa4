@@ -161,6 +161,63 @@ workshopApi.get('/work-queue-diagnostics', async (req, res) => {
   }
 });
 
+// Service/custom menunggu kirim gudang → workshop (`awaiting_warehouse`).
+app.get('/api/workshop/warehouse-service-queue', async (req, res) => {
+  try {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    if (!new Set(['admin_warehouse', 'superadmin', 'manajer', 'stockist']).has(role)) {
+      return res.status(403).json({ error: 'Role tidak diizinkan' });
+    }
+    const hasPickupWq = await ordersHasPickupBranchColumn(db);
+    const result = await db.query(
+      `
+        SELECT DISTINCT ON (o.order_id)
+          o.order_id,
+          o.order_number,
+          o.order_type,
+          o.status,
+          o.branch_id,
+          ${hasPickupWq ? 'o.pickup_branch_id,' : ''}
+          o.created_at,
+          o.updated_at,
+          c.name AS customer_name,
+          c.phone,
+          b.name AS store_branch_name,
+          COALESCE(oi.nama_item, i.name) AS item_name
+        FROM orders o
+        JOIN customers c ON o.customer_id = c.customer_id
+        LEFT JOIN branches b ON b.branch_id = o.branch_id
+        LEFT JOIN order_items oi ON o.order_id = oi.order_id
+        LEFT JOIN items i ON oi.item_id = i.item_id
+        WHERE o.order_type::text IN ('service', 'custom')
+          AND o.status::text = 'awaiting_warehouse'
+        ORDER BY o.order_id, o.created_at ASC, oi.order_item_id ASC NULLS LAST
+      `
+    );
+    const processedRows = result.rows.map((row) => ({
+      order_id: row.order_id.toString(),
+      order_number: row.order_number,
+      order_type: row.order_type,
+      status: row.status,
+      branch_id: row.branch_id != null ? String(row.branch_id) : null,
+      pickup_branch_id:
+        hasPickupWq && row.pickup_branch_id != null
+          ? String(row.pickup_branch_id)
+          : null,
+      store_branch_name: row.store_branch_name,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      customer_name: row.customer_name,
+      phone: row.phone,
+      item_name: row.item_name,
+    }));
+    res.status(200).json(processedRows);
+  } catch (error) {
+    console.error('Error fetching warehouse service queue:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Service/custom: menunggu persetujuan admin workshop (bukan gudang) sebelum masuk antrian pekerjaan.
 app.get('/api/workshop/service-incoming', async (req, res) => {
   try {
@@ -2145,7 +2202,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
     const receivingFromWarehouse =
       currentStatus === 'awaiting_warehouse' &&
       nextStatusRaw === 'sent-to-workshop' &&
-      new Set(['admin_workshop', 'superadmin', 'manajer']).has(role);
+      new Set(['admin_workshop', 'admin_warehouse', 'superadmin', 'manajer']).has(role);
     // Sumber kebenaran sama GET /workshop-orders (SQL), hindari false negative dari parse metadata di Node.
     if (!receivingFromWarehouse) {
       const visiblePut = await orderVisibleForWorkshopStatusPut(
@@ -2200,6 +2257,7 @@ app.put('/workshop-orders/:id/status', async (req, res) => {
         'custom_work',
         'cancelled',
       ]),
+      admin_warehouse: new Set(['sent-to-workshop']),
     };
     const roleAllowedSet = allowedByRole[role] ?? new Set();
     if (!roleAllowedSet.has(nextStatusRaw)) {

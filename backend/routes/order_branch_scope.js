@@ -18,8 +18,8 @@ async function assertUserCanAccessBranchForOrders(req, branchIdRaw) {
   }
 
   const role = (req.user?.role || '').toString().trim().toLowerCase();
-  // Manajer / superadmin: laporan lintas cabang (read-only agregasi).
-  if (role === 'superadmin' || role === 'manajer') {
+  // Owner / manajer / superadmin: laporan lintas cabang (read-only agregasi).
+  if (role === 'superadmin' || role === 'manajer' || role === 'owner') {
     return { ok: true, branchId: bid };
   }
 

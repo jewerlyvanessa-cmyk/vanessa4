@@ -55,6 +55,20 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     return out;
   }
 
+  Map<String, String> _itemsQueryParams(String branchId, {required int limit}) {
+    final q = <String, String>{
+      'branch_id': branchId,
+      'limit': '$limit',
+    };
+    if (_selectedStatus != 'all') {
+      q['status'] = _selectedStatus;
+      if (_selectedStatus == 'ready') {
+        q['in_stock_only'] = '1';
+      }
+    }
+    return q;
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -68,10 +82,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
       List<dynamic> items;
       if (_selectedBranchId != 'all') {
         final uri = Uri.parse('$baseUrl/items').replace(
-          queryParameters: {
-            'branch_id': _selectedBranchId,
-            'limit': '1000',
-          },
+          queryParameters: _itemsQueryParams(_selectedBranchId, limit: 1000),
         );
         final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
         if (resp.statusCode != 200) {
@@ -86,7 +97,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
           if (branchId.isEmpty) return const <dynamic>[];
 
           final uri = Uri.parse('$baseUrl/items').replace(
-            queryParameters: {'branch_id': branchId, 'limit': '500'},
+            queryParameters: _itemsQueryParams(branchId, limit: 500),
           );
           final resp =
               await http.get(uri, headers: NetworkConfig.defaultHeaders);
@@ -246,10 +257,14 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
                           const SizedBox(height: 10),
                           StockStatusFilterSummaryHeader(
                             selectedStatus: _selectedStatus,
-                            onStatusChanged: (v) => setState(() {
-                              _selectedStatus = v;
-                              _jenisDetailFocus = null;
-                            }),
+                            onStatusChanged: (v) {
+                              if (v == _selectedStatus) return;
+                              setState(() {
+                                _selectedStatus = v;
+                                _jenisDetailFocus = null;
+                              });
+                              _load();
+                            },
                             summaryItems: _filteredItems,
                             filterLabel: 'Filter status',
                           ),

@@ -47,6 +47,20 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
     super.dispose();
   }
 
+  Map<String, String> _itemsQueryParams(String branchId) {
+    final q = <String, String>{
+      'branch_id': branchId,
+      'limit': '200',
+    };
+    if (_selectedStatus != 'all') {
+      q['status'] = _selectedStatus;
+      if (_selectedStatus == 'ready') {
+        q['in_stock_only'] = '1';
+      }
+    }
+    return q;
+  }
+
   Future<void> _loadItems() async {
     final branchId = _selectedBranchId;
     if (branchId == null || branchId.isEmpty) {
@@ -65,8 +79,8 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final uri = Uri.parse(
-        '$baseUrl/items?branch_id=$branchId&limit=200',
+      final uri = Uri.parse('$baseUrl/items').replace(
+        queryParameters: _itemsQueryParams(branchId),
       );
       final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
@@ -238,10 +252,14 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
                           const SizedBox(height: 10),
                           StockStatusFilterSummaryHeader(
                             selectedStatus: _selectedStatus,
-                            onStatusChanged: (v) => setState(() {
-                              _selectedStatus = v;
-                              _jenisDetailFocus = null;
-                            }),
+                            onStatusChanged: (v) {
+                              if (v == _selectedStatus) return;
+                              setState(() {
+                                _selectedStatus = v;
+                                _jenisDetailFocus = null;
+                              });
+                              _loadItems();
+                            },
                             summaryItems: _filteredItems,
                           ),
                           const SizedBox(height: 10),

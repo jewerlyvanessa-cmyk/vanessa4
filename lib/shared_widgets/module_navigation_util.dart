@@ -21,6 +21,8 @@ String getMainModuleForRole(String role) {
       return 'tukang';
     case 'manajer':
       return 'manajer';
+    case 'owner':
+      return 'owner';
     case 'stockist':
       return 'stockist';
     default:
@@ -55,6 +57,9 @@ void navigateToMainModule(BuildContext context, String mainModule) {
       break;
     case 'manajer':
       navigator.pushReplacementNamed(AppRoutes.manajer);
+      break;
+    case 'owner':
+      navigator.pushReplacementNamed(AppRoutes.owner);
       break;
     case 'stockist':
       navigator.pushReplacementNamed(AppRoutes.stockist);

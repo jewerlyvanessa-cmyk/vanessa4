@@ -17,11 +17,13 @@ class GoodsTransferCreatePage extends ConsumerStatefulWidget {
     required this.branches,
     required this.fromBranchId,
     this.branchTypeScope = 'toko',
+    this.destinationBranchTypeScope,
   });
 
   final List<dynamic> branches;
   final dynamic fromBranchId;
   final String branchTypeScope;
+  final String? destinationBranchTypeScope;
 
   @override
   ConsumerState<GoodsTransferCreatePage> createState() =>
@@ -59,13 +61,16 @@ class _GoodsTransferCreatePageState
 
   List<Map<String, dynamic>> get _destinationBranches {
     final from = widget.fromBranchId?.toString();
-    final scope = widget.branchTypeScope;
+    final destScope =
+        widget.destinationBranchTypeScope?.trim().isNotEmpty == true
+            ? widget.destinationBranchTypeScope!
+            : widget.branchTypeScope;
     return widget.branches
         .where((b) {
           if (b is! Map) return false;
           final id = b['branch_id']?.toString();
           if (id == null || id.isEmpty || id == from) return false;
-          return branchMatchesTypeScope(b['branch_type']?.toString(), scope);
+          return branchMatchesTypeScope(b['branch_type']?.toString(), destScope);
         })
         .map((b) => Map<String, dynamic>.from(b as Map))
         .toList();
@@ -183,6 +188,10 @@ class _GoodsTransferCreatePageState
       return;
     }
 
+    final destScope =
+        widget.destinationBranchTypeScope?.trim().isNotEmpty == true
+            ? widget.destinationBranchTypeScope!
+            : widget.branchTypeScope;
     final destOk = _destinationBranches.any(
       (b) => b['branch_id']?.toString() == dest.toString(),
     );
@@ -190,7 +199,7 @@ class _GoodsTransferCreatePageState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Cabang tujuan harus bertipe ${branchTypeLabel(widget.branchTypeScope)}',
+            'Cabang tujuan harus bertipe ${branchTypeLabel(destScope)}',
           ),
         ),
       );
@@ -234,7 +243,13 @@ class _GoodsTransferCreatePageState
     }
 
     setState(() => _submitting = true);
-    final notes = _notesController.text.trim();
+    var notes = _notesController.text.trim();
+    if (widget.destinationBranchTypeScope != null &&
+        normalizeBranchTypeKey(widget.destinationBranchTypeScope) ==
+            'workshop') {
+      const tag = '[KE_WORKSHOP]';
+      notes = notes.isEmpty ? tag : '$tag $notes';
+    }
     var okCount = 0;
     for (final v in values) {
       final ok = await _createTransfer(
@@ -293,7 +308,7 @@ class _GoodsTransferCreatePageState
               onTap: () => _setSourceType('stok'),
             );
             final buyback = _SourceChoiceButton(
-              label: 'Dari buyback',
+              label: 'Buyback (poles/repro)',
               icon: Icons.swap_horiz_outlined,
               selected: _selectedSourceType == 'buyback',
               onTap: () => _setSourceType('buyback'),
@@ -319,8 +334,8 @@ class _GoodsTransferCreatePageState
         const SizedBox(height: 4),
         Text(
           _selectedSourceType == 'buyback'
-              ? 'Menampilkan item status buyback.'
-              : 'Menampilkan item stok ready.',
+              ? 'Buyback untuk dipoles, direproduksi, atau dikerjakan di workshop.'
+              : 'Stok ready dari gudang untuk workshop.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: cs.onSurfaceVariant,
               ),
@@ -447,7 +462,11 @@ class _GoodsTransferCreatePageState
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        title: Text('Kirim Barang — ${branchTypeLabel(widget.branchTypeScope)}'),
+        title: Text(
+          widget.destinationBranchTypeScope != null
+              ? 'Kirim ke ${branchTypeLabel(widget.destinationBranchTypeScope)}'
+              : 'Kirim Barang — ${branchTypeLabel(widget.branchTypeScope)}',
+        ),
       ),
       body: Form(
         key: _formKey,

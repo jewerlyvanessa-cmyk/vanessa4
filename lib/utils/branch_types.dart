@@ -73,7 +73,15 @@ bool branchTypeCanSupplyStockForTransfer(String? raw) =>
     branchTypeIsWarehouse(raw);
 
 /// Judul halaman kirim/terima sesuai scope cabang.
-String goodsTransferPageTitle(String scope) {
+String goodsTransferPageTitle(
+  String scope, {
+  String? destinationScope,
+}) {
+  if (normalizeBranchTypeKey(scope) == 'warehouse' &&
+      destinationScope != null &&
+      normalizeBranchTypeKey(destinationScope) == 'workshop') {
+    return 'Kirim Barang ke Workshop';
+  }
   switch (normalizeBranchTypeKey(scope)) {
     case 'warehouse':
       return 'Kirim / Terima Antar Warehouse';

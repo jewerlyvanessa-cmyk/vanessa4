@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/modules/admin_toko/utils/daily_orders_payments_helpers.dart';
 import 'package:vanessa3/utils/order_bill_amount.dart';
 
@@ -242,67 +241,96 @@ class _OrdersTableWeb extends StatelessWidget {
       );
     }
 
-    final rows = <DataRow>[];
-    for (final row in lines) {
-      final no = displayOrderNumber(row);
-      rows.add(
-        DataRow(
-          onSelectChanged: (_) => onOrderTap(row),
-          cells: [
-            DataCell(cell(no, maxLines: 1)),
-            DataCell(cell((row['order_type'] ?? '—').toString(), maxLines: 1)),
-            DataCell(cell(lineItemName(row), maxLines: 1)),
-            DataCell(
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: cell(
-                  orderTotalDisplayStr(row),
-                  maxLines: 1,
-                  align: TextAlign.end,
-                ),
-              ),
-            ),
-            DataCell(statusCellBuilder(row)),
-          ],
+    Widget tableCell(Widget child, {bool numeric = false}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        child: Align(
+          alignment: numeric ? Alignment.centerRight : Alignment.centerLeft,
+          child: child,
         ),
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Scrollbar(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: DataTable(
-                  headingRowColor: WidgetStateProperty.all(Colors.grey.shade200),
-                  dataRowColor: WidgetStateProperty.all(const Color(0xFFFFF8EE)),
-                  headingRowHeight: 34,
-                  dataRowMinHeight: 32,
-                  dataRowMaxHeight: 44,
-                  columnSpacing: 10,
-                  horizontalMargin: 8,
-                  showCheckboxColumn: false,
-                  columns: [
-                    DataColumn(label: dataTableColumnLabel('No. Nota')),
-                    DataColumn(label: dataTableColumnLabel('Order')),
-                    DataColumn(label: dataTableColumnLabel('Item')),
-                    DataColumn(
-                      label: dataTableColumnLabel('Total'),
-                      numeric: true,
-                    ),
-                    DataColumn(label: dataTableColumnLabel('Status')),
-                  ],
-                  rows: rows,
+    final headerStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+          height: 1.15,
+        );
+
+    Widget tappableCell(
+      Map<String, dynamic> row,
+      Widget child, {
+      bool numeric = false,
+    }) {
+      return InkWell(
+        onTap: () => onOrderTap(row),
+        child: tableCell(child, numeric: numeric),
+      );
+    }
+
+    final tableRows = <TableRow>[
+      TableRow(
+        decoration: BoxDecoration(color: Colors.grey.shade200),
+        children: [
+          tableCell(Text('No. Nota', style: headerStyle)),
+          tableCell(Text('Order', style: headerStyle)),
+          tableCell(Text('Item', style: headerStyle)),
+          tableCell(Text('Total', style: headerStyle), numeric: true),
+          tableCell(Text('Status', style: headerStyle)),
+        ],
+      ),
+      for (var i = 0; i < lines.length; i++)
+        TableRow(
+          decoration: BoxDecoration(
+            color: i.isOdd ? const Color(0xFFFFF8EE) : null,
+          ),
+          children: [
+            tappableCell(
+              lines[i],
+              cell(displayOrderNumber(lines[i]), maxLines: 1),
+            ),
+            tappableCell(
+              lines[i],
+              cell((lines[i]['order_type'] ?? '—').toString(), maxLines: 1),
+            ),
+            tappableCell(
+              lines[i],
+              cell(lineItemName(lines[i]), maxLines: 1),
+            ),
+            tappableCell(
+              lines[i],
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: cell(
+                  orderTotalDisplayStr(lines[i]),
+                  maxLines: 1,
+                  align: TextAlign.end,
                 ),
               ),
+              numeric: true,
             ),
-          ),
-        );
-      },
+            tappableCell(lines[i], statusCellBuilder(lines[i])),
+          ],
+        ),
+    ];
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: Table(
+        columnWidths: const {
+          0: FlexColumnWidth(1.15),
+          1: FlexColumnWidth(0.75),
+          2: FlexColumnWidth(2.2),
+          3: FlexColumnWidth(0.95),
+          4: FlexColumnWidth(1.15),
+        },
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        border: TableBorder(
+          horizontalInside: BorderSide(color: Colors.grey.shade300, width: 0.5),
+        ),
+        children: tableRows,
+      ),
     );
   }
 }

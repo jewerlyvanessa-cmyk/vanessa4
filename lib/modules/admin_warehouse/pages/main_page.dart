@@ -58,6 +58,41 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
     );
   }
 
+  void _openWorkshopSheet(BuildContext context) {
+    showModuleDestinationSheet(
+      context,
+      title: ModuleMenuGroupLabels.sheetWorkshop,
+      options: [
+        ModuleDestinationOption(
+          label: 'Service / Custom',
+          subtitle:
+              'Pekerjaan dari toko — kirim ke workshop (awaiting gudang)',
+          icon: Icons.build_circle_outlined,
+          iconColor: Colors.deepPurple,
+          onTap: () =>
+              pushAppRoute(context, AppRoutes.warehouseWorkshopService),
+        ),
+        ModuleDestinationOption(
+          label: 'Stok & Buyback',
+          subtitle:
+              'Kirim barang ready / buyback untuk poles, repro, atau kerja',
+          icon: Icons.inventory_2_outlined,
+          iconColor: Colors.indigo,
+          onTap: () =>
+              pushAppRoute(context, AppRoutes.warehouseWorkshopGoods),
+        ),
+        ModuleDestinationOption(
+          label: 'Bahan baku',
+          subtitle: 'Penambahan stok material ke workshop',
+          icon: Icons.science_outlined,
+          iconColor: Colors.brown,
+          onTap: () =>
+              pushAppRoute(context, AppRoutes.warehouseWorkshopMaterial),
+        ),
+      ],
+    );
+  }
+
   void _openAntarWarehouseSheet(BuildContext context) {
     showModuleDestinationSheet(
       context,
@@ -198,9 +233,16 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                     ),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.business_outlined,
+                    label: 'SUPPLIER',
+                    iconColor: Colors.brown,
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.warehouseSuppliers),
+                  ),
+                  ModuleMenuEntry(
                     icon: Icons.local_shipping_outlined,
                     label: 'TERIMA SUPPLIER',
-                    iconColor: Colors.brown,
+                    iconColor: Colors.deepOrange,
                     onTap: () => pushAppRoute(
                       context,
                       AppRoutes.warehouseSupplierReceipt,
@@ -212,6 +254,12 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                     iconColor: Colors.deepOrange,
                     badgeCount: tokoPendingBadge > 0 ? tokoPendingBadge : null,
                     onTap: () => _openTokoSheet(context),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.precision_manufacturing_outlined,
+                    label: ModuleMenuGroupLabels.workshop,
+                    iconColor: Colors.deepPurple,
+                    onTap: () => _openWorkshopSheet(context),
                   ),
                   ModuleMenuEntry(
                     icon: Icons.hub_outlined,

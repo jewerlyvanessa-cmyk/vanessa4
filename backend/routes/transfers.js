@@ -58,12 +58,42 @@ app.get('/transfers', async (req, res) => {
     const scopeRaw = String(branch_type_scope ?? '').trim().toLowerCase();
     const allowedScopes = new Set(['toko', 'warehouse', 'workshop', 'pusat']);
     if (allowedScopes.has(scopeRaw)) {
-      query += ` AND COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}`;
-      params.push(scopeRaw);
-      paramIndex++;
-      query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
-      params.push(scopeRaw);
-      paramIndex++;
+      if (scopeRaw === 'workshop') {
+        // Antar workshop + kiriman masuk dari gudang (warehouse → workshop).
+        query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
+        params.push('workshop');
+        paramIndex++;
+        query += ` AND (
+          COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}
+          OR COALESCE(fb.branch_type::text, 'toko') = 'warehouse'
+        )`;
+        params.push('workshop');
+        paramIndex++;
+      } else if (scopeRaw === 'warehouse') {
+        const lane = String(req.query.transfer_lane ?? '').trim().toLowerCase();
+        if (lane === 'to_workshop') {
+          query += ` AND COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}`;
+          params.push('warehouse');
+          paramIndex++;
+          query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
+          params.push('workshop');
+          paramIndex++;
+        } else {
+          query += ` AND COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}`;
+          params.push(scopeRaw);
+          paramIndex++;
+          query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
+          params.push(scopeRaw);
+          paramIndex++;
+        }
+      } else {
+        query += ` AND COALESCE(fb.branch_type::text, 'toko') = $${paramIndex}`;
+        params.push(scopeRaw);
+        paramIndex++;
+        query += ` AND COALESCE(tb.branch_type::text, 'toko') = $${paramIndex}`;
+        params.push(scopeRaw);
+        paramIndex++;
+      }
       // Permintaan stok toko→warehouse bukan transfer sejenis (antar toko / antar gudang / antar bengkel).
       if (scopeRaw === 'toko' || scopeRaw === 'warehouse' || scopeRaw === 'workshop') {
         query += ` AND COALESCE(t.notes, '') NOT ILIKE $${paramIndex}`;

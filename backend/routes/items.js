@@ -211,7 +211,7 @@ function registerItemsRoutes(app, deps) {
       const mineOnly =
         mine === 'true' || mine === '1' || mine === true;
       const createdByFilter = parseInt(String(created_by ?? '').trim(), 10);
-      const canFilterAnyUser = ['superadmin', 'manajer'].includes(roleNorm);
+      const canFilterAnyUser = ['superadmin', 'manajer', 'owner'].includes(roleNorm);
   
       if (mineOnly) {
         if (!hasCreatorCol) {

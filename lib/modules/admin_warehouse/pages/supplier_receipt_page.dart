@@ -6,6 +6,11 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:vanessa3/modules/common/widgets/supplier_form_dialog.dart';
+import 'package:vanessa3/routes/app_routes.dart';
+import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/suppliers_api.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
@@ -49,12 +54,34 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
   bool _loadingHistory = true;
   String? _historyError;
   List<Map<String, dynamic>> _recentReceipts = const [];
+  List<Map<String, dynamic>> _activeSuppliers = const [];
   final List<SupplierReceiptLine> _pendingLines = [];
+  bool _showSupplierSuggestions = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadHistory());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadHistory();
+      _loadActiveSuppliers();
+    });
+  }
+
+  Future<void> _loadActiveSuppliers() async {
+    try {
+      final uri = Uri.parse(suppliersApiBaseUrl()).replace(
+        queryParameters: {'status': 'active'},
+      );
+      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      if (res.statusCode != 200 || !mounted) return;
+      final data = jsonDecode(res.body);
+      setState(() {
+        _activeSuppliers = (data is List ? data : const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    } catch (_) {}
   }
 
   @override
@@ -69,6 +96,27 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
     _qtyCtrl.dispose();
     _purityCtrl.dispose();
     super.dispose();
+  }
+
+  List<String> _supplierNameSuggestions() {
+    final q = _supplierCtrl.text.trim().toLowerCase();
+    final names = _activeSuppliers
+        .map((s) => (s['name'] ?? '').toString().trim())
+        .where((n) => n.isNotEmpty)
+        .toList();
+    if (q.isEmpty) return names.take(12).toList();
+    return names.where((n) => n.toLowerCase().contains(q)).take(12).toList();
+  }
+
+  void _pickSupplierName(String name) {
+    _supplierCtrl.text = name.trim();
+    if (!mounted) return;
+    setState(() => _showSupplierSuggestions = false);
+  }
+
+  void _hideSupplierSuggestions() {
+    if (!_showSupplierSuggestions || !mounted) return;
+    setState(() => _showSupplierSuggestions = false);
   }
 
   Future<void> _loadHistory() async {
@@ -121,6 +169,71 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
     return null;
   }
 
+  bool _supplierExistsInMaster(String name) {
+    final n = name.trim().toLowerCase();
+    if (n.isEmpty) return false;
+    return _activeSuppliers.any(
+      (s) => (s['name'] ?? '').toString().trim().toLowerCase() == n,
+    );
+  }
+
+  Future<void> _openAddSupplierDialog({String? prefilledName}) async {
+    _hideSupplierSuggestions();
+    final created = await showSupplierFormDialog(
+      context,
+      initialName: prefilledName ?? _supplierCtrl.text.trim(),
+      compact: true,
+    );
+    if (created == null || !mounted) return;
+    await _loadActiveSuppliers();
+    _pickSupplierName((created['name'] ?? '').toString());
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Supplier "${created['name']}" ditambahkan — lanjutkan input barang',
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _ensureSupplierRegistered() async {
+    final name = _supplierCtrl.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nama supplier wajib diisi')),
+      );
+      return false;
+    }
+    if (_supplierExistsInMaster(name)) return true;
+
+    _hideSupplierSuggestions();
+    final add = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Supplier belum terdaftar'),
+        content: Text(
+          'Nama "$name" belum ada di master supplier.\n\n'
+          'Simpan sebagai supplier baru sekarang?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Tambah supplier'),
+          ),
+        ],
+      ),
+    );
+    if (add != true) return false;
+    await _openAddSupplierDialog(prefilledName: name);
+    if (!mounted) return false;
+    return _supplierExistsInMaster(_supplierCtrl.text.trim());
+  }
+
   bool _validateSupplierHeader() {
     if (_supplierCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -146,8 +259,10 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
     );
   }
 
-  void _addLineToPending() {
+  Future<void> _addLineToPending() async {
     if (!_validateSupplierHeader()) return;
+    if (!await _ensureSupplierRegistered()) return;
+    if (!mounted) return;
     final line = _lineFromForm();
     if (line == null) return;
 
@@ -172,6 +287,8 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
 
   Future<void> _submitAll() async {
     if (!_validateSupplierHeader()) return;
+    if (!await _ensureSupplierRegistered()) return;
+    if (!mounted) return;
 
     final lines = List<SupplierReceiptLine>.from(_pendingLines);
     final draft = _lineFromForm();
@@ -302,6 +419,7 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
     final user = ref.watch(userStateProvider);
     final branchOk = user.branch.trim().isNotEmpty;
     final cs = Theme.of(context).colorScheme;
+    final supplierSuggestions = _supplierNameSuggestions();
 
     return Scaffold(
       appBar: AppBar(
@@ -354,16 +472,122 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
                       ),
                 ),
                 const SizedBox(height: 8),
-                TextFormField(
-                  controller: _supplierCtrl,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Nama supplier *',
-                    border: OutlineInputBorder(),
-                    hintText: 'Contoh: PT Emas Nusantara',
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: _supplierCtrl,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: InputDecoration(
+                              labelText: 'Nama supplier *',
+                              border: const OutlineInputBorder(),
+                              hintText: 'Pilih supplier atau ketik nama baru',
+                              suffixIcon: _activeSuppliers.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'Daftar supplier',
+                                      onPressed: () {
+                                        setState(
+                                          () => _showSupplierSuggestions =
+                                              !_showSupplierSuggestions,
+                                        );
+                                      },
+                                      icon: Icon(
+                                        _showSupplierSuggestions
+                                            ? Icons.expand_less
+                                            : Icons.expand_more,
+                                      ),
+                                    ),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Wajib diisi'
+                                : null,
+                            onTap: () {
+                              if (_activeSuppliers.isEmpty) return;
+                              setState(() => _showSupplierSuggestions = true);
+                            },
+                            onChanged: (_) {
+                              if (_activeSuppliers.isEmpty) return;
+                              setState(() => _showSupplierSuggestions = true);
+                            },
+                          ),
+                          if (_showSupplierSuggestions &&
+                              supplierSuggestions.isNotEmpty)
+                            Material(
+                              elevation: 2,
+                              borderRadius: BorderRadius.circular(8),
+                              color: cs.surfaceContainerHighest,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (var i = 0;
+                                      i < supplierSuggestions.length;
+                                      i++) ...[
+                                    if (i > 0)
+                                      Divider(
+                                        height: 1,
+                                        color: cs.outlineVariant.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                      ),
+                                    ListTile(
+                                      dense: true,
+                                      title: Text(supplierSuggestions[i]),
+                                      onTap: () =>
+                                          _pickSupplierName(
+                                            supplierSuggestions[i],
+                                          ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Column(
+                      children: [
+                        IconButton.filledTonal(
+                          tooltip: 'Tambah supplier baru',
+                          onPressed: _saving
+                              ? null
+                              : () => _openAddSupplierDialog(),
+                          icon: const Icon(Icons.add_business_outlined),
+                        ),
+                        IconButton(
+                          tooltip: 'Kelola semua supplier',
+                          onPressed: _saving
+                              ? null
+                              : () async {
+                                  _hideSupplierSuggestions();
+                                  await Navigator.of(context).pushNamed(
+                                    AppRoutes.warehouseSuppliers,
+                                  );
+                                  if (!mounted) return;
+                                  await _loadActiveSuppliers();
+                                },
+                          icon: const Icon(Icons.list_alt_outlined),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () => _openAddSupplierDialog(
+                              prefilledName: _supplierCtrl.text.trim(),
+                            ),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Supplier belum ada? Tambah data baru'),
                   ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(

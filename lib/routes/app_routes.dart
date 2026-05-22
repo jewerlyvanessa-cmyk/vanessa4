@@ -25,6 +25,9 @@ import '../modules/admin_toko/pages/daily_orders_payments_page.dart';
 import '../modules/admin_workshop/pages/main_page.dart';
 import '../modules/admin_warehouse/pages/main_page.dart';
 import '../modules/admin_warehouse/pages/supplier_receipt_page.dart';
+import '../modules/admin_warehouse/pages/warehouse_service_dispatch_page.dart';
+import '../modules/admin_warehouse/pages/warehouse_workshop_material_page.dart';
+import '../modules/common/pages/suppliers_management_page.dart';
 import '../modules/tukang/pages/main_page.dart';
 import '../modules/manajer/pages/main_page.dart';
 import '../modules/manajer/pages/completed_orders_today_page.dart';
@@ -35,6 +38,10 @@ import '../modules/manajer/pages/global_stock_page.dart';
 import '../modules/manajer/pages/stock_report_page.dart';
 import '../modules/manajer/pages/simple_protected_page.dart';
 import '../modules/manajer/pages/users_page.dart';
+import '../modules/owner/pages/main_page.dart';
+import '../modules/owner/pages/owner_sales_global_page.dart';
+import '../modules/owner/pages/owner_buyback_global_page.dart';
+import '../modules/owner/pages/owner_global_orders_page.dart';
 import '../modules/admin_toko/pages/goods_transfer_page.dart';
 import '../modules/admin_toko/pages/request_stock_warehouse_page.dart';
 import '../modules/admin_toko/pages/service_awaiting_store_receipt_page.dart';
@@ -69,6 +76,11 @@ class AppRoutes {
   static const String adminWorkshop = '/admin_workshop';
   static const String adminWarehouse = '/admin_warehouse';
   static const String manajer = '/manager';
+  static const String owner = '/owner';
+  static const String ownerSalesGlobal = '/owner/sales';
+  static const String ownerBuybackGlobal = '/owner/buyback';
+  static const String ownerGlobalStock = '/owner/stock';
+  static const String ownerGlobalOrders = '/owner/orders';
   static const String customers = '/customers';
   static const String manajerCompletedOrdersToday =
       '/manager/completed_orders_today';
@@ -88,6 +100,11 @@ class AppRoutes {
   static const String warehouseEmployees = '/warehouse/employees';
   static const String warehouseStockInputReport = '/warehouse/stock_input_report';
   static const String warehouseSupplierReceipt = '/warehouse/supplier_receipt';
+  static const String warehouseSuppliers = '/warehouse/suppliers';
+  static const String manajerSuppliers = '/manager/suppliers';
+  static const String warehouseWorkshopService = '/warehouse/workshop/service';
+  static const String warehouseWorkshopGoods = '/warehouse/workshop/goods';
+  static const String warehouseWorkshopMaterial = '/warehouse/workshop/material';
   static const String adminTokoOrders = '/admin_toko/orders';
   static const String adminTokoServiceCustom = '/admin_toko/service_custom';
   static const String adminTokoWorkshopReceipt = '/admin_toko/workshop_receipt';
@@ -117,6 +134,11 @@ class AppRoutes {
     adminWarehouse: (context) => const AdminWarehouseMainPage(),
     tukang: (context) => const TukangMainPage(),
     manajer: (context) => const ManajerMainPage(),
+    owner: (context) => const OwnerMainPage(),
+    ownerSalesGlobal: (context) => const OwnerSalesGlobalPage(),
+    ownerBuybackGlobal: (context) => const OwnerBuybackGlobalPage(),
+    ownerGlobalStock: (context) => const GlobalStockPage(),
+    ownerGlobalOrders: (context) => const OwnerGlobalOrdersPage(),
     manajerCompletedOrdersToday: (context) => const CompletedOrdersTodayPage(),
     manajerBranchPerformance: (context) => const BranchPerformancePage(),
     manajerSalesToday: (context) => const SalesReportTodayPage(),
@@ -137,6 +159,16 @@ class AppRoutes {
           mode: StockInputReportMode.activeBranch,
         ),
     warehouseSupplierReceipt: (context) => const SupplierReceiptPage(),
+    warehouseSuppliers: (context) => const SuppliersManagementPage(),
+    manajerSuppliers: (context) => const SuppliersManagementPage(),
+    warehouseWorkshopService: (context) =>
+        const WarehouseServiceDispatchPage(),
+    warehouseWorkshopGoods: (context) => const GoodsTransferPage(
+          branchTypeScope: 'warehouse',
+          destinationBranchTypeScope: 'workshop',
+        ),
+    warehouseWorkshopMaterial: (context) =>
+        const WarehouseWorkshopMaterialPage(),
     adminTokoOrders: (context) => const DailyOrdersPaymentsPage(),
     adminTokoServiceCustom: (context) => const DailyOrdersPaymentsPage(
       serviceCustomMode: true,
@@ -282,6 +314,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               break;
             case 'manajer':
               route = AppRoutes.manajer;
+              break;
+            case 'owner':
+              route = AppRoutes.owner;
               break;
             case 'tukang':
               route = AppRoutes.tukang;

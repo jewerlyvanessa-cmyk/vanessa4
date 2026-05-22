@@ -64,6 +64,8 @@ function mainModuleForRole(role) {
       return 'warehouse';
     case 'manajer':
       return 'reporting';
+    case 'owner':
+      return 'owner';
     default:
       return 'dashboard';
   }

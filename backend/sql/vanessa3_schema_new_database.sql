@@ -164,7 +164,7 @@ CREATE TABLE user_branch_roles (
   role       TEXT NOT NULL
     CHECK (role IN (
       'cs', 'kasir', 'admin_toko', 'admin_workshop', 'admin_warehouse',
-      'tukang', 'manajer', 'superadmin', 'stockist'
+      'tukang', 'manajer', 'superadmin', 'stockist', 'owner'
     )),
   is_primary BOOLEAN NOT NULL DEFAULT FALSE,
   UNIQUE (user_id, branch_id, role)

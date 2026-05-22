@@ -1,7 +1,141 @@
 'use strict';
 
+const getOrdersDaily = require('./orders_daily_handler');
+const {
+  DATE_RE,
+  todayYmdWib,
+  resolveOwnerDashboardBranchIds,
+  fetchOwnerStockTotals,
+  fetchOwnerPaymentSummary,
+} = require('../lib/owner_dashboard_helpers');
+
 function registerReportsRoutes(app, deps) {
   const { db } = deps;
+
+  /**
+   * Dashboard Owner — satu round-trip: ringkasan + order harian lintas cabang.
+   * Query: date (yyyy-MM-dd), branch_ids (opsional, comma-separated).
+   */
+  app.get('/reports/owner-dashboard', async (req, res) => {
+    try {
+      const resolved = await resolveOwnerDashboardBranchIds(req, db);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json(resolved.body);
+      }
+
+      const dateRaw = String(req.query.date ?? '').trim();
+      const dateYmd = DATE_RE.test(dateRaw) ? dateRaw : todayYmdWib();
+      const branchIds = resolved.branchIds;
+
+      if (branchIds.length === 0) {
+        return res.status(200).json({
+          date: dateYmd,
+          summary: {
+            sales_amount: 0,
+            sales_payment_count: 0,
+            buyback_amount: 0,
+            buyback_payment_count: 0,
+            stock_ready_qty: 0,
+            stock_ready_sku: 0,
+            order_count: 0,
+          },
+          orders: [],
+        });
+      }
+
+      const branchMeta = await db.query(
+        `
+          SELECT branch_id, name
+          FROM branches
+          WHERE branch_id = ANY($1::bigint[])
+        `,
+        [branchIds]
+      );
+      const nameById = new Map(
+        branchMeta.rows.map((r) => [
+          String(r.branch_id),
+          (r.name ?? `Cabang ${r.branch_id}`).toString(),
+        ])
+      );
+
+      const [stockTotals, perBranch] = await Promise.all([
+        fetchOwnerStockTotals(db, branchIds),
+        Promise.all(
+          branchIds.map(async (branchId) => {
+            const pay = await fetchOwnerPaymentSummary(db, req, branchId, dateYmd);
+            const ordersReq = {
+              ...req,
+              query: { branch_id: String(branchId), date: dateYmd },
+            };
+            const ordersResult =
+              await getOrdersDaily.fetchOrdersDailyPayload(ordersReq);
+            const orders =
+              ordersResult.ok && Array.isArray(ordersResult.rows)
+                ? ordersResult.rows
+                : [];
+            const branchName = nameById.get(String(branchId)) ?? `Cabang ${branchId}`;
+            const tagged = orders.map((row) => ({
+              ...row,
+              branch_id: String(branchId),
+              branch_name: branchName,
+            }));
+            const orderIds = new Set();
+            for (const row of orders) {
+              const oid = row?.order_id?.toString?.() ?? row?.order_id;
+              if (oid) orderIds.add(String(oid));
+            }
+            return {
+              pay,
+              orders: tagged,
+              order_count: orderIds.size,
+            };
+          })
+        ),
+      ]);
+
+      let salesAmount = 0;
+      let salesPaymentCount = 0;
+      let buybackAmount = 0;
+      let buybackPaymentCount = 0;
+      let orderCount = 0;
+      const allOrders = [];
+
+      for (const part of perBranch) {
+        salesAmount += part.pay.total_amount;
+        salesPaymentCount += part.pay.total_payments;
+        buybackAmount += part.pay.expense_amount;
+        buybackPaymentCount += part.pay.buyback_payments;
+        orderCount += part.order_count;
+        allOrders.push(...part.orders);
+      }
+
+      allOrders.sort((a, b) => {
+        const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+        return tb - ta;
+      });
+
+      return res.status(200).json({
+        date: dateYmd,
+        summary: {
+          sales_amount: salesAmount,
+          sales_payment_count: salesPaymentCount,
+          buyback_amount: buybackAmount,
+          buyback_payment_count: buybackPaymentCount,
+          stock_ready_qty: stockTotals.ready_qty,
+          stock_ready_sku: stockTotals.ready_sku,
+          order_count: orderCount,
+        },
+        orders: allOrders,
+      });
+    } catch (error) {
+      console.error('[reports/owner-dashboard]', error);
+      return res.status(500).json({
+        error: 'Internal server error',
+        detail: error.message,
+      });
+    }
+  });
 
   /** Manajer: daftar order completed hari ini dari semua branch */
   app.get('/reports/orders-completed-today', async (req, res) => {

@@ -131,6 +131,8 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
         return Colors.red;
       case 'manajer':
         return Colors.teal;
+      case 'owner':
+        return Colors.amber;
       case 'superadmin':
         return Colors.indigo;
       default:
@@ -156,6 +158,8 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
         return 'Tukang';
       case 'manajer':
         return 'Manajer';
+      case 'owner':
+        return 'Owner';
       case 'superadmin':
         return 'Super Admin';
       default:

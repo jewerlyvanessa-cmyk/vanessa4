@@ -103,6 +103,9 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
       case 'manajer':
         route = AppRoutes.manajer;
         break;
+      case 'owner':
+        route = AppRoutes.owner;
+        break;
       case 'tukang':
         route = AppRoutes.tukang;
         break;
@@ -301,6 +304,8 @@ class _SwitchBranchRolePageState extends ConsumerState<SwitchBranchRolePage> {
         return 'Admin Warehouse';
       case 'manajer':
         return 'Manajer';
+      case 'owner':
+        return 'Owner';
       case 'tukang':
         return 'Tukang';
       case 'stockist':

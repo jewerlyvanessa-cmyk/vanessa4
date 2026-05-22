@@ -236,29 +236,203 @@ class _ManagerDailyPaymentSummaryPageState
     );
   }
 
-  Widget _paymentMethodTableCell(
+  static const _tableHeaderStyle = TextStyle(
+    fontWeight: FontWeight.w600,
+    fontSize: 11,
+    height: 1.15,
+  );
+
+  Widget _tableCellPad(Widget child, {bool numeric = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+      child: Align(
+        alignment: numeric ? Alignment.centerRight : Alignment.centerLeft,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _fittedTableMethodCell(
     ColorScheme cs,
     Map<String, dynamic> r,
     bool hasErr,
     String countKey,
     String amountKey,
   ) {
-    if (hasErr) return const Text('—');
-    if (!widget.showPaymentMethodNominals) {
-      return Text('${_cellInt(r, countKey)}');
+    if (hasErr) {
+      return _tableCellPad(const Text('—'), numeric: true);
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
+    if (!widget.showPaymentMethodNominals) {
+      return _tableCellPad(
+        Text('${_cellInt(r, countKey)}'),
+        numeric: true,
+      );
+    }
+    return _tableCellPad(
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerRight,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${_cellInt(r, countKey)}',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+            ),
+            Text(
+              _fmtMoney(_cellNum(r, amountKey)),
+              style: TextStyle(fontSize: 10, color: cs.primary),
+            ),
+          ],
+        ),
+      ),
+      numeric: true,
+    );
+  }
+
+  Widget _buildFittedBranchTable(ColorScheme cs) {
+    final headerCells = <Widget>[
+      _tableCellPad(
+        Text('Cabang', style: _tableHeaderStyle.copyWith(color: cs.onSurface)),
+      ),
+      _tableCellPad(
+        Text('Trx', style: _tableHeaderStyle.copyWith(color: cs.onSurface)),
+        numeric: true,
+      ),
+      _tableCellPad(
+        Text(
+          widget.showPaymentMethodNominals ? 'Cash\n# / Rp' : 'Cash',
+          style: _tableHeaderStyle.copyWith(color: cs.onSurface),
+          textAlign: TextAlign.end,
+        ),
+        numeric: true,
+      ),
+      _tableCellPad(
+        Text(
+          widget.showPaymentMethodNominals ? 'TRF\n# / Rp' : 'TRF',
+          style: _tableHeaderStyle.copyWith(color: cs.onSurface),
+          textAlign: TextAlign.end,
+        ),
+        numeric: true,
+      ),
+      _tableCellPad(
+        Text(
+          widget.showPaymentMethodNominals ? 'QRIS\n# / Rp' : 'QRIS',
+          style: _tableHeaderStyle.copyWith(color: cs.onSurface),
+          textAlign: TextAlign.end,
+        ),
+        numeric: true,
+      ),
+      _tableCellPad(
+        Text('Total', style: _tableHeaderStyle.copyWith(color: cs.onSurface)),
+        numeric: true,
+      ),
+    ];
+
+    final dataTableRows = <TableRow>[];
+    for (var i = 0; i < _rows.length; i++) {
+      final r = _rows[i];
+      final name = (r['branch_name'] ?? '-').toString();
+      final err = r['error']?.toString();
+      final hasErr = err != null;
+      final totalAmount = _cellNum(r, 'total_amount');
+
+      dataTableRows.add(
+        TableRow(
+          decoration: BoxDecoration(
+            color: i.isOdd
+                ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                : null,
+          ),
+          children: [
+            _tableCellPad(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  if (hasErr)
+                    Text(
+                      err,
+                      style: TextStyle(color: cs.error, fontSize: 10),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
+            ),
+            _tableCellPad(
+              Text(hasErr ? '—' : '${_cellInt(r, 'total_payments')}'),
+              numeric: true,
+            ),
+            _fittedTableMethodCell(
+              cs,
+              r,
+              hasErr,
+              'cash_payments',
+              'cash_amount',
+            ),
+            _fittedTableMethodCell(
+              cs,
+              r,
+              hasErr,
+              'transfer_payments',
+              'transfer_amount',
+            ),
+            _fittedTableMethodCell(
+              cs,
+              r,
+              hasErr,
+              'qris_payments',
+              'qris_amount',
+            ),
+            _tableCellPad(
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(
+                  hasErr ? '—' : _fmtMoney(totalAmount),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: cs.primary,
+                  ),
+                ),
+              ),
+              numeric: true,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Table(
+      columnWidths: const {
+        0: FlexColumnWidth(2.5),
+        1: FlexColumnWidth(0.5),
+        2: FlexColumnWidth(1.05),
+        3: FlexColumnWidth(1.05),
+        4: FlexColumnWidth(1.05),
+        5: FlexColumnWidth(1.15),
+      },
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      border: TableBorder(
+        horizontalInside: BorderSide(
+          color: cs.outlineVariant.withValues(alpha: 0.35),
+          width: 0.5,
+        ),
+      ),
       children: [
-        Text(
-          '${_cellInt(r, countKey)}',
-          style: const TextStyle(fontWeight: FontWeight.w600),
+        TableRow(
+          decoration: BoxDecoration(color: cs.surfaceContainerHigh),
+          children: headerCells,
         ),
-        Text(
-          _fmtMoney(_cellNum(r, amountKey)),
-          style: TextStyle(fontSize: 11, color: cs.primary),
-        ),
+        ...dataTableRows,
       ],
     );
   }
@@ -580,9 +754,13 @@ class _ManagerDailyPaymentSummaryPageState
                             : LayoutBuilder(
                                 builder: (context, constraints) {
                                   final cs = Theme.of(context).colorScheme;
-                                  const compactBreakpoint = 560.0;
+                                  final compactBreakpoint =
+                                      widget.showPaymentMethodNominals
+                                          ? 720.0
+                                          : 560.0;
                                   final useCompact =
-                                      constraints.maxWidth < compactBreakpoint;
+                                      constraints.maxWidth <
+                                      compactBreakpoint;
 
                                   if (useCompact) {
                                     return ListView.separated(
@@ -606,105 +784,6 @@ class _ManagerDailyPaymentSummaryPageState
                                     );
                                   }
 
-                                  final minW = constraints.maxWidth;
-                                  final dataRows = <DataRow>[];
-                                  for (var i = 0; i < _rows.length; i++) {
-                                    final r = _rows[i];
-                                    final name =
-                                        (r['branch_name'] ?? '-').toString();
-                                    final err = r['error']?.toString();
-                                    final hasErr = err != null;
-                                    final totalAmount =
-                                        _cellNum(r, 'total_amount');
-                                    dataRows.add(
-                                      DataRow(
-                                        color:
-                                            WidgetStateProperty.resolveWith(
-                                                (s) {
-                                          if (s.contains(
-                                            WidgetState.hovered,
-                                          )) {
-                                            return cs.primary
-                                                .withValues(alpha: 0.06);
-                                          }
-                                          return i.isOdd
-                                              ? cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.45)
-                                              : null;
-                                        }),
-                                        cells: [
-                                          DataCell(
-                                            Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  name,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                                if (hasErr)
-                                                  Text(
-                                                    err,
-                                                    style: TextStyle(
-                                                      color: cs.error,
-                                                      fontSize: 11,
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'total_payments')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            _paymentMethodTableCell(
-                                              cs,
-                                              r,
-                                              hasErr,
-                                              'cash_payments',
-                                              'cash_amount',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            _paymentMethodTableCell(
-                                              cs,
-                                              r,
-                                              hasErr,
-                                              'transfer_payments',
-                                              'transfer_amount',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            _paymentMethodTableCell(
-                                              cs,
-                                              r,
-                                              hasErr,
-                                              'qris_payments',
-                                              'qris_amount',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : _fmtMoney(totalAmount),
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                                color: cs.primary,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  }
                                   return Padding(
                                     padding: const EdgeInsets.fromLTRB(
                                       12,
@@ -723,96 +802,13 @@ class _ManagerDailyPaymentSummaryPageState
                                               .withValues(alpha: 0.45),
                                         ),
                                       ),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: Scrollbar(
-                                        child: SingleChildScrollView(
-                                          physics:
-                                              const AlwaysScrollableScrollPhysics(),
-                                          scrollDirection: Axis.horizontal,
-                                          child: ConstrainedBox(
-                                            constraints: BoxConstraints(
-                                              minWidth: minW,
-                                            ),
-                                            child: SingleChildScrollView(
-                                              physics:
-                                                  const AlwaysScrollableScrollPhysics(),
-                                              child: DataTable(
-                                                headingRowColor:
-                                                    WidgetStateProperty.all(
-                                                  cs.surfaceContainerHigh,
-                                                ),
-                                                dataRowMinHeight: 44,
-                                                dataRowMaxHeight:
-                                                    widget.showPaymentMethodNominals
-                                                        ? 72
-                                                        : 64,
-                                                columnSpacing: 12,
-                                                horizontalMargin: 10,
-                                                showCheckboxColumn: false,
-                                                dividerThickness: 0.5,
-                                                columns: [
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Cabang',
-                                                    ),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Trx',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: widget
-                                                            .showPaymentMethodNominals
-                                                        ? dataTableColumnLabel(
-                                                            'Cash\n# / Rp',
-                                                            numeric: true,
-                                                          )
-                                                        : dataTableColumnLabel(
-                                                            'Cash',
-                                                            numeric: true,
-                                                          ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: widget
-                                                            .showPaymentMethodNominals
-                                                        ? dataTableColumnLabel(
-                                                            'TRF\n# / Rp',
-                                                            numeric: true,
-                                                          )
-                                                        : dataTableColumnLabel(
-                                                            'TRF',
-                                                            numeric: true,
-                                                          ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: widget
-                                                            .showPaymentMethodNominals
-                                                        ? dataTableColumnLabel(
-                                                            'QRIS\n# / Rp',
-                                                            numeric: true,
-                                                          )
-                                                        : dataTableColumnLabel(
-                                                            'QRIS',
-                                                            numeric: true,
-                                                          ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Total',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                ],
-                                                rows: dataRows,
-                                              ),
-                                            ),
-                                          ),
+                                      clipBehavior: Clip.none,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                          vertical: 4,
                                         ),
+                                        child: _buildFittedBranchTable(cs),
                                       ),
                                     ),
                                   );

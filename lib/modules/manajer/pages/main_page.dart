@@ -158,6 +158,13 @@ class ManajerMainPage extends ConsumerWidget {
                       iconColor: Colors.cyan,
                       onTap: () => pushAppRoute(context, AppRoutes.customers),
                     ),
+                    ModuleMenuEntry(
+                      icon: Icons.business_outlined,
+                      label: 'SUPPLIER',
+                      iconColor: Colors.brown,
+                      onTap: () =>
+                          pushAppRoute(context, AppRoutes.manajerSuppliers),
+                    ),
                   ],
                 ),
               ),

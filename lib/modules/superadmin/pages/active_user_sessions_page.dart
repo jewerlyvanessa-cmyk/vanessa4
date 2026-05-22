@@ -102,6 +102,8 @@ class _ActiveUserSessionsPageState extends ConsumerState<ActiveUserSessionsPage>
         return 'Tukang';
       case 'manajer':
         return 'Manajer';
+      case 'owner':
+        return 'Owner';
       case 'admin_workshop':
         return 'Admin Workshop';
       case 'stockist':

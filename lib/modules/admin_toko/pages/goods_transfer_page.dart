@@ -14,13 +14,16 @@ import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/transfer_batch_group.dart';
 
 /// [branchTypeScope] — `toko` | `warehouse` | `workshop` untuk transfer antar cabang sejenis.
+/// [destinationBranchTypeScope] — jika diisi (mis. `workshop` dari gudang), kirim lintas tipe cabang.
 class GoodsTransferPage extends ConsumerStatefulWidget {
   const GoodsTransferPage({
     super.key,
     this.branchTypeScope = 'toko',
+    this.destinationBranchTypeScope,
   });
 
   final String branchTypeScope;
+  final String? destinationBranchTypeScope;
 
   @override
   ConsumerState<GoodsTransferPage> createState() => _GoodsTransferPageState();
@@ -38,16 +41,39 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
     _loadData();
   }
 
-  Future<http.Response> _fetchBranchesList(String baseUrl) async {
-    final uri = Uri.parse('$baseUrl/branches').replace(
-      queryParameters: {'branch_type': widget.branchTypeScope},
-    );
-    return http.get(uri, headers: NetworkConfig.defaultHeaders);
-  }
+  String? get _destScope =>
+      widget.destinationBranchTypeScope?.trim().isNotEmpty == true
+          ? widget.destinationBranchTypeScope
+          : null;
 
-  List<Map<String, dynamic>> _parseBranchesList(dynamic branchesData) {
-    if (branchesData is! List) return [];
-    return filterBranchesForTypeScope(branchesData, widget.branchTypeScope);
+  bool get _isCrossTypeToWorkshop =>
+      normalizeBranchTypeKey(widget.branchTypeScope) == 'warehouse' &&
+      _destScope != null &&
+      normalizeBranchTypeKey(_destScope) == 'workshop';
+
+  Future<List<Map<String, dynamic>>> _loadBranchesList(String baseUrl) async {
+    final scopes = <String>{widget.branchTypeScope};
+    if (_destScope != null) scopes.add(_destScope!);
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final scope in scopes) {
+      final uri = Uri.parse('$baseUrl/branches').replace(
+        queryParameters: {'branch_type': scope},
+      );
+      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      if (resp.statusCode != 200) continue;
+      final data = jsonDecode(resp.body);
+      for (final b in filterBranchesForTypeScope(
+        data is List ? data : const [],
+        scope,
+      )) {
+        final id = b['branch_id']?.toString() ?? '';
+        if (id.isEmpty || seen.contains(id)) continue;
+        seen.add(id);
+        merged.add(b);
+      }
+    }
+    return merged;
   }
 
   Future<void> _loadData() async {
@@ -61,20 +87,22 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       final baseUrl = NetworkConfig.baseUrl;
 
       final scope = widget.branchTypeScope;
+      final transferParams = <String, String>{
+        'branch_id': userState.branch.toString(),
+        'branch_type_scope': scope,
+      };
+      if (_isCrossTypeToWorkshop) {
+        transferParams['transfer_lane'] = 'to_workshop';
+      }
       final transfersResponse = await http.get(
-        Uri.parse(
-          '$baseUrl/transfers?branch_id=${userState.branch}'
-          '&branch_type_scope=${Uri.encodeQueryComponent(scope)}',
-        ),
+        Uri.parse('$baseUrl/transfers').replace(queryParameters: transferParams),
         headers: NetworkConfig.defaultHeaders,
       );
 
-      final branchesResponse = await _fetchBranchesList(baseUrl);
+      final scopedBranches = await _loadBranchesList(baseUrl);
 
-      if (transfersResponse.statusCode == 200 && branchesResponse.statusCode == 200) {
+      if (transfersResponse.statusCode == 200) {
         final transfersData = jsonDecode(transfersResponse.body);
-        final branchesData = jsonDecode(branchesResponse.body);
-        final scopedBranches = _parseBranchesList(branchesData);
         final scopedIds = branchIdsForTypeScope(scopedBranches);
 
         var filteredTransfers = (transfersData is List)
@@ -82,6 +110,8 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
                 transfersData,
                 scope,
                 scopedIds,
+                destinationScope: _destScope,
+                scopedBranches: scopedBranches,
               )
             : <Map<String, dynamic>>[];
 
@@ -98,14 +128,9 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
           _isLoading = false;
         });
       } else {
-        final transfersHint = transfersResponse.statusCode == 200
-            ? 'OK'
-            : '${transfersResponse.statusCode} ${transfersResponse.body}';
-        final branchesHint = branchesResponse.statusCode == 200
-            ? 'OK'
-            : '${branchesResponse.statusCode} ${branchesResponse.body}';
         setState(() {
-          _error = 'Gagal memuat data.\ntransfers: $transfersHint\nbranches: $branchesHint';
+          _error =
+              'Gagal memuat transfer (${transfersResponse.statusCode})';
           _isLoading = false;
         });
       }
@@ -459,7 +484,12 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(goodsTransferPageTitle(widget.branchTypeScope)),
+        title: Text(
+          goodsTransferPageTitle(
+            widget.branchTypeScope,
+            destinationScope: _destScope,
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -646,6 +676,7 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
           branches: _branches,
           fromBranchId: fromBranchId,
           branchTypeScope: widget.branchTypeScope,
+          destinationBranchTypeScope: _destScope,
         ),
       ),
     );
