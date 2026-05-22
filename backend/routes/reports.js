@@ -14,7 +14,7 @@ function registerReportsRoutes(app, deps) {
 
   /**
    * Dashboard Owner — satu round-trip: ringkasan + order harian lintas cabang.
-   * Query: date (yyyy-MM-dd), branch_ids (opsional, comma-separated).
+   * Query: date (yyyy-MM-dd), branch_ids (opsional), scope=global (semua cabang aktif).
    */
   app.get('/reports/owner-dashboard', async (req, res) => {
     try {
@@ -26,8 +26,9 @@ function registerReportsRoutes(app, deps) {
       const dateRaw = String(req.query.date ?? '').trim();
       const dateYmd = DATE_RE.test(dateRaw) ? dateRaw : todayYmdWib();
       const branchIds = resolved.branchIds;
+      const salesBranchIds = resolved.salesBranchIds ?? [];
 
-      if (branchIds.length === 0) {
+      if (branchIds.length === 0 && salesBranchIds.length === 0) {
         return res.status(200).json({
           date: dateYmd,
           summary: {
@@ -38,10 +39,16 @@ function registerReportsRoutes(app, deps) {
             stock_ready_qty: 0,
             stock_ready_sku: 0,
             order_count: 0,
+            branch_count: 0,
+            stock_branch_count: 0,
           },
+          scope: resolved.scope ?? 'assigned',
           orders: [],
         });
       }
+
+      const orderBranchIds =
+        salesBranchIds.length > 0 ? salesBranchIds : branchIds;
 
       const branchMeta = await db.query(
         `
@@ -49,7 +56,7 @@ function registerReportsRoutes(app, deps) {
           FROM branches
           WHERE branch_id = ANY($1::bigint[])
         `,
-        [branchIds]
+        [orderBranchIds]
       );
       const nameById = new Map(
         branchMeta.rows.map((r) => [
@@ -61,7 +68,7 @@ function registerReportsRoutes(app, deps) {
       const [stockTotals, perBranch] = await Promise.all([
         fetchOwnerStockTotals(db, branchIds),
         Promise.all(
-          branchIds.map(async (branchId) => {
+          salesBranchIds.map(async (branchId) => {
             const pay = await fetchOwnerPaymentSummary(db, req, branchId, dateYmd);
             const ordersReq = {
               ...req,
@@ -125,7 +132,10 @@ function registerReportsRoutes(app, deps) {
           stock_ready_qty: stockTotals.ready_qty,
           stock_ready_sku: stockTotals.ready_sku,
           order_count: orderCount,
+          branch_count: salesBranchIds.length,
+          stock_branch_count: branchIds.length,
         },
+        scope: resolved.scope ?? 'assigned',
         orders: allOrders,
       });
     } catch (error) {

@@ -11,10 +11,12 @@ class BuybackReportTodayPage extends StatelessWidget {
     return const ManagerDailyPaymentSummaryPage(
       appBarTitle: 'Laporan Buyback',
       summarySubtitlePrefix:
-          'Transaksi buyback (pembayaran selesai) per cabang',
+          'Transaksi buyback (pembayaran selesai) per toko',
       summaryLeadingIcon: Icons.currency_exchange,
       orderTypeFilter: 'buyback',
       showPaymentMethodNominals: true,
+      branchTypeScope: 'toko',
+      globalScope: true,
     );
   }
 }

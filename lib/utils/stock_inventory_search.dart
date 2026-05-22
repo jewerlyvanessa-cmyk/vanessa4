@@ -68,3 +68,14 @@ bool stockInventoryItemMatchesQuery(dynamic item, String rawQuery) {
 
   return false;
 }
+
+int stockItemQuantity(dynamic it) {
+  if (it is! Map) return 0;
+  final m = Map<String, dynamic>.from(it);
+  final q = m['quantity'] ?? m['qty'];
+  if (q is int) return q;
+  if (q is num) return q.round();
+  return int.tryParse(q?.toString().trim() ?? '') ?? 0;
+}
+
+bool stockItemHasPositiveQuantity(dynamic it) => stockItemQuantity(it) > 0;

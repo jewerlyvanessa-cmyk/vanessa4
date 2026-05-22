@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/owner/data/owner_dashboard_service.dart';
 import 'package:vanessa3/modules/owner/widgets/owner_global_orders_section.dart';
-import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 
 /// Halaman penuh daftar order global (jika dibuka terpisah dari dashboard).
@@ -38,11 +37,10 @@ class _OwnerGlobalOrdersPageState extends ConsumerState<OwnerGlobalOrdersPage> {
       _error = '';
     });
     try {
-      final branches = ref.read(userStateProvider).branches;
       final data = await OwnerDashboardService.loadDashboard(
-        branches: branches,
         dateYmd: _dateYmd,
         forceRefresh: forceRefresh,
+        globalScope: true,
       );
       if (!mounted) return;
       setState(() {

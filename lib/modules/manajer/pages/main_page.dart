@@ -46,11 +46,10 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
     if (!mounted) return;
     setState(() => _loadingSummary = true);
     try {
-      final branches = ref.read(userStateProvider).branches;
       final snap = await OwnerDashboardService.loadSummary(
-        branches: branches,
         dateYmd: BusinessCalendar.todayYmd(),
         forceRefresh: forceRefresh,
+        globalScope: true,
       );
       if (!mounted) return;
       setState(() {
@@ -120,67 +119,46 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
   }
 
   Widget _summaryCards(BuildContext context) {
-    final branchCount = ref.read(userStateProvider).branches.length;
     final snap = _snapshot;
+    final tokoCount = snap.branchCount > 0 ? snap.branchCount : 0;
+    final stockBranchCount = snap.stockBranchCount > 0
+        ? snap.stockBranchCount
+        : tokoCount;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final cols = w >= 900 ? 3 : (w >= 520 ? 2 : 1);
-        const gap = 12.0;
-        final cardW = cols == 1 ? w : (w - gap * (cols - 1)) / cols;
-
-        final cards = [
-          GlobalSummaryCard(
-            icon: Icons.trending_up,
-            color: Colors.orange,
-            title: 'PENJUALAN GLOBAL',
-            primaryText: _moneyFmt.format(snap.salesAmount),
-            secondaryText:
-                '${snap.salesPaymentCount} pembayaran · $branchCount cabang',
-            loading: _loadingSummary,
-            onTap: () => pushAppRoute(context, AppRoutes.manajerSalesToday),
-          ),
-          GlobalSummaryCard(
-            icon: Icons.currency_exchange,
-            color: Colors.deepOrange,
-            title: 'BUYBACK GLOBAL',
-            primaryText: _moneyFmt.format(snap.buybackAmount),
-            secondaryText:
-                '${snap.buybackPaymentCount} transaksi · $branchCount cabang',
-            loading: _loadingSummary,
-            onTap: () => pushAppRoute(context, AppRoutes.manajerBuybackReport),
-          ),
-          GlobalSummaryCard(
-            icon: Icons.inventory,
-            color: Colors.teal,
-            title: 'STOK GLOBAL',
-            primaryText: '${snap.stockReadyQty} unit',
-            secondaryText: snap.stockReadySku > 0
-                ? '${snap.stockReadySku} SKU ready · $branchCount cabang'
-                : 'Status ready · $branchCount cabang',
-            loading: _loadingSummary,
-            onTap: () => pushAppRoute(context, AppRoutes.manajerGlobalStock),
-          ),
-        ];
-
-        if (cols == 1) {
-          return Column(
-            children: [
-              for (var i = 0; i < cards.length; i++) ...[
-                if (i > 0) const SizedBox(height: gap),
-                cards[i],
-              ],
-            ],
-          );
-        }
-
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: cards.map((c) => SizedBox(width: cardW, child: c)).toList(),
-        );
-      },
+    return GlobalSummaryCardsLayout(
+      cards: [
+        GlobalSummaryCard(
+          icon: Icons.trending_up,
+          color: Colors.orange,
+          title: 'PENJUALAN GLOBAL',
+          primaryText: _moneyFmt.format(snap.salesAmount),
+          secondaryText:
+              '${snap.salesPaymentCount} pembayaran · $tokoCount toko',
+          loading: _loadingSummary,
+          onTap: () => pushAppRoute(context, AppRoutes.manajerSalesToday),
+        ),
+        GlobalSummaryCard(
+          icon: Icons.currency_exchange,
+          color: Colors.deepOrange,
+          title: 'BUYBACK GLOBAL',
+          primaryText: _moneyFmt.format(snap.buybackAmount),
+          secondaryText:
+              '${snap.buybackPaymentCount} transaksi · $tokoCount toko',
+          loading: _loadingSummary,
+          onTap: () => pushAppRoute(context, AppRoutes.manajerBuybackReport),
+        ),
+        GlobalSummaryCard(
+          icon: Icons.inventory,
+          color: Colors.teal,
+          title: 'STOK GLOBAL',
+          primaryText: '${snap.stockReadyQty} unit',
+          secondaryText: snap.stockReadySku > 0
+              ? '${snap.stockReadySku} SKU ready · $stockBranchCount cabang'
+              : 'Status ready · $stockBranchCount cabang',
+          loading: _loadingSummary,
+          onTap: () => pushAppRoute(context, AppRoutes.manajerGlobalStock),
+        ),
+      ],
     );
   }
 
@@ -238,7 +216,6 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: () async {
@@ -248,16 +225,17 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
                     ref.read(managerDashboardProvider.notifier).refresh(),
                   ]);
                 },
-                child: ResponsiveLayout.roleMenuScroll(
-                  context: context,
-                  child: Padding(
-                    padding: ResponsiveLayout.roleMenuHorizontalPadding,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _summaryCards(context),
-                        const SizedBox(height: 20),
-                        ModuleMenuGrid(
+                child: SingleChildScrollView(
+                  physics: ResponsiveLayout.scrollPhysics,
+                  padding: ResponsiveLayout.roleMenuHorizontalPadding.copyWith(
+                    bottom: ResponsiveLayout.scrollEndGap(context),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _summaryCards(context),
+                      const SizedBox(height: 20),
+                      ModuleMenuGrid(
                           minCrossAxisCount: 4,
                           entries: [
                             ModuleMenuEntry(
@@ -325,10 +303,9 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
                               ),
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 24),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                   ),
                 ),
               ),

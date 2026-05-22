@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
@@ -20,6 +21,8 @@ class ManagerDailyPaymentSummaryPage extends ConsumerStatefulWidget {
     this.summaryLeadingIcon = Icons.payments,
     this.orderTypeFilter,
     this.showPaymentMethodNominals = false,
+    this.branchTypeScope,
+    this.globalScope = false,
   });
 
   final String appBarTitle;
@@ -29,6 +32,12 @@ class ManagerDailyPaymentSummaryPage extends ConsumerStatefulWidget {
 
   /// Jika true: tampilkan nominal Rp per metode (cash / transfer / QRIS). Dipakai laporan penjualan.
   final bool showPaymentMethodNominals;
+
+  /// Batasi cabang, mis. `toko` (selaras kartu penjualan/buyback global).
+  final String? branchTypeScope;
+
+  /// Semua cabang aktif (bukan hanya cabang di profil login); dipakai Owner/Manajer global.
+  final bool globalScope;
 
   @override
   ConsumerState<ManagerDailyPaymentSummaryPage> createState() =>
@@ -89,6 +98,80 @@ class _ManagerDailyPaymentSummaryPageState
     ).format(v);
   }
 
+  static bool _branchIsActive(Map<String, dynamic> b) {
+    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
+    return s.isEmpty || s == 'active';
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchBranchesFromApi(String? typeScope) async {
+    final qp = <String, String>{};
+    final scope = typeScope?.trim().toLowerCase();
+    if (scope != null && scope.isNotEmpty) {
+      qp['branch_type'] = scope;
+    }
+    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches').replace(
+      queryParameters: qp.isEmpty ? null : qp,
+    );
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      throw Exception('Gagal memuat cabang (${resp.statusCode})');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in decoded) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      if (!_branchIsActive(m)) continue;
+      if (scope != null &&
+          scope.isNotEmpty &&
+          !branchMatchesTypeScope(m['branch_type']?.toString(), scope)) {
+        continue;
+      }
+      out.add(m);
+    }
+    return out;
+  }
+
+  Future<List<Map<String, dynamic>>> _resolveBranches() async {
+    final typeScope = widget.branchTypeScope?.trim().toLowerCase();
+    final hasTypeScope = typeScope != null && typeScope.isNotEmpty;
+
+    if (widget.globalScope) {
+      return _fetchBranchesFromApi(hasTypeScope ? typeScope : null);
+    }
+
+    var branches = List<Map<String, dynamic>>.from(
+      ref.read(userStateProvider).branches,
+    );
+    if (!hasTypeScope) return branches;
+
+    final typed = await _fetchBranchesFromApi(typeScope);
+    final allowedIds = branchIdsForTypeScope(typed);
+    final byId = <String, Map<String, dynamic>>{
+      for (final t in typed)
+        if ((t['branch_id']?.toString().trim() ?? '').isNotEmpty)
+          t['branch_id']!.toString().trim(): t,
+    };
+    branches = branches
+        .where((b) {
+          final id = b['branch_id']?.toString().trim() ?? '';
+          return id.isNotEmpty && allowedIds.contains(id);
+        })
+        .map((b) {
+          final id = b['branch_id']?.toString().trim() ?? '';
+          final fromApi = byId[id];
+          if (fromApi == null) return b;
+          return {
+            ...b,
+            'name': fromApi['name'] ?? b['name'],
+            'branch_type': fromApi['branch_type'],
+          };
+        })
+        .toList();
+    return branches;
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -97,7 +180,7 @@ class _ManagerDailyPaymentSummaryPageState
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final branches = ref.read(userStateProvider).branches;
+      final branches = await _resolveBranches();
       final periodQp =
           managerReportPeriodQueryParams(_periodStart, _periodEnd);
 

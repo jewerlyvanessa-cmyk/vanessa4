@@ -115,6 +115,8 @@ class AppRoutes {
   static const String adminTokoEmployees = '/admin_toko/employees';
   static const String adminWorkshopEmployees = '/admin_workshop/employees';
   static const String adminWorkshopGoodsTransfer = '/admin_workshop/goods_transfer';
+  static const String adminWorkshopKeuangan = '/admin_workshop/keuangan';
+  static const String adminWarehouseKeuangan = '/admin_warehouse/keuangan';
   static const String kasirPaymentQueue = '/kasir/payment_queue';
   static const String kasirDailyPayments = '/kasir/daily_payments';
   static const String kasirKeuangan = '/kasir/keuangan';
@@ -189,6 +191,12 @@ class AppRoutes {
     adminWorkshopEmployees: (context) => const EmployeeManagementPage(),
     adminWorkshopGoodsTransfer: (context) =>
         const GoodsTransferPage(branchTypeScope: 'workshop'),
+    adminWorkshopKeuangan: (context) => const KeuanganTokoPage(
+          title: 'Pencatatan Keuangan',
+        ),
+    adminWarehouseKeuangan: (context) => const KeuanganTokoPage(
+          title: 'Pencatatan Keuangan',
+        ),
     kasirPaymentQueue: (context) => const PaymentQueuePage(),
     kasirDailyPayments: (context) => const DailyPaymentsPage(),
     kasirKeuangan: (context) => const KeuanganTokoPage(),

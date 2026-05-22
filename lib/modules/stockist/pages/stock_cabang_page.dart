@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
 import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
@@ -24,6 +24,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   bool _isLoading = true;
   String _error = '';
   List<dynamic> _items = [];
+  List<Map<String, dynamic>> _branches = const [];
   String? _selectedBranchId;
   String _search = '';
   String _selectedStatus = 'ready';
@@ -32,13 +33,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   @override
   void initState() {
     super.initState();
-    final userState = ref.read(userStateProvider);
-    _selectedBranchId = userState.branch.isNotEmpty
-        ? userState.branch
-        : userState.branches.isNotEmpty
-            ? userState.branches[0]['branch_id']?.toString()
-            : null;
-    _loadItems();
+    _initBranchesAndLoad();
   }
 
   @override
@@ -47,16 +42,85 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
     super.dispose();
   }
 
+  static bool _branchIsActive(Map<String, dynamic> b) {
+    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
+    return s.isEmpty || s == 'active';
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTokoWarehouseBranches() async {
+    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches');
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      throw Exception('Gagal memuat cabang (${resp.statusCode})');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in decoded) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      if (!_branchIsActive(m)) continue;
+      if (!branchTypeIsTokoOrWarehouse(m['branch_type']?.toString())) continue;
+      out.add(m);
+    }
+    out.sort((a, b) {
+      final aa = (a['alias'] ?? a['name'] ?? a['branch_id'] ?? '').toString();
+      final bb = (b['alias'] ?? b['name'] ?? b['branch_id'] ?? '').toString();
+      return aa.compareTo(bb);
+    });
+    return out;
+  }
+
+  String _branchDisplayLabel(Map<String, dynamic> b) {
+    final id = (b['branch_id'] ?? '').toString().trim();
+    final alias = (b['alias'] ?? '').toString().trim();
+    final name = (b['name'] ?? id).toString().trim();
+    final base = alias.isNotEmpty ? alias : name;
+    final typeLabel = branchTypeLabel(b['branch_type']?.toString());
+    return '$base · $typeLabel';
+  }
+
+  Future<void> _initBranchesAndLoad() async {
+    setState(() {
+      _isLoading = true;
+      _error = '';
+    });
+    try {
+      final branches = await _fetchTokoWarehouseBranches();
+      if (!mounted) return;
+      var selected = _selectedBranchId;
+      final ids = branches
+          .map((b) => b['branch_id']?.toString().trim())
+          .whereType<String>()
+          .where((s) => s.isNotEmpty)
+          .toSet();
+      if (selected == null || !ids.contains(selected)) {
+        selected = branches.isNotEmpty
+            ? branches.first['branch_id']?.toString()
+            : null;
+      }
+      setState(() {
+        _branches = branches;
+        _selectedBranchId = selected;
+      });
+      await _loadItems();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Error: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
   Map<String, String> _itemsQueryParams(String branchId) {
     final q = <String, String>{
       'branch_id': branchId,
-      'limit': '200',
+      'limit': '5000',
+      'in_stock_only': '1',
     };
     if (_selectedStatus != 'all') {
       q['status'] = _selectedStatus;
-      if (_selectedStatus == 'ready') {
-        q['in_stock_only'] = '1';
-      }
     }
     return q;
   }
@@ -67,7 +131,9 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
       setState(() {
         _items = [];
         _isLoading = false;
-        _error = 'Branch tidak tersedia';
+        _error = _branches.isEmpty
+            ? 'Tidak ada cabang toko/warehouse aktif'
+            : 'Cabang belum dipilih';
       });
       return;
     }
@@ -92,8 +158,9 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
       }
 
       final data = jsonDecode(resp.body);
+      final list = (data is List) ? List<dynamic>.from(data) : <dynamic>[];
       setState(() {
-        _items = (data is List) ? data : <dynamic>[];
+        _items = list.where(stockItemHasPositiveQuantity).toList();
         _isLoading = false;
       });
     } catch (e) {
@@ -105,7 +172,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   }
 
   List<dynamic> get _filteredItems {
-    var list = _items;
+    var list = _items.where(stockItemHasPositiveQuantity).toList();
     if (_selectedStatus != 'all') {
       list = list
           .where((it) =>
@@ -123,11 +190,21 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
         _jenisDetailFocus = null;
       });
 
-  Future<void> _printStockReport(String branchName) async {
+  String _selectedBranchName() {
+    final id = (_selectedBranchId ?? '').trim();
+    for (final b in _branches) {
+      if (b['branch_id']?.toString().trim() == id) {
+        return _branchDisplayLabel(b);
+      }
+    }
+    return id.isEmpty ? '-' : id;
+  }
+
+  Future<void> _printStockReport() async {
     final branchId = (_selectedBranchId ?? '').trim();
     await printStockInventoryReportPdf(
       context,
-      branchLabel: branchName.isEmpty ? branchId : branchName,
+      branchLabel: _selectedBranchName(),
       branchIdForLogo: branchId,
       selectedStatus: _selectedStatus,
       filteredItems: _filteredItems,
@@ -137,28 +214,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
 
   @override
   Widget build(BuildContext context) {
-    final userState = ref.watch(userStateProvider);
-    ref.listen(userStateProvider, (prev, next) {
-      final active = next.branch.toString().trim();
-      if (active.isEmpty || active == _selectedBranchId) return;
-      setState(() => _selectedBranchId = active);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadItems();
-      });
-    });
-    final branches = userState.branches;
-    String branchName = _selectedBranchId ?? '-';
-    if ((_selectedBranchId ?? '').isNotEmpty && branches.isNotEmpty) {
-      try {
-        final found = branches.firstWhere(
-          (b) => b['branch_id'].toString() == _selectedBranchId,
-        );
-        branchName = (found['name'] ?? _selectedBranchId).toString();
-      } catch (_) {
-        branchName = _selectedBranchId ?? '-';
-      }
-    }
-
+    final branchName = _selectedBranchName();
     final branchId = _selectedBranchId ?? '';
 
     return Scaffold(
@@ -169,12 +225,12 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
             tooltip: 'Cetak laporan stok',
             onPressed: _isLoading || _error.isNotEmpty
                 ? null
-                : () => _printStockReport(branchName),
+                : _printStockReport,
             icon: const Icon(Icons.print_outlined),
           ),
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _loadItems,
+            onPressed: _initBranchesAndLoad,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -194,7 +250,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
                         ),
                         const SizedBox(height: 12),
                         ElevatedButton(
-                          onPressed: _loadItems,
+                          onPressed: _initBranchesAndLoad,
                           child: const Text('Coba lagi'),
                         ),
                       ],
@@ -207,47 +263,39 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
                       padding: const EdgeInsets.all(12),
                       child: Column(
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: InputDecorator(
-                                  decoration: const InputDecoration(
-                                    labelText: 'Cabang',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
-                                  child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<String>(
-                                      value: _selectedBranchId,
-                                      isExpanded: true,
-                                      items: branches.map((b) {
-                                        final id = b['branch_id'].toString();
-                                        final name = (b['name'] ?? id).toString();
-                                        return DropdownMenuItem(
-                                          value: id,
-                                          child: Text(name),
-                                        );
-                                      }).toList(),
-                                      onChanged: (v) {
+                          InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Cabang (toko & warehouse)',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _branches.any((b) =>
+                                        b['branch_id']?.toString() ==
+                                        _selectedBranchId)
+                                    ? _selectedBranchId
+                                    : null,
+                                isExpanded: true,
+                                hint: const Text('Pilih cabang'),
+                                items: _branches.map((b) {
+                                  final id = b['branch_id'].toString();
+                                  return DropdownMenuItem(
+                                    value: id,
+                                    child: Text(_branchDisplayLabel(b)),
+                                  );
+                                }).toList(),
+                                onChanged: _branches.isEmpty
+                                    ? null
+                                    : (v) {
                                         setState(() {
                                           _selectedBranchId = v;
                                           _jenisDetailFocus = null;
                                         });
                                         _loadItems();
                                       },
-                                    ),
-                                  ),
-                                ),
                               ),
-                              const SizedBox(width: 12),
-                              Flexible(
-                                child: Text(
-                                  branchName,
-                                  style: const TextStyle(fontSize: 12),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                           const SizedBox(height: 10),
                           StockStatusFilterSummaryHeader(

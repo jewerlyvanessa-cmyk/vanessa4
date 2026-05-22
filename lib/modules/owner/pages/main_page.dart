@@ -60,11 +60,10 @@ class _OwnerMainPageState extends ConsumerState<OwnerMainPage> {
     });
 
     try {
-      final branches = ref.read(userStateProvider).branches;
       final data = await OwnerDashboardService.loadDashboard(
-        branches: branches,
         dateYmd: _dateYmd,
         forceRefresh: forceRefresh,
+        globalScope: true,
       );
       if (!mounted) return;
       setState(() {
@@ -93,74 +92,47 @@ class _OwnerMainPageState extends ConsumerState<OwnerMainPage> {
   }
 
   Widget _summaryCards(BuildContext context) {
-    final branchCount = ref.read(userStateProvider).branches.length;
     final snap = _snapshot;
+    final tokoCount = snap.branchCount > 0 ? snap.branchCount : 0;
+    final stockBranchCount = snap.stockBranchCount > 0
+        ? snap.stockBranchCount
+        : tokoCount;
     final cardLoading = _loading;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final cols = w >= 900 ? 3 : (w >= 520 ? 2 : 1);
-        const gap = 12.0;
-        final cardW = cols == 1
-            ? w
-            : (w - gap * (cols - 1)) / cols;
-
-        final cards = [
-          GlobalSummaryCard(
-            icon: Icons.trending_up,
-            color: Colors.orange,
-            title: 'PENJUALAN GLOBAL',
-            primaryText: _moneyFmt.format(snap.salesAmount),
-            secondaryText:
-                '${snap.salesPaymentCount} pembayaran · $branchCount cabang',
-            loading: cardLoading,
-            onTap: () =>
-                pushAppRoute(context, AppRoutes.ownerSalesGlobal),
-          ),
-          GlobalSummaryCard(
-            icon: Icons.currency_exchange,
-            color: Colors.deepOrange,
-            title: 'BUYBACK GLOBAL',
-            primaryText: _moneyFmt.format(snap.buybackAmount),
-            secondaryText:
-                '${snap.buybackPaymentCount} transaksi · $branchCount cabang',
-            loading: cardLoading,
-            onTap: () =>
-                pushAppRoute(context, AppRoutes.ownerBuybackGlobal),
-          ),
-          GlobalSummaryCard(
-            icon: Icons.inventory,
-            color: Colors.teal,
-            title: 'STOK GLOBAL',
-            primaryText: '${snap.stockReadyQty} unit',
-            secondaryText: snap.stockReadySku > 0
-                ? '${snap.stockReadySku} SKU ready · $branchCount cabang'
-                : 'Status ready · $branchCount cabang',
-            loading: cardLoading,
-            onTap: () => pushAppRoute(context, AppRoutes.ownerGlobalStock),
-          ),
-        ];
-
-        if (cols == 1) {
-          return Column(
-            children: [
-              for (var i = 0; i < cards.length; i++) ...[
-                if (i > 0) const SizedBox(height: gap),
-                cards[i],
-              ],
-            ],
-          );
-        }
-
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: cards
-              .map((c) => SizedBox(width: cardW, child: c))
-              .toList(),
-        );
-      },
+    return GlobalSummaryCardsLayout(
+      cards: [
+        GlobalSummaryCard(
+          icon: Icons.trending_up,
+          color: Colors.orange,
+          title: 'PENJUALAN GLOBAL',
+          primaryText: _moneyFmt.format(snap.salesAmount),
+          secondaryText:
+              '${snap.salesPaymentCount} pembayaran · $tokoCount toko',
+          loading: cardLoading,
+          onTap: () => pushAppRoute(context, AppRoutes.ownerSalesGlobal),
+        ),
+        GlobalSummaryCard(
+          icon: Icons.currency_exchange,
+          color: Colors.deepOrange,
+          title: 'BUYBACK GLOBAL',
+          primaryText: _moneyFmt.format(snap.buybackAmount),
+          secondaryText:
+              '${snap.buybackPaymentCount} transaksi · $tokoCount toko',
+          loading: cardLoading,
+          onTap: () => pushAppRoute(context, AppRoutes.ownerBuybackGlobal),
+        ),
+        GlobalSummaryCard(
+          icon: Icons.inventory,
+          color: Colors.teal,
+          title: 'STOK GLOBAL',
+          primaryText: '${snap.stockReadyQty} unit',
+          secondaryText: snap.stockReadySku > 0
+              ? '${snap.stockReadySku} SKU ready · $stockBranchCount cabang'
+              : 'Status ready · $stockBranchCount cabang',
+          loading: cardLoading,
+          onTap: () => pushAppRoute(context, AppRoutes.ownerGlobalStock),
+        ),
+      ],
     );
   }
 

@@ -5,13 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/manager_report_print.dart';
 
 /// Rekap stok per jenis (non-buyback) + buyback terpisah.
-/// Mode **Gabungan** = seluruh cabang; mode **Per cabang** = rincian per toko.
+/// Mode **Gabungan** = gabungan toko & warehouse aktif; **Per cabang** = per cabang.
 class StockReportPage extends ConsumerStatefulWidget {
   const StockReportPage({super.key});
 
@@ -59,6 +60,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
   List<Map<String, dynamic>> _rowsBuybackByJenis = const [];
   List<String> _branchLoadErrors = const [];
   List<_BranchJenisSnapshot> _perBranch = const [];
+  int _reportBranchCount = 0;
   int _viewMode = _kModeGabungan;
   bool _rangeMode = false;
   late DateTime _periodStart;
@@ -130,8 +132,9 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
   static Map<String, _JenisAggRow> _emptyAgg() => {};
 
   void _addItem(Map<String, dynamic> m, Map<String, _JenisAggRow> agg) {
-    final jenis = stockItemJenisLabel(m);
     final q = _parseQty(m);
+    if (q <= 0) return;
+    final jenis = stockItemJenisLabel(m);
     final cur = agg[jenis];
     if (cur == null) {
       agg[jenis] = _JenisAggRow(jenis: jenis, sku: 1, qty: q);
@@ -147,7 +150,48 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
   List<Map<String, dynamic>> _sortedAggRows(Map<String, _JenisAggRow> agg) {
     final keys = agg.keys.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return [for (final k in keys) agg[k]!.toMap()];
+    return [
+      for (final k in keys)
+        if (agg[k]!.qty > 0) agg[k]!.toMap(),
+    ];
+  }
+
+  static bool _branchIsActive(Map<String, dynamic> b) {
+    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
+    return s.isEmpty || s == 'active';
+  }
+
+  static bool _branchIncludedInReport(Map<String, dynamic> b) {
+    final t = b['branch_type']?.toString();
+    return branchTypeIsToko(t) || branchTypeIsWarehouse(t);
+  }
+
+  static String _branchAlias(Map<String, dynamic> b) {
+    final id = (b['branch_id'] ?? '').toString().trim();
+    final alias = (b['alias'] ?? '').toString().trim();
+    if (alias.isNotEmpty) return alias;
+    final name = (b['name'] ?? id).toString().trim();
+    return name.isNotEmpty ? name : id;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchReportBranches() async {
+    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches');
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      throw Exception('Gagal memuat cabang (${resp.statusCode})');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in decoded) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      if (!_branchIsActive(m)) continue;
+      if (!_branchIncludedInReport(m)) continue;
+      out.add(m);
+    }
+    out.sort((a, b) => _branchAlias(a).compareTo(_branchAlias(b)));
+    return out;
   }
 
   Future<void> _load() async {
@@ -159,7 +203,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final branches = ref.read(userStateProvider).branches;
+      final branches = await _fetchReportBranches();
 
       final aggStok = _emptyAgg();
       final aggBb = _emptyAgg();
@@ -168,9 +212,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
 
       for (final b in branches) {
         final branchId = b['branch_id']?.toString() ?? '';
-        final alias = (b['alias']?.toString().trim().isNotEmpty == true)
-            ? b['alias'].toString().trim()
-            : (b['name'] ?? branchId).toString();
+        final alias = _branchAlias(b);
         if (branchId.isEmpty) continue;
 
         final locStok = _emptyAgg();
@@ -248,6 +290,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
         _rowsBuybackByJenis = _sortedAggRows(aggBb);
         _branchLoadErrors = branchErrors;
         _perBranch = sortedBranches;
+        _reportBranchCount = branches.length;
         _loading = false;
       });
     } catch (e) {
@@ -634,7 +677,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
           cs: cs,
           title: 'Ringkasan per cabang',
           subtitle:
-              'Total SKU dan qty stok (non-buyback) serta buyback per toko.',
+              'Total SKU dan qty stok (non-buyback) serta buyback per toko & warehouse.',
           icon: Icons.table_rows,
         ),
         _branchSummaryTable(cs),
@@ -752,7 +795,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
           cs: cs,
           title: 'Rekap stok per jenis',
           subtitle:
-              'Semua item kecuali status buyback, digabung dari seluruh cabang.',
+              'Item qty > 0, non-buyback, digabung dari toko & warehouse aktif.',
           icon: Icons.pie_chart_outline,
         ),
         _jenisSection(
@@ -797,7 +840,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
     final qtyStok = _sumQty(_rowsStokByJenis);
     final skuBb = _sumSku(_rowsBuybackByJenis);
     final qtyBb = _sumQty(_rowsBuybackByJenis);
-    final nCabang = ref.watch(userStateProvider).branches.length;
+    final nCabang = _reportBranchCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -856,7 +899,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
                           leading: const Icon(Icons.inventory_2_outlined),
                           title: Text(dateLabel),
                           subtitle: Text(
-                            '$periodHint • $nCabang cabang • '
+                            '$periodHint • $nCabang toko & warehouse • '
                             'Stok: SKU $skuStok / Qty $qtyStok'
                             ' • Buyback: SKU $skuBb / Qty $qtyBb',
                           ),

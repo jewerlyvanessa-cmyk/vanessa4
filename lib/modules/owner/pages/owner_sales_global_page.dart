@@ -10,9 +10,11 @@ class OwnerSalesGlobalPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return const ManagerDailyPaymentSummaryPage(
       appBarTitle: 'Penjualan Global',
-      summarySubtitlePrefix: 'Pembayaran per cabang',
+      summarySubtitlePrefix: 'Pembayaran per toko',
       summaryLeadingIcon: Icons.payments,
       showPaymentMethodNominals: true,
+      branchTypeScope: 'toko',
+      globalScope: true,
     );
   }
 }

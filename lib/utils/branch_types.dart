@@ -32,6 +32,10 @@ bool branchTypeIsWorkshop(String? raw) =>
 bool branchTypeIsWarehouse(String? raw) =>
     normalizeBranchTypeKey(raw) == 'warehouse';
 
+/// Cabang etalase atau gudang — dipakai laporan/stok global manajer & owner.
+bool branchTypeIsTokoOrWarehouse(String? raw) =>
+    branchTypeIsToko(raw) || branchTypeIsWarehouse(raw);
+
 bool branchMatchesTypeScope(String? branchType, String scope) {
   switch (scope.trim().toLowerCase()) {
     case 'toko':

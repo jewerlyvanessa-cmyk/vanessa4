@@ -10,10 +10,12 @@ class OwnerBuybackGlobalPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return const ManagerDailyPaymentSummaryPage(
       appBarTitle: 'Buyback Global',
-      summarySubtitlePrefix: 'Transaksi buyback per cabang',
+      summarySubtitlePrefix: 'Transaksi buyback per toko',
       summaryLeadingIcon: Icons.currency_exchange,
       orderTypeFilter: 'buyback',
       showPaymentMethodNominals: true,
+      branchTypeScope: 'toko',
+      globalScope: true,
     );
   }
 }

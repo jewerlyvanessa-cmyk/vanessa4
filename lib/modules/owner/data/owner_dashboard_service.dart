@@ -18,6 +18,8 @@ class OwnerDashboardSnapshot {
     required this.stockReadyQty,
     required this.stockReadySku,
     required this.orderCount,
+    this.branchCount = 0,
+    this.stockBranchCount = 0,
   });
 
   final num salesAmount;
@@ -27,6 +29,10 @@ class OwnerDashboardSnapshot {
   final int stockReadyQty;
   final int stockReadySku;
   final int orderCount;
+  /// Jumlah cabang toko (penjualan / buyback).
+  final int branchCount;
+  /// Jumlah cabang untuk agregat stok (semua tipe cabang aktif).
+  final int stockBranchCount;
 
   static const empty = OwnerDashboardSnapshot(
     salesAmount: 0,
@@ -36,6 +42,8 @@ class OwnerDashboardSnapshot {
     stockReadyQty: 0,
     stockReadySku: 0,
     orderCount: 0,
+    branchCount: 0,
+    stockBranchCount: 0,
   );
 }
 
@@ -68,7 +76,8 @@ abstract final class OwnerDashboardService {
 
   static num _toNum(dynamic v) => num.tryParse(v?.toString() ?? '') ?? 0;
 
-  static String _cacheKey(String dateYmd, List<String> branchIds) {
+  static String _cacheKey(String dateYmd, List<String> branchIds, bool globalScope) {
+    if (globalScope) return '$dateYmd|global';
     final sorted = [...branchIds]..sort();
     return '$dateYmd|${sorted.join(',')}';
   }
@@ -77,17 +86,20 @@ abstract final class OwnerDashboardService {
 
   /// Muat dashboard — prefer satu API `/reports/owner-dashboard`, fallback paralel.
   static Future<OwnerDashboardData> loadDashboard({
-    required List<Map<String, dynamic>> branches,
+    List<Map<String, dynamic>> branches = const [],
     required String dateYmd,
     bool forceRefresh = false,
+    bool globalScope = false,
   }) async {
     final branchIds = <String>[];
-    for (final b in branches) {
-      final id = b['branch_id']?.toString().trim() ?? '';
-      if (id.isNotEmpty) branchIds.add(id);
+    if (!globalScope) {
+      for (final b in branches) {
+        final id = b['branch_id']?.toString().trim() ?? '';
+        if (id.isNotEmpty) branchIds.add(id);
+      }
     }
 
-    final key = _cacheKey(dateYmd, branchIds);
+    final key = _cacheKey(dateYmd, branchIds, globalScope);
     if (!forceRefresh &&
         _cache != null &&
         _cache!.key == key &&
@@ -100,8 +112,10 @@ abstract final class OwnerDashboardService {
       data = await _loadFromOwnerDashboardApi(
         branchIds: branchIds,
         dateYmd: dateYmd,
+        globalScope: globalScope,
       );
     } catch (_) {
+      if (globalScope) rethrow;
       data = await _loadLegacyParallel(
         branches: branches,
         dateYmd: dateYmd,
@@ -115,9 +129,12 @@ abstract final class OwnerDashboardService {
   static Future<OwnerDashboardData> _loadFromOwnerDashboardApi({
     required List<String> branchIds,
     required String dateYmd,
+    bool globalScope = false,
   }) async {
     final query = <String, String>{'date': dateYmd};
-    if (branchIds.isNotEmpty) {
+    if (globalScope) {
+      query['scope'] = 'global';
+    } else if (branchIds.isNotEmpty) {
       query['branch_ids'] = branchIds.join(',');
     }
 
@@ -143,6 +160,10 @@ abstract final class OwnerDashboardService {
             stockReadyQty: _toNum(summary['stock_ready_qty']).toInt(),
             stockReadySku: _toNum(summary['stock_ready_sku']).toInt(),
             orderCount: _toNum(summary['order_count']).toInt(),
+            branchCount: _toNum(summary['branch_count']).toInt(),
+            stockBranchCount: _toNum(
+              summary['stock_branch_count'] ?? summary['branch_count'],
+            ).toInt(),
           )
         : OwnerDashboardSnapshot.empty;
 
@@ -199,6 +220,8 @@ abstract final class OwnerDashboardService {
         stockReadyQty: snap.stockReadyQty + p.snapshot.stockReadyQty,
         stockReadySku: snap.stockReadySku + p.snapshot.stockReadySku,
         orderCount: snap.orderCount + p.snapshot.orderCount,
+        branchCount: branchIds.length,
+        stockBranchCount: branchIds.length,
       );
       orders.addAll(p.orders);
     }
@@ -330,16 +353,16 @@ abstract final class OwnerDashboardService {
     return (qty: stockListSumQuantity(visible), sku: visible.length);
   }
 
-  /// Ringkasan kartu saja (tanpa muat ulang daftar order jika cache ada).
+  /// Ringkasan kartu — default lintas semua cabang aktif (`scope=global`).
   static Future<OwnerDashboardSnapshot> loadSummary({
-    required List<Map<String, dynamic>> branches,
     String? dateYmd,
     bool forceRefresh = false,
+    bool globalScope = true,
   }) async {
     final d = await loadDashboard(
-      branches: branches,
       dateYmd: dateYmd ?? BusinessCalendar.todayYmd(),
       forceRefresh: forceRefresh,
+      globalScope: globalScope,
     );
     return d.snapshot;
   }

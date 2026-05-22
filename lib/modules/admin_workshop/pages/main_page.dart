@@ -262,6 +262,15 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
                       ),
                     ),
                     ModuleMenuEntry(
+                      icon: Icons.account_balance_wallet_outlined,
+                      label: 'PENCATATAN KEUANGAN',
+                      iconColor: Colors.indigo,
+                      onTap: () => pushAppRoute(
+                        context,
+                        AppRoutes.adminWorkshopKeuangan,
+                      ),
+                    ),
+                    ModuleMenuEntry(
                       icon: DashboardMenuIcons.kelolaPengguna,
                       label: 'KARYAWAN',
                       iconColor: Colors.purple,

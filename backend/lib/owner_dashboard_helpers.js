@@ -35,6 +35,50 @@ function parseBranchIdsParam(raw) {
 }
 
 /**
+ * Cabang aktif; branchType opsional (mis. 'toko' untuk penjualan/buyback).
+ */
+async function fetchAllActiveBranchIds(db, branchType = null) {
+  const params = [];
+  let typeSql = '';
+  if (branchType != null && String(branchType).trim() !== '') {
+    params.push(String(branchType).trim().toLowerCase());
+    typeSql = ` AND LOWER(COALESCE(NULLIF(TRIM(branch_type), ''), 'toko')) = $${params.length}`;
+  }
+  const r = await db.query(
+    `
+      SELECT branch_id
+      FROM branches
+      WHERE COALESCE(NULLIF(TRIM(status), ''), 'active') = 'active'
+        ${typeSql}
+      ORDER BY branch_id
+    `,
+    params
+  );
+  return r.rows
+    .map((row) => parseInt(String(row.branch_id), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/** Cabang aktif yang boleh masuk agregat penjualan / buyback global. */
+async function fetchTokoBranchIdsForPayments(db, branchIds) {
+  if (!branchIds.length) return [];
+  const r = await db.query(
+    `
+      SELECT branch_id
+      FROM branches
+      WHERE branch_id = ANY($1::bigint[])
+        AND COALESCE(NULLIF(TRIM(status), ''), 'active') = 'active'
+        AND LOWER(COALESCE(NULLIF(TRIM(branch_type), ''), 'toko')) = 'toko'
+      ORDER BY branch_id
+    `,
+    [branchIds]
+  );
+  return r.rows
+    .map((row) => parseInt(String(row.branch_id), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/**
  * @param {import('express').Request} req
  * @param {import('pg').Pool | { query: Function }} db
  */
@@ -46,6 +90,18 @@ async function resolveOwnerDashboardBranchIds(req, db) {
     return { ok: false, status: 403, body: { error: 'Forbidden' } };
   }
 
+  const scopeRaw = String(req.query.scope ?? '').trim().toLowerCase();
+  const allBranchesFlag = ['1', 'true', 'yes'].includes(
+    String(req.query.all_branches ?? '')
+      .trim()
+      .toLowerCase()
+  );
+  if (scopeRaw === 'global' || allBranchesFlag) {
+    const branchIds = await fetchAllActiveBranchIds(db);
+    const salesBranchIds = await fetchAllActiveBranchIds(db, 'toko');
+    return { ok: true, branchIds, salesBranchIds, scope: 'global' };
+  }
+
   const fromQuery = parseBranchIdsParam(req.query.branch_ids);
   if (fromQuery.length > 0) {
     const allowed = [];
@@ -53,7 +109,9 @@ async function resolveOwnerDashboardBranchIds(req, db) {
       const scope = await assertUserCanAccessBranchForOrders(req, bid);
       if (scope.ok) allowed.push(scope.branchId);
     }
-    return { ok: true, branchIds: [...new Set(allowed)] };
+    const unique = [...new Set(allowed)];
+    const salesBranchIds = await fetchTokoBranchIdsForPayments(db, unique);
+    return { ok: true, branchIds: unique, salesBranchIds, scope: 'assigned' };
   }
 
   const uid = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
@@ -74,7 +132,8 @@ async function resolveOwnerDashboardBranchIds(req, db) {
     .map((row) => parseInt(String(row.branch_id), 10))
     .filter((n) => Number.isFinite(n) && n > 0);
 
-  return { ok: true, branchIds };
+  const salesBranchIds = await fetchTokoBranchIdsForPayments(db, branchIds);
+  return { ok: true, branchIds, salesBranchIds, scope: 'assigned' };
 }
 
 /**
@@ -171,6 +230,8 @@ module.exports = {
   DATE_RE,
   todayYmdWib,
   parseBranchIdsParam,
+  fetchAllActiveBranchIds,
+  fetchTokoBranchIdsForPayments,
   resolveOwnerDashboardBranchIds,
   fetchOwnerStockTotals,
   fetchOwnerPaymentSummary,

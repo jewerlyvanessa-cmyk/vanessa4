@@ -78,16 +78,16 @@ class _DailyOrdersPaymentsPageState
       var ordersData = bundle.orders;
       ordersData = filterOrdersForCsIfNeeded(userState, ordersData);
 
-      setState(() {
+        setState(() {
         _dailyData = {'orders': ordersData, 'payments': bundle.payments};
         _orderFilter = AdminOrderFilter.all;
-        _isLoading = false;
-      });
+          _isLoading = false;
+        });
     } on DailyOrdersPaymentsLoadException catch (e) {
-      setState(() {
+        setState(() {
         _error = e.message;
-        _isLoading = false;
-      });
+          _isLoading = false;
+        });
     } catch (error) {
       setState(() {
         _error = 'Error: $error';
@@ -406,10 +406,10 @@ class _DailyOrdersPaymentsPageState
       },
       onPrintSuratJalan: () {
         final sudah = dedupeOrdersById(_ordersRaw)
-            .where(
-              (o) =>
+        .where(
+          (o) =>
                   isServiceCustomOrder(o) &&
-                  (o['status'] ?? '').toString().trim().toLowerCase() ==
+              (o['status'] ?? '').toString().trim().toLowerCase() ==
                       'awaiting_warehouse',
             )
             .toList();
@@ -435,8 +435,8 @@ class _DailyOrdersPaymentsPageState
       filteredTableRaw: _rawOrdersForTable(ordersRaw),
       emptyHint: _emptyOrdersHint(),
       emptyFilterMessage: widget.serviceCustomMode
-          ? 'Tidak ada order Service atau Custom pada tanggal ini'
-          : 'Tidak ada order untuk filter ini',
+                ? 'Tidak ada order Service atau Custom pada tanggal ini'
+                : 'Tidak ada order untuk filter ini',
       onOrderTap: (o) => _openOrderDetail(context, o),
       statusCellBuilder: _workshopStatusCell,
       filterDeduped: _filterDeduped,

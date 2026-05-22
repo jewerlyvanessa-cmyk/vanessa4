@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
@@ -55,6 +56,45 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
     );
   }
 
+  static bool _branchIsActive(Map<String, dynamic> b) {
+    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
+    return s.isEmpty || s == 'active';
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTokoBranches() async {
+    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches').replace(
+      queryParameters: const {'branch_type': 'toko'},
+    );
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      throw Exception('Gagal memuat cabang toko (${resp.statusCode})');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in decoded) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      if (!_branchIsActive(m)) continue;
+      if (!branchTypeIsToko(m['branch_type']?.toString())) continue;
+      out.add(m);
+    }
+    out.sort((a, b) {
+      final aa = (a['alias'] ?? a['name'] ?? a['branch_id'] ?? '').toString();
+      final bb = (b['alias'] ?? b['name'] ?? b['branch_id'] ?? '').toString();
+      return aa.compareTo(bb);
+    });
+    return out;
+  }
+
+  static String _branchAlias(Map<String, dynamic> b) {
+    final id = (b['branch_id'] ?? '').toString().trim();
+    final alias = (b['alias'] ?? '').toString().trim();
+    if (alias.isNotEmpty) return alias;
+    final name = (b['name'] ?? id).toString().trim();
+    return name.isNotEmpty ? name : id;
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -63,15 +103,13 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final branches = ref.read(userStateProvider).branches;
+      final branches = await _fetchTokoBranches();
       final periodQp =
           managerReportPeriodQueryParams(_periodStart, _periodEnd);
 
       final futures = branches.map((b) async {
         final branchId = b['branch_id']?.toString() ?? '';
-        final alias = (b['alias']?.toString().trim().isNotEmpty == true)
-            ? b['alias'].toString().trim()
-            : (b['name'] ?? branchId).toString();
+        final alias = _branchAlias(b);
         if (branchId.isEmpty) return <String, dynamic>{};
 
         final uri = Uri.parse('$baseUrl/api/dashboard/order-today').replace(
@@ -329,6 +367,149 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
     );
   }
 
+  static const _numColWidth = 38.0;
+  static const _tableHPad = 24.0;
+
+  Widget _tableHeaderCell(String label, {bool numeric = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Text(
+        label,
+        textAlign: numeric ? TextAlign.center : TextAlign.start,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          height: 1.15,
+        ),
+      ),
+    );
+  }
+
+  Widget _tableValueCell(
+    String text, {
+    bool numeric = false,
+    bool error = false,
+    ColorScheme? cs,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Text(
+        text,
+        textAlign: numeric ? TextAlign.center : TextAlign.start,
+        maxLines: numeric ? 1 : 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: numeric ? 13 : AppTypography.tableCell,
+          fontWeight: numeric ? FontWeight.w600 : FontWeight.w500,
+          color: error ? cs?.error : null,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFitWidthTable(ColorScheme cs, double maxWidth) {
+    final aliasWidth = (maxWidth - _tableHPad - 6 * _numColWidth).clamp(72.0, maxWidth);
+
+    TableRow headerRow() {
+      return TableRow(
+        decoration: BoxDecoration(color: cs.surfaceContainerHigh),
+        children: [
+          _tableHeaderCell('Alias'),
+          _tableHeaderCell('Toko', numeric: true),
+          _tableHeaderCell('Onl', numeric: true),
+          _tableHeaderCell('Jual', numeric: true),
+          _tableHeaderCell('BB', numeric: true),
+          _tableHeaderCell('Svc', numeric: true),
+          _tableHeaderCell('Cst', numeric: true),
+        ],
+      );
+    }
+
+    final dataTableRows = <TableRow>[];
+    for (var i = 0; i < _rows.length; i++) {
+      final r = _rows[i];
+      final alias = (r['branch_alias'] ?? '-').toString();
+      final err = r['error']?.toString();
+      final hasErr = err != null;
+      dataTableRows.add(
+        TableRow(
+          decoration: BoxDecoration(
+            color: i.isOdd
+                ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
+                : null,
+          ),
+          children: [
+            _tableValueCell(
+              alias,
+              cs: cs,
+              error: hasErr,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'mode_toko')}',
+              numeric: true,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'mode_online')}',
+              numeric: true,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'jual')}',
+              numeric: true,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'buyback')}',
+              numeric: true,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'service')}',
+              numeric: true,
+            ),
+            _tableValueCell(
+              hasErr ? '—' : '${_cellInt(r, 'custom')}',
+              numeric: true,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Material(
+      elevation: 0,
+      color: cs.surfaceContainerLow.withValues(alpha: 0.65),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: cs.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Table(
+          columnWidths: {
+            0: FixedColumnWidth(aliasWidth),
+            1: const FixedColumnWidth(_numColWidth),
+            2: const FixedColumnWidth(_numColWidth),
+            3: const FixedColumnWidth(_numColWidth),
+            4: const FixedColumnWidth(_numColWidth),
+            5: const FixedColumnWidth(_numColWidth),
+            6: const FixedColumnWidth(_numColWidth),
+          },
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          border: TableBorder(
+            horizontalInside: BorderSide(
+              color: cs.outlineVariant.withValues(alpha: 0.35),
+              width: 0.5,
+            ),
+          ),
+          children: [headerRow(), ...dataTableRows],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dateLabel =
@@ -395,7 +576,7 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                           leading: const Icon(Icons.analytics_outlined),
                           title: Text(dateLabel),
                           subtitle: Text(
-                            'Order per cabang (mode Toko/Online + jenis) • $periodHint',
+                            'Order per toko aktif (mode Toko/Online + jenis) • $periodHint',
                           ),
                           trailing: Chip(label: Text('${_rows.length}')),
                         ),
@@ -442,192 +623,21 @@ class _BranchPerformancePageState extends ConsumerState<BranchPerformancePage> {
                                     );
                                   }
 
-                                  final minW = constraints.maxWidth;
-                                  final dataRows = <DataRow>[];
-                                  for (var i = 0; i < _rows.length; i++) {
-                                    final r = _rows[i];
-                                    final alias =
-                                        (r['branch_alias'] ?? '-').toString();
-                                    final err = r['error']?.toString();
-                                    final hasErr = err != null;
-                                    dataRows.add(
-                                      DataRow(
-                                        color:
-                                            WidgetStateProperty.resolveWith(
-                                                (s) {
-                                          if (s.contains(
-                                            WidgetState.hovered,
-                                          )) {
-                                            return cs.primary
-                                                .withValues(alpha: 0.06);
-                                          }
-                                          return i.isOdd
-                                              ? cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.45)
-                                              : null;
-                                        }),
-                                        cells: [
-                                          DataCell(
-                                            Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  alias,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                                if (hasErr)
-                                                  Text(
-                                                    err,
-                                                    style: TextStyle(
-                                                      color: cs.error,
-                                                      fontSize: 11,
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'mode_toko')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'mode_online')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'jual')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'buyback')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'service')}',
-                                            ),
-                                          ),
-                                          DataCell(
-                                            Text(
-                                              hasErr
-                                                  ? '—'
-                                                  : '${_cellInt(r, 'custom')}',
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  }
-                                  return Padding(
+                                  return ListView(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
                                     padding: const EdgeInsets.fromLTRB(
                                       12,
                                       0,
                                       12,
                                       12,
                                     ),
-                                    child: Material(
-                                      elevation: 0,
-                                      color: cs.surfaceContainerLow
-                                          .withValues(alpha: 0.65),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                        side: BorderSide(
-                                          color: cs.outlineVariant
-                                              .withValues(alpha: 0.45),
-                                        ),
+                                    children: [
+                                      _buildFitWidthTable(
+                                        cs,
+                                        constraints.maxWidth,
                                       ),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: Scrollbar(
-                                        child: SingleChildScrollView(
-                                          physics:
-                                              const AlwaysScrollableScrollPhysics(),
-                                          scrollDirection: Axis.horizontal,
-                                          child: ConstrainedBox(
-                                            constraints: BoxConstraints(
-                                              minWidth: minW,
-                                            ),
-                                            child: SingleChildScrollView(
-                                              physics:
-                                                  const AlwaysScrollableScrollPhysics(),
-                                              child: DataTable(
-                                                headingRowColor:
-                                                    WidgetStateProperty.all(
-                                                  cs.surfaceContainerHigh,
-                                                ),
-                                                dataRowMinHeight: 44,
-                                                dataRowMaxHeight: 64,
-                                                columnSpacing: 12,
-                                                horizontalMargin: 10,
-                                                showCheckboxColumn: false,
-                                                dividerThickness: 0.5,
-                                                columns: [
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Alias',
-                                                    ),
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Mode toko',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Mode online',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Jual',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Buyback',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Service',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                  DataColumn(
-                                                    label: dataTableColumnLabel(
-                                                      'Custom',
-                                                    ),
-                                                    numeric: true,
-                                                  ),
-                                                ],
-                                                rows: dataRows,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                    ],
                                   );
                                 },
                               ),

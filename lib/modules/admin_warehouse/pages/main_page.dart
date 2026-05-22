@@ -233,6 +233,15 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                     ),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'PENCATATAN KEUANGAN',
+                    iconColor: Colors.indigo,
+                    onTap: () => pushAppRoute(
+                      context,
+                      AppRoutes.adminWarehouseKeuangan,
+                    ),
+                  ),
+                  ModuleMenuEntry(
                     icon: Icons.business_outlined,
                     label: 'SUPPLIER',
                     iconColor: Colors.brown,

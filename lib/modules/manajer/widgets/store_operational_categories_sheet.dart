@@ -5,7 +5,92 @@ import 'package:flutter/material.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
-/// Panel tambah / edit kategori pemasukan & pengeluaran (manajer).
+/// Dialog nama kategori — controller hidup/dimatikan di dalam route dialog.
+class _CategoryNameDialog extends StatefulWidget {
+  const _CategoryNameDialog({
+    required this.title,
+    this.initialName,
+  });
+
+  final String title;
+  final String? initialName;
+
+  @override
+  State<_CategoryNameDialog> createState() => _CategoryNameDialogState();
+}
+
+class _CategoryNameDialogState extends State<_CategoryNameDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+
+  bool get _isEdit =>
+      (widget.initialName ?? '').trim().isNotEmpty ||
+      widget.title.toLowerCase().contains('edit');
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  void _close() {
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(context, _nameCtrl.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                textCapitalization: TextCapitalization.words,
+                autofocus: !_isEdit,
+                maxLength: 120,
+                decoration: const InputDecoration(
+                  labelText: 'Nama kategori *',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Wajib diisi' : null,
+                onFieldSubmitted: (_) => _save(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _close,
+          child: const Text('Batal'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Simpan'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Panel tambah / edit / hapus kategori pemasukan & pengeluaran (kasir & manajer).
 class StoreOperationalCategoriesSheet extends StatefulWidget {
   const StoreOperationalCategoriesSheet({super.key});
 
@@ -37,13 +122,22 @@ class _StoreOperationalCategoriesSheetState
     super.dispose();
   }
 
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final res = await ApiClient.get('/store-operational/categories');
+      if (!mounted) return;
       if (res.statusCode != 200) {
         setState(() {
           _loading = false;
@@ -61,6 +155,7 @@ class _StoreOperationalCategoriesSheetState
               .map((e) => Map<String, dynamic>.from(e))
               .toList()
           : <Map<String, dynamic>>[];
+      if (!mounted) return;
       setState(() {
         _expense = all
             .where((e) => e['entry_kind']?.toString() != 'income')
@@ -71,6 +166,7 @@ class _StoreOperationalCategoriesSheetState
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = '$e';
@@ -104,47 +200,35 @@ class _StoreOperationalCategoriesSheetState
     return 'Gagal ($status)';
   }
 
+  Future<String?> _promptCategoryName({
+    required String title,
+    String? initialName,
+  }) {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (_) => _CategoryNameDialog(
+        title: title,
+        initialName: initialName,
+      ),
+    );
+  }
+
   Future<void> _showNameDialog({
     required String title,
     required String entryKind,
     String? initialName,
     String? categoryId,
   }) async {
-    final controller = TextEditingController(text: initialName ?? '');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 120,
-          decoration: const InputDecoration(
-            labelText: 'Nama kategori',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Batal'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Simpan'),
-          ),
-        ],
-      ),
+    final name = await _promptCategoryName(
+      title: title,
+      initialName: initialName,
     );
-    if (saved != true || !mounted) return;
-
-    final name = controller.text.trim();
-    controller.dispose();
+    if (!mounted) return;
+    if (name == null) return;
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nama kategori wajib diisi.')),
-      );
+      _snack('Nama kategori wajib diisi.');
       return;
     }
 
@@ -162,25 +246,70 @@ class _StoreOperationalCategoriesSheetState
             );
       if (!mounted) return;
       if (res.statusCode == 200 || res.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              categoryId != null ? 'Kategori diperbarui.' : 'Kategori ditambah.',
-            ),
-          ),
-        );
         await _load();
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _snack(
+            categoryId != null ? 'Kategori diperbarui.' : 'Kategori ditambah.',
+          );
+        });
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_messageFromBody(res.body, res.statusCode))),
-      );
+      _snack(_messageFromBody(res.body, res.statusCode));
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+      if (mounted) _snack('Error: $e');
+    }
+  }
+
+  Future<void> _confirmDelete({
+    required String categoryId,
+    required String name,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hapus kategori?'),
+        content: Text(
+          'Kategori "$name" akan dihapus dari daftar.\n\n'
+          'Pencatatan lama tetap memakai nama kategori yang sudah tersimpan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      final res = await ApiClient.delete(
+        '/store-operational/categories/$categoryId',
+      );
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        await _load();
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _snack('Kategori dihapus.');
+        });
+        return;
       }
+      _snack(_messageFromBody(res.body, res.statusCode));
+    } catch (e) {
+      if (mounted) _snack('Error: $e');
     }
   }
 
@@ -219,24 +348,40 @@ class _StoreOperationalCategoriesSheetState
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
       itemCount: items.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, i) {
+      itemBuilder: (listContext, i) {
         final row = items[i];
         final name = row['name']?.toString() ?? '—';
         final id = row['category_id']?.toString();
         return ListTile(
           title: Text(name),
-          trailing: IconButton(
-            icon: const Icon(Icons.edit_outlined),
-            tooltip: 'Edit',
-            onPressed: id == null
-                ? null
-                : () => _showNameDialog(
-                      title: 'Edit kategori',
-                      entryKind: entryKind,
-                      initialName: name,
-                      categoryId: id,
+          trailing: id == null
+              ? null
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: 'Edit',
+                      onPressed: () => _showNameDialog(
+                        title: 'Edit kategori',
+                        entryKind: entryKind,
+                        initialName: name,
+                        categoryId: id,
+                      ),
                     ),
-          ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(listContext).colorScheme.error,
+                      ),
+                      tooltip: 'Hapus',
+                      onPressed: () => _confirmDelete(
+                        categoryId: id,
+                        name: name,
+                      ),
+                    ),
+                  ],
+                ),
         );
       },
     );
@@ -244,15 +389,16 @@ class _StoreOperationalCategoriesSheetState
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final bottom = MediaQuery.paddingOf(context).bottom;
+    final sheetContext = context;
+    final cs = Theme.of(sheetContext).colorScheme;
+    final bottom = MediaQuery.paddingOf(sheetContext).bottom;
 
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.88,
       minChildSize: 0.5,
       maxChildSize: 0.95,
-      builder: (context, scrollController) {
+      builder: (_, scrollController) {
         return Material(
           color: cs.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
@@ -274,14 +420,17 @@ class _StoreOperationalCategoriesSheetState
                     Expanded(
                       child: Text(
                         'Kelola Kategori',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        style: Theme.of(sheetContext)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(
                               fontWeight: FontWeight.w800,
                               fontSize: AppTypography.section,
                             ),
                       ),
                     ),
                     IconButton(
-                      onPressed: () => Navigator.pop(context, true),
+                      onPressed: () => Navigator.pop(sheetContext, true),
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -312,7 +461,7 @@ class _StoreOperationalCategoriesSheetState
                           final kind =
                               _tabController.index == 1 ? 'income' : 'expense';
                           _showNameDialog(
-                            title: 'Tambah kategori',
+                            title: 'Tambah kategori baru',
                             entryKind: kind,
                           );
                         },

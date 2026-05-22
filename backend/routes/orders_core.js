@@ -679,10 +679,19 @@ function registerOrdersCoreRoutes(app, deps) {
   
   function assertStoreOperationalCategoryManager(req, res) {
     const role = (req.user?.role ?? '').toString().trim().toLowerCase();
-    if (role === 'manajer' || role === 'superadmin' || role === 'owner') {
+    if (
+      role === 'kasir' ||
+      role === 'manajer' ||
+      role === 'admin_warehouse' ||
+      role === 'admin_workshop' ||
+      role === 'superadmin' ||
+      role === 'owner'
+    ) {
       return true;
     }
-    res.status(403).json({ error: 'Hanya manajer dapat mengelola kategori' });
+    res.status(403).json({
+      error: 'Tidak punya akses mengelola kategori',
+    });
     return false;
   }
 
@@ -823,6 +832,48 @@ function registerOrdersCoreRoutes(app, deps) {
           error: 'Kategori dengan nama ini sudah ada untuk jenis yang sama',
         });
       }
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Tabel kategori belum tersedia',
+          details:
+            'Jalankan backend/migrations/20260521_store_operational_categories.sql lalu restart server.',
+        });
+      }
+      return res.status(500).json({
+        error: 'Internal server error',
+        detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+      });
+    }
+  });
+
+  app.delete('/store-operational/categories/:category_id', async (req, res) => {
+    try {
+      if (!assertStoreOperationalCategoryManager(req, res)) return;
+
+      const categoryIdRaw = (req.params.category_id ?? '').toString().trim();
+      const categoryId = parseInt(categoryIdRaw, 10);
+      if (!Number.isFinite(categoryId) || categoryId <= 0) {
+        return res.status(400).json({ error: 'category_id tidak valid' });
+      }
+
+      const upd = await db.query(
+        `
+          UPDATE store_operational_categories
+          SET is_active = FALSE, updated_at = NOW()
+          WHERE category_id = $1 AND is_active = TRUE
+          RETURNING category_id, name, entry_kind, sort_order, is_active
+        `,
+        [categoryId]
+      );
+      if (upd.rows.length === 0) {
+        return res.status(404).json({ error: 'Kategori tidak ditemukan' });
+      }
+      return res.status(200).json({
+        message: 'Kategori dihapus',
+        category: mapStoreOperationalCategoryRow(upd.rows[0]),
+      });
+    } catch (e) {
+      console.error('Error deleting store-operational category:', e);
       if (e && e.code === '42P01') {
         return res.status(503).json({
           error: 'Tabel kategori belum tersedia',

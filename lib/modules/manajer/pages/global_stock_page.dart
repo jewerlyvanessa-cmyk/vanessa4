@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
 import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
@@ -25,6 +26,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
   String _error = '';
 
   List<dynamic> _items = const [];
+  List<Map<String, dynamic>> _branches = const [];
   String _search = '';
   String _selectedStatus = 'ready';
   String _selectedBranchId = 'all';
@@ -42,15 +44,50 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     super.dispose();
   }
 
+  static bool _branchIsActive(Map<String, dynamic> b) {
+    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
+    return s.isEmpty || s == 'active';
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchTokoWarehouseBranches() async {
+    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches');
+    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    if (resp.statusCode != 200) {
+      throw Exception('Gagal memuat cabang (${resp.statusCode})');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final e in decoded) {
+      if (e is! Map) continue;
+      final m = Map<String, dynamic>.from(e);
+      if (!_branchIsActive(m)) continue;
+      if (!branchTypeIsTokoOrWarehouse(m['branch_type']?.toString())) continue;
+      out.add(m);
+    }
+    out.sort((a, b) {
+      final an = (a['name'] ?? a['branch_id'] ?? '').toString();
+      final bn = (b['name'] ?? b['branch_id'] ?? '').toString();
+      return an.compareTo(bn);
+    });
+    return out;
+  }
+
+  String _branchDisplayLabel(Map<String, dynamic> b) {
+    final id = (b['branch_id'] ?? '').toString().trim();
+    final alias = (b['alias'] ?? '').toString().trim();
+    final name = (b['name'] ?? id).toString().trim();
+    final base = alias.isNotEmpty ? alias : name;
+    final typeLabel = branchTypeLabel(b['branch_type']?.toString());
+    return '$base · $typeLabel';
+  }
+
   List<(String value, String label)> _branchOptions() {
-    final branches = ref.read(userStateProvider).branches;
-    final out = <(String, String)>[('all', 'Semua cabang')];
-    for (final b in branches) {
+    final out = <(String, String)>[('all', 'Semua toko & warehouse')];
+    for (final b in _branches) {
       final id = (b['branch_id'] ?? '').toString().trim();
       if (id.isEmpty) continue;
-      final alias = (b['alias'] ?? '').toString().trim();
-      final name = (b['name'] ?? id).toString().trim();
-      out.add((id, alias.isNotEmpty ? alias : name));
+      out.add((id, _branchDisplayLabel(b)));
     }
     return out;
   }
@@ -59,12 +96,10 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     final q = <String, String>{
       'branch_id': branchId,
       'limit': '$limit',
+      'in_stock_only': '1',
     };
     if (_selectedStatus != 'all') {
       q['status'] = _selectedStatus;
-      if (_selectedStatus == 'ready') {
-        q['in_stock_only'] = '1';
-      }
     }
     return q;
   }
@@ -77,7 +112,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
 
     try {
       final baseUrl = NetworkConfig.baseUrl;
-      final branches = ref.read(userStateProvider).branches;
+      final branches = await _fetchTokoWarehouseBranches();
 
       List<dynamic> items;
       if (_selectedBranchId != 'all') {
@@ -89,11 +124,33 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
           throw Exception('Gagal memuat stok (${resp.statusCode})');
         }
         final decoded = jsonDecode(resp.body);
-        items = decoded is List ? List<dynamic>.from(decoded) : <dynamic>[];
+        items = decoded is List
+            ? decoded.where(stockItemHasPositiveQuantity).toList()
+            : <dynamic>[];
+        Map<String, dynamic>? selected;
+        for (final b in branches) {
+          if (b['branch_id']?.toString().trim() == _selectedBranchId) {
+            selected = b;
+            break;
+          }
+        }
+        if (selected != null) {
+          final branchName = _branchDisplayLabel(selected);
+          items = items
+              .whereType<Map>()
+              .map(
+                (e) => <String, dynamic>{
+                  ...Map<String, dynamic>.from(e),
+                  'branch_id': _selectedBranchId,
+                  'branch_name': branchName,
+                },
+              )
+              .toList();
+        }
       } else {
         final futures = branches.map((b) async {
           final branchId = b['branch_id']?.toString() ?? '';
-          final branchName = (b['name'] ?? branchId).toString();
+          final branchName = _branchDisplayLabel(b);
           if (branchId.isEmpty) return const <dynamic>[];
 
           final uri = Uri.parse('$baseUrl/items').replace(
@@ -108,6 +165,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
 
           return decoded
               .whereType<Map>()
+              .where(stockItemHasPositiveQuantity)
               .map((e) => <String, dynamic>{
                     ...Map<String, dynamic>.from(e),
                     'branch_id': branchId,
@@ -122,6 +180,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
 
       if (!mounted) return;
       setState(() {
+        _branches = branches;
         _items = items;
         _loading = false;
       });
@@ -139,6 +198,8 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     for (final it in _items) {
       if (it is! Map) continue;
       final item = Map<String, dynamic>.from(it);
+
+      if (!stockItemHasPositiveQuantity(item)) continue;
 
       if (_selectedStatus != 'all' &&
           !stockItemVisibleForStatusFilter(item, _selectedStatus)) {
@@ -161,7 +222,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
       });
 
   String _branchLabelForPrint() {
-    if (_selectedBranchId == 'all') return 'Semua cabang';
+    if (_selectedBranchId == 'all') return 'Semua toko & warehouse';
     for (final e in _branchOptions()) {
       if (e.$1 == _selectedBranchId) return e.$2;
     }

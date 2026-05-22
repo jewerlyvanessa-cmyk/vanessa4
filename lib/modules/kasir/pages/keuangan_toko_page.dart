@@ -24,7 +24,7 @@ import 'package:image_picker/image_picker.dart'
 
 enum _MoneyKind { expense, income }
 
-/// Kasir: hanya entri milik user login. Manajer: semua entri cabang aktif + kelola kategori.
+/// Kasir: entri milik user login + kelola kategori. Manajer: semua entri cabang aktif + kelola kategori.
 enum StoreOperationalPageScope { kasir, manajer }
 
 /// Pencatatan pemasukan & pengeluaran operasional toko (bukan pembayaran order) per cabang.
@@ -68,20 +68,20 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   _MoneyKind _kind = _MoneyKind.expense;
   String _category = _expenseCategories.first;
 
-  List<String> _managerExpenseCategories = [];
-  List<String> _managerIncomeCategories = [];
+  List<String> _apiExpenseCategories = [];
+  List<String> _apiIncomeCategories = [];
   bool _loadingCategories = false;
   String? _categoriesError;
 
   List<String> get _categoriesForKind {
-    if (!_isManajer) {
-      return _kind == _MoneyKind.income
-          ? _incomeCategories
-          : _expenseCategories;
+    if (_kind == _MoneyKind.income) {
+      return _apiIncomeCategories.isNotEmpty
+          ? _apiIncomeCategories
+          : _incomeCategories;
     }
-    return _kind == _MoneyKind.income
-        ? _managerIncomeCategories
-        : _managerExpenseCategories;
+    return _apiExpenseCategories.isNotEmpty
+        ? _apiExpenseCategories
+        : _expenseCategories;
   }
 
   bool _entryIsIncome(Map<String, dynamic> e) =>
@@ -128,7 +128,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     _rangeStart = t;
     _rangeEnd = t;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_isManajer) await _loadCategories();
+      await _loadCategories();
       await _loadEntries();
     });
   }
@@ -142,19 +142,20 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   }
 
   Future<void> _loadCategories() async {
-    if (!_isManajer) return;
+    if (!mounted) return;
     setState(() {
       _loadingCategories = true;
       _categoriesError = null;
     });
     try {
       final res = await ApiClient.get('/store-operational/categories');
+      if (!mounted) return;
       if (res.statusCode != 200) {
         setState(() {
           _loadingCategories = false;
           _categoriesError = _categoriesLoadHint(res.statusCode);
-          _managerExpenseCategories = List<String>.from(_expenseCategories);
-          _managerIncomeCategories = List<String>.from(_incomeCategories);
+          _apiExpenseCategories = List<String>.from(_expenseCategories);
+          _apiIncomeCategories = List<String>.from(_incomeCategories);
         });
         _syncSelectedCategory();
         return;
@@ -179,18 +180,19 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
       }
       setState(() {
         _loadingCategories = false;
-        _managerExpenseCategories =
+        _apiExpenseCategories =
             expense.isNotEmpty ? expense : List<String>.from(_expenseCategories);
-        _managerIncomeCategories =
+        _apiIncomeCategories =
             income.isNotEmpty ? income : List<String>.from(_incomeCategories);
       });
       _syncSelectedCategory();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loadingCategories = false;
         _categoriesError = null;
-        _managerExpenseCategories = List<String>.from(_expenseCategories);
-        _managerIncomeCategories = List<String>.from(_incomeCategories);
+        _apiExpenseCategories = List<String>.from(_expenseCategories);
+        _apiIncomeCategories = List<String>.from(_incomeCategories);
       });
       _syncSelectedCategory();
     }
@@ -784,12 +786,11 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
           ),
         ),
         actions: [
-          if (_isManajer)
-            IconButton(
-              icon: const Icon(Icons.category_outlined),
-              tooltip: 'Kelola kategori',
-              onPressed: _openCategoryManager,
-            ),
+          IconButton(
+            icon: const Icon(Icons.category_outlined),
+            tooltip: 'Kelola kategori',
+            onPressed: _openCategoryManager,
+          ),
           IconButton(
             icon: const Icon(Icons.print_outlined),
             tooltip: 'Cetak PDF',
@@ -803,7 +804,9 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadEntries,
+        onRefresh: () async {
+          await Future.wait([_loadCategories(), _loadEntries()]);
+        },
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -862,7 +865,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                         },
                       ),
                       const SizedBox(height: 12),
-                      if (_isManajer && _categoriesError != null) ...[
+                      if (_categoriesError != null) ...[
                         Text(
                           _categoriesError!,
                           style: TextStyle(
@@ -882,7 +885,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                         decoration: InputDecoration(
                           labelText: 'Kategori',
                           border: const OutlineInputBorder(),
-                          suffixIcon: _isManajer && _loadingCategories
+                          suffixIcon: _loadingCategories
                               ? const Padding(
                                   padding: EdgeInsets.all(12),
                                   child: SizedBox(
@@ -907,17 +910,15 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                                 if (v != null) setState(() => _category = v);
                               },
                       ),
-                      if (_isManajer) ...[
-                        const SizedBox(height: 4),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            onPressed: _openCategoryManager,
-                            icon: const Icon(Icons.edit_note, size: 18),
-                            label: const Text('Kelola kategori'),
-                          ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _openCategoryManager,
+                          icon: const Icon(Icons.edit_note, size: 18),
+                          label: const Text('Kelola kategori'),
                         ),
-                      ],
+                      ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _amountController,
