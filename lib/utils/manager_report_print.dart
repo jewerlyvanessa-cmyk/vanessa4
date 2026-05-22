@@ -7,6 +7,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
+import 'package:vanessa3/utils/parallel_branch_logos.dart';
+import 'package:vanessa3/utils/print_progress.dart';
 
 String _moneyPdf(num v) =>
     NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0)
@@ -43,6 +45,9 @@ Future<void> printManagerBranchPerformancePdf(
 }) async {
   if (!context.mounted) return;
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     doc.addPage(
@@ -104,6 +109,9 @@ Future<void> printManagerBranchPerformancePdf(
       name: _pdfFileName('performa_cabang', periodStart, periodEnd),
       onLayout: (format) async => doc.save(),
     );
+      },
+      message: 'Menyiapkan laporan performa cabang…',
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,6 +135,9 @@ Future<void> printManagerPaymentSummaryPdf(
 }) async {
   if (!context.mounted) return;
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final totalAll = rows.fold<num>(0, (p, r) {
       final v = num.tryParse(r['total_amount']?.toString() ?? '') ?? 0;
@@ -229,6 +240,9 @@ Future<void> printManagerPaymentSummaryPdf(
       name: _pdfFileName(fileSlugPrefix, periodStart, periodEnd),
       onLayout: (format) async => doc.save(),
     );
+      },
+      message: 'Menyiapkan laporan pembayaran…',
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -270,15 +284,16 @@ Future<void> printManagerStockReportPdf(
 }) async {
   if (!context.mounted) return;
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final headerLogoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final Map<String, Uint8List> sectionLogos = {};
     if (!gabunganMode && branchSections != null) {
-      for (final s in branchSections) {
-        final bid = s.branchId?.trim() ?? '';
-        if (bid.isEmpty) continue;
-        final b = await loadBranchLogoRasterBytesForPdf(bid);
-        if (b != null && b.isNotEmpty) sectionLogos[bid] = b;
-      }
+      final ids = branchSections
+          .map((s) => s.branchId?.trim() ?? '')
+          .where((id) => id.isNotEmpty);
+      sectionLogos.addAll(await loadBranchLogosParallel(ids));
     }
 
     final doc = pw.Document();
@@ -440,6 +455,9 @@ Future<void> printManagerStockReportPdf(
     await Printing.layoutPdf(
       name: _pdfFileName('laporan_stok', periodStart, periodEnd),
       onLayout: (format) async => doc.save(),
+    );
+      },
+      message: 'Menyiapkan laporan stok…',
     );
   } catch (e) {
     if (context.mounted) {

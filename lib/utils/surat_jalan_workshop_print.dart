@@ -1,12 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 /// Info cabang untuk header surat jalan workshop.
@@ -35,22 +34,17 @@ Future<WorkshopSuratJalanBranches> resolveWorkshopSuratJalanBranches({
 }) async {
   var toName = 'Workshop / Bengkel';
   try {
-    final resp = await http.get(
-      Uri.parse('${NetworkConfig.baseUrl}/branches'),
-      headers: NetworkConfig.defaultHeaders,
+    final resp = await ApiClient.get(
+      '/branches',
+      query: {'branch_type': 'workshop'},
     );
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body);
-      if (data is List) {
-        for (final e in data) {
-          if (e is! Map) continue;
-          final type = (e['branch_type'] ?? '').toString().trim().toLowerCase();
-          if (type != 'workshop') continue;
-          final n = (e['name'] ?? '').toString().trim();
-          if (n.isNotEmpty) {
-            toName = n;
-            break;
-          }
+      if (data is List && data.isNotEmpty) {
+        final first = data.first;
+        if (first is Map) {
+          final n = (first['name'] ?? '').toString().trim();
+          if (n.isNotEmpty) toName = n;
         }
       }
     }

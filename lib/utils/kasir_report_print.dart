@@ -4,6 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
+import 'package:vanessa3/utils/print_progress.dart';
 
 String _paymentMethodLabel(String method) {
   switch (method.trim().toLowerCase()) {
@@ -57,6 +58,9 @@ Future<void> printKasirDailyReport(
   final money = NumberFormat('#,###', 'id_ID');
 
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
 
@@ -168,6 +172,9 @@ Future<void> printKasirDailyReport(
       name: 'laporan_kasir_$reportDateSlug.pdf',
       onLayout: (format) async => doc.save(),
     );
+      },
+      message: 'Menyiapkan laporan kasir…',
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -196,6 +203,9 @@ Future<void> printKasirDailyPaymentsReport(
   final money = NumberFormat('#,###', 'id_ID');
 
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     final tableRows =
@@ -314,6 +324,9 @@ Future<void> printKasirDailyPaymentsReport(
       name: 'laporan_pembayaran_kasir_$reportDateSlug.pdf',
       onLayout: (format) async => doc.save(),
     );
+      },
+      message: 'Menyiapkan laporan pembayaran…',
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -352,6 +365,9 @@ Future<void> printKasirCombinedFinanceReport(
   final grandNet = paymentNet + operationalNet;
 
   try {
+    await runWithPrintProgress(
+      context,
+      () async {
     final logoBytes = await loadBranchLogoRasterBytesForPdf(branchIdForLogo);
     final doc = pw.Document();
     final paySlice =
@@ -479,6 +495,9 @@ Future<void> printKasirCombinedFinanceReport(
     await Printing.layoutPdf(
       name: 'laporan_keuangan_kasir_$periodSlug.pdf',
       onLayout: (format) async => doc.save(),
+    );
+      },
+      message: 'Menyiapkan laporan keuangan…',
     );
   } catch (e) {
     if (context.mounted) {

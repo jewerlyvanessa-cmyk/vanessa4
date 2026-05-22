@@ -330,6 +330,148 @@ function registerOrdersCoreRoutes(app, deps) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // Konteks cetak faktur: payment summary + logo cabang + item conditions (satu round-trip).
+  app.get('/orders/faktur-context', async (req, res) => {
+    try {
+      const orderIdRaw = (req.query.order_id ?? '').toString().trim();
+      const orderId = parseInt(orderIdRaw, 10);
+      if (!Number.isFinite(orderId) || orderId <= 0) {
+        return res.status(400).json({ error: 'order_id harus berupa angka' });
+      }
+
+      const pickupBranchIdRaw = (req.query.pickup_branch_id ?? '').toString().trim();
+      const pickupBranchId = pickupBranchIdRaw
+        ? parseInt(pickupBranchIdRaw, 10)
+        : null;
+
+      const ordRes = await db.query(
+        `SELECT order_id, order_type, branch_id, pickup_branch_id, metadata, total
+         FROM orders
+         WHERE order_id = $1
+         LIMIT 1`,
+        [orderId]
+      );
+      if (ordRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Order tidak ditemukan' });
+      }
+      const order = ordRes.rows[0];
+
+      const branchIds = new Set();
+      if (order.branch_id != null) branchIds.add(Number(order.branch_id));
+      if (Number.isFinite(pickupBranchId) && pickupBranchId > 0) {
+        branchIds.add(pickupBranchId);
+      } else if (order.pickup_branch_id != null) {
+        branchIds.add(Number(order.pickup_branch_id));
+      }
+
+      let meta = order.metadata;
+      if (typeof meta === 'string') {
+        try {
+          meta = JSON.parse(meta);
+        } catch (_) {
+          meta = {};
+        }
+      }
+      if (meta && meta.pickup_branch_id != null) {
+        const pb = parseInt(String(meta.pickup_branch_id), 10);
+        if (Number.isFinite(pb) && pb > 0) branchIds.add(pb);
+      }
+
+      const branchIdList = Array.from(branchIds).filter(
+        (id) => Number.isFinite(id) && id > 0
+      );
+
+      const [sumRes, branchesRes, condRes] = await Promise.all([
+        db.query(
+          `
+            SELECT
+              COALESCE(SUM(CASE WHEN status = 'pending' THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS dp_amount,
+              COALESCE(SUM(CASE WHEN status = 'completed' THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS paid_completed_amount,
+              COALESCE(SUM(CASE WHEN status IN ('pending','completed') THEN COALESCE(amount, 0) ELSE 0 END), 0)::float8 AS paid_amount
+            FROM payments
+            WHERE order_id = $1
+          `,
+          [orderId]
+        ),
+        branchIdList.length > 0
+          ? db.query(
+              `
+                SELECT branch_id, name, alias, logo_url
+                FROM branches
+                WHERE branch_id = ANY($1::bigint[])
+              `,
+              [branchIdList]
+            )
+          : Promise.resolve({ rows: [] }),
+        db.query(
+          `
+            SELECT
+              condition_id,
+              item_id,
+              order_id,
+              kondisi_fisik,
+              penyesuaian_berat,
+              nilai_resale,
+              harga_per_gram,
+              potongan_kondisi,
+              untung_rugi,
+              nilai_untung_rugi,
+              catatan_kondisi
+            FROM item_conditions
+            WHERE order_id = $1
+            ORDER BY created_at DESC
+            LIMIT 30
+          `,
+          [orderId]
+        ),
+      ]);
+
+      const total = parseFloat(order.total || 0);
+      const row = sumRes.rows[0] || {};
+      const dpAmount = parseFloat(row.dp_amount || 0);
+      const paidAmount = parseFloat(row.paid_amount || 0);
+      const remaining = Math.max(total - paidAmount, 0);
+
+      const branches = (branchesRes.rows || []).map((b) => ({
+        branch_id: b.branch_id != null ? String(b.branch_id) : '',
+        name: b.name ?? '',
+        alias: b.alias ?? '',
+        logo_url: b.logo_url ?? '',
+      }));
+
+      const itemConditions = (condRes.rows || []).map((ic) => ({
+        condition_id: ic.condition_id != null ? String(ic.condition_id) : '',
+        item_id: ic.item_id != null ? String(ic.item_id) : '',
+        order_id: ic.order_id != null ? String(ic.order_id) : '',
+        kondisi_fisik: ic.kondisi_fisik,
+        penyesuaian_berat: ic.penyesuaian_berat,
+        nilai_resale: parseFloat(ic.nilai_resale || 0),
+        harga_per_gram: parseFloat(ic.harga_per_gram || 0),
+        potongan_kondisi: parseFloat(ic.potongan_kondisi || 0),
+        untung_rugi: ic.untung_rugi,
+        nilai_untung_rugi: parseFloat(ic.nilai_untung_rugi || 0),
+        catatan_kondisi: ic.catatan_kondisi,
+        kerusakan: [],
+      }));
+
+      return res.status(200).json({
+        order_id: orderId,
+        payment_summary: {
+          order_id: orderId,
+          total,
+          dp_amount: dpAmount,
+          paid_amount: paidAmount,
+          remaining_amount: remaining,
+        },
+        branches,
+        item_conditions: itemConditions,
+      });
+    } catch (e) {
+      console.error('Error fetching faktur context:', e);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
   
   // Mark service/custom order as picked up (ambil barang)
   app.post('/orders/pickup', async (req, res) => {
