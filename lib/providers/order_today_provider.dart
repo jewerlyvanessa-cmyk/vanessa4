@@ -10,6 +10,7 @@ import 'package:vanessa3/data/offline_cache.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/utils/agent_ndjson.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
+import 'package:vanessa3/modules/admin_toko/data/daily_orders_payments_repository.dart';
 
 /// Aktifkan log NDJSON hanya bila perlu debug (`--dart-define=ORDER_TODAY_NDJSON=true`).
 const bool _kOrderTodayNdjson = bool.fromEnvironment(
@@ -183,6 +184,38 @@ List<Map<String, dynamic>> groupOrdersWithItemsForOrderToday(
   }
 
   return ordersMap.values.toList();
+}
+
+/// Satu round-trip `order-today-snapshot` (cabang tunggal). Null jika gagal.
+Future<List<Map<String, dynamic>>?> tryFetchOrderTodaySnapshotOrdersList({
+  required int branchId,
+  required String dateKey,
+  required UserState userState,
+}) async {
+  try {
+    final qp = <String, String>{
+      'branch_id': branchId.toString(),
+      'date': dateKey,
+    };
+    if (_orderTodayOwnUserOnlyScope(userState) && userState.userId != null) {
+      qp['user_id'] = userState.userId.toString();
+    }
+    final response = await ApiClient.get(
+      '/api/dashboard/order-today-snapshot',
+      query: qp,
+    );
+    if (response.statusCode != 200) return null;
+    final map = jsonDecode(response.body);
+    if (map is! Map<String, dynamic>) return null;
+    final ordersRaw = map['orders'];
+    if (ordersRaw is! List) return null;
+    final rawList = ordersRaw
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    return groupOrdersWithItemsForOrderToday(rawList);
+  } catch (_) {
+    return null;
+  }
 }
 
 // Model untuk Order Today
@@ -679,6 +712,33 @@ class TodayOrdersNotifier
       // Use real API call instead of mock data
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
+      if (branchIds.length == 1) {
+        final snapshotOrders = await tryFetchOrderTodaySnapshotOrdersList(
+          branchId: branchIds.first,
+          dateKey: todayKey,
+          userState: userState,
+        );
+        if (snapshotOrders != null) {
+          _otNdjson(
+            hypothesisId: 'OT2',
+            location:
+                'order_today_provider.dart:fetchTodayOrders:snapshot_ok',
+            message: 'order-today-snapshot 200 (orders only)',
+            data: <String, Object?>{
+              'branchId': branchIds.first,
+              'ordersLen': snapshotOrders.length,
+            },
+          );
+          await OfflineCache.instance.setJson(
+            cacheKey,
+            snapshotOrders,
+            ttl: const Duration(minutes: 5),
+          );
+          state = AsyncValue.data(snapshotOrders);
+          return;
+        }
+      }
+
       _otNdjson(
         hypothesisId: 'OT2',
         location: 'order_today_provider.dart:fetchTodayOrders:request',
@@ -703,74 +763,29 @@ class TodayOrdersNotifier
         },
       );
 
+      final scopedUserId = _orderTodayOwnUserOnlyScope(userState) && userId != null
+          ? userId.toString()
+          : null;
+
+      final perBranch = await Future.wait(
+        branchIds.map((bid) async {
+          final decoded = await DailyOrdersPaymentsRepository.fetchOrdersDailyList(
+            branchId: bid.toString(),
+            dateYmd: todayKey,
+            scopedUserId: scopedUserId,
+          );
+          final rawOrders = decoded
+              .map((dynamic order) => Map<String, dynamic>.from(order as Map))
+              .toList();
+          return _groupOrdersWithItems(rawOrders);
+        }),
+      );
+
       final mergedOrders = <Map<String, dynamic>>[];
       var mergedRawCount = 0;
-      for (final bid in branchIds) {
-        // Build query parameters
-        final queryParams = <String, String>{
-          'branch_id': bid.toString(),
-          'date': todayKey, // ensure server uses the same "today" boundary
-        };
-
-        if (_orderTodayOwnUserOnlyScope(userState) && userId != null) {
-          queryParams['user_id'] = userId.toString();
-        }
-
-        var usedPath = '/api/orders/daily';
-        var uri = Uri.parse(
-          '$baseUrl/api/orders/daily',
-        ).replace(queryParameters: queryParams);
-        var response = await ApiClient.get(uri.toString());
-        // Backend lama / proxy: coba path tanpa prefix /api.
-        if (response.statusCode == 404) {
-          usedPath = '/orders/daily';
-          uri = Uri.parse(
-            '$baseUrl/orders/daily',
-          ).replace(queryParameters: queryParams);
-          response = await ApiClient.get(uri.toString());
-        }
-
-        if (response.statusCode != 200) {
-          _otNdjson(
-            hypothesisId: 'OT1',
-            location: 'order_today_provider.dart:fetchTodayOrders:http_fail',
-            message: 'orders/daily non-200',
-            data: <String, Object?>{
-              'statusCode': response.statusCode,
-              'usedPath': usedPath,
-              'branchId': bid,
-              'responseLen': response.body.length,
-            },
-          );
-          throw Exception(
-            'Failed to load today orders: ${response.statusCode}',
-          );
-        }
-
-        final decoded = jsonDecode(response.body);
-        if (decoded is! List) {
-          _otNdjson(
-            hypothesisId: 'OT5',
-            location: 'order_today_provider.dart:fetchTodayOrders:bad_shape',
-            message: 'orders/daily: body is not JSON array',
-            data: <String, Object?>{
-              'runtimeType': '${decoded.runtimeType}',
-              'branchId': bid,
-            },
-          );
-          throw Exception(
-            'orders/daily: expected JSON array, got ${decoded.runtimeType}',
-          );
-        }
-
-        final rawOrders = decoded
-            .map((dynamic order) => Map<String, dynamic>.from(order as Map))
-            .toList();
-        mergedRawCount += rawOrders.length;
-
-        // Selalu grup dari flat /orders/daily. Jangan GET /order-items — endpoint
-        // itu tidak memfilter cabang/tanggal dan memuat seluruh DB.
-        mergedOrders.addAll(_groupOrdersWithItems(rawOrders));
+      for (final grouped in perBranch) {
+        mergedRawCount += grouped.length;
+        mergedOrders.addAll(grouped);
       }
 
       _otNdjson(
@@ -917,22 +932,20 @@ class OrderTodayBundleSync {
       try {
         final dateKey = _localCalendarDateKey();
         final bid = branchIds.first;
-        final qp = <String, String>{
-          'branch_id': bid.toString(),
-          'date': dateKey,
-        };
-        if (_orderTodayOwnUserOnlyScope(userState) &&
-            userState.userId != null) {
-          qp['user_id'] = userState.userId.toString();
-        }
-        final uri = Uri.parse(
-          '${NetworkConfig.baseUrl}/api/dashboard/order-today-snapshot',
-        ).replace(queryParameters: qp);
-        final response = await ApiClient.get(uri.toString());
+        final response = await ApiClient.get(
+          '/api/dashboard/order-today-snapshot',
+          query: {
+            'branch_id': bid.toString(),
+            'date': dateKey,
+            if (_orderTodayOwnUserOnlyScope(userState) &&
+                userState.userId != null)
+              'user_id': userState.userId.toString(),
+          },
+        );
         if (response.statusCode == 200) {
           final map = jsonDecode(response.body) as Map<String, dynamic>;
           final statsMap = Map<String, dynamic>.from(map['stats'] as Map);
-          final ordersRaw = map['orders'] as List<dynamic>;
+          final ordersRaw = map['orders'] as List<dynamic>? ?? [];
 
           final scopeSeg = _orderTodayScopeCacheSegment(userState);
           final statsCacheKey =
@@ -943,9 +956,6 @@ class OrderTodayBundleSync {
           final rawList = ordersRaw
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
-          // Jangan panggil GET /order-items untuk melengkapi baris: endpoint backend
-          // saat ini mengabaikan query dan mengembalikan seluruh order_items jual
-          // (tanpa LIMIT) → payload besar, load tampak macet.
           final mergedOrders = groupOrdersWithItemsForOrderToday(rawList);
 
           await statsN.bundleApplyStatsFromSnapshot(

@@ -451,9 +451,12 @@ app.get('/payments/daily-summary', async (req, res) => {
       paymentDateSql = paymentActivityDateSql('p', '$2', hasPaymentDateCol);
     }
 
-    const hasProofCol = await paymentsHasProofUrlColumn(db);
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
-    const hasRevBranchColSummary = await paymentsHasRevenueBranchColumn(db);
+    const [hasProofCol, hasValidatedByCol, hasRevBranchColSummary] =
+      await Promise.all([
+        paymentsHasProofUrlColumn(db),
+        paymentsHasValidatedByColumn(db),
+        paymentsHasRevenueBranchColumn(db),
+      ]);
     // Jangan hanya COALESCE(revenue, order): pelunasan service/custom bisa mengisi
     // revenue_branch_id = cabang pickup sementara order.branch_id = cabang toko.
     // Kasir di cabang toko harus tetap melihat "Bayar Today" untuk pembayaran yang ia proses.
@@ -492,32 +495,6 @@ app.get('/payments/daily-summary', async (req, res) => {
       listParams.push(orderTypeFilter);
     }
 
-    // Get payments for the day (or date range)
-    const paymentsResult = await db.query(`
-      SELECT
-        p.payment_id,
-        p.order_id,
-        p.amount,
-        p.method as payment_method,
-        p.status,
-        ${hasProofCol ? 'p.proof_url' : 'NULL'} as proof_url,
-        ${hasValidatedByCol ? 'p.validated_by' : 'NULL'} as validated_by,
-        p.notes,
-        p.created_at,
-        p.updated_at,
-        o.order_number,
-        o.order_type,
-        COALESCE(c.name, '—') as customer_name,
-        c.phone
-      FROM payments p
-      JOIN orders o ON p.order_id = o.order_id
-      LEFT JOIN customers c ON o.customer_id = c.customer_id
-      WHERE ${branchScopeSqlSummary}
-        AND ${paymentDateSql}
-        ${listExtraWhere}
-      ORDER BY p.created_at DESC
-    `, listParams);
-
     const summaryParams = [parsedBranchId, ...dateArgs];
     let summaryExtraWhere = '';
     if (
@@ -531,12 +508,36 @@ app.get('/payments/daily-summary', async (req, res) => {
       summaryParams.push(orderTypeFilter);
     }
 
-    // Get summary
-    // Business rule:
-    // - jual/service/custom = pendapatan (uang masuk)
-    // - buyback = pengeluaran (uang keluar)
-    const summaryResult = await db.query(
-      `
+    const [paymentsResult, summaryResult] = await Promise.all([
+      db.query(
+        `
+        SELECT
+          p.payment_id,
+          p.order_id,
+          p.amount,
+          p.method as payment_method,
+          p.status,
+          ${hasProofCol ? 'p.proof_url' : 'NULL'} as proof_url,
+          ${hasValidatedByCol ? 'p.validated_by' : 'NULL'} as validated_by,
+          p.notes,
+          p.created_at,
+          p.updated_at,
+          o.order_number,
+          o.order_type,
+          COALESCE(c.name, '—') as customer_name,
+          c.phone
+        FROM payments p
+        JOIN orders o ON p.order_id = o.order_id
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        WHERE ${branchScopeSqlSummary}
+          AND ${paymentDateSql}
+          ${listExtraWhere}
+        ORDER BY p.created_at DESC
+      `,
+        listParams,
+      ),
+      db.query(
+        `
         SELECT
           COUNT(*) as total_payments,
           SUM(amount) as total_amount,
@@ -557,8 +558,9 @@ app.get('/payments/daily-summary', async (req, res) => {
           AND p.status = 'completed'
           ${summaryExtraWhere}
       `,
-      summaryParams,
-    );
+        summaryParams,
+      ),
+    ]);
 
     const summary = summaryResult.rows[0] || {
       total_payments: 0,
@@ -645,15 +647,20 @@ app.get('/payments/daily', async (req, res) => {
 
     // Match tanggal secara robust untuk TIMESTAMP (tanpa timezone) dan TIMESTAMPTZ.
     // Kita cocokkan baik interpretasi "naive local", maupun "naive sebenarnya UTC".
-    const hasPaymentDateColDaily = await paymentsHasPaymentDateColumn(db);
+    const [
+      hasPaymentDateColDaily,
+      hasValidatedByCol,
+      hasRevBranchColDaily,
+    ] = await Promise.all([
+      paymentsHasPaymentDateColumn(db),
+      paymentsHasValidatedByColumn(db),
+      paymentsHasRevenueBranchColumn(db),
+    ]);
     const paymentDateMatch = (paramRef) =>
       paymentActivityDateSql('p', paramRef, hasPaymentDateColDaily);
     const paymentDateSelect = hasPaymentDateColDaily
       ? 'p.payment_date'
       : 'p.created_at AS payment_date';
-
-    const hasValidatedByCol = await paymentsHasValidatedByColumn(db);
-    const hasRevBranchColDaily = await paymentsHasRevenueBranchColumn(db);
     const branchScopeSqlDaily = hasRevBranchColDaily
       ? `(o.branch_id::bigint = $1::bigint OR (p.revenue_branch_id IS NOT NULL AND p.revenue_branch_id::bigint = $1::bigint))`
       : `o.branch_id::bigint = $1::bigint`;
@@ -684,32 +691,29 @@ app.get('/payments/daily', async (req, res) => {
       (userFilter.mode !== 'kasir_validated' || hasValidatedByCol)
         ? appendPaymentsUserFilter(summaryParams, userFilter)
         : '';
-    const summaryResult = await db.query(
-      summaryQuery.replace('__USER_FILTER__', summaryUserSql),
-      summaryParams,
-    );
-
-    // Query untuk detail transaksi
     const detailQuery = `
       SELECT
         p.payment_id,
         p.order_id,
-        MAX(o.order_number) as order_number,
-        MAX(lower(trim(coalesce(o.order_type::text, '')))) as order_type,
+        o.order_number,
+        lower(trim(coalesce(o.order_type::text, ''))) as order_type,
         p.amount,
         p.method,
         ${paymentDateSelect},
-        COALESCE(STRING_AGG(oi.nama_item, ', '), 'Unknown Item') as nama_item,
+        COALESCE(
+          (SELECT STRING_AGG(oi.nama_item, ', ')
+           FROM order_items oi
+           WHERE oi.order_id = o.order_id),
+          'Unknown Item'
+        ) as nama_item,
         c.name as customer_name
       FROM payments p
       JOIN orders o ON p.order_id = o.order_id
       LEFT JOIN customers c ON o.customer_id = c.customer_id
-      LEFT JOIN order_items oi ON o.order_id = oi.order_id
       WHERE ${branchScopeSqlDaily}
         AND ${paymentDateMatch('$2')}
         AND p.status = 'completed'
         __USER_FILTER__
-      GROUP BY p.payment_id, p.order_id, p.amount, p.method, ${hasPaymentDateColDaily ? 'p.payment_date' : 'p.created_at'}, c.name
       ORDER BY ${hasPaymentDateColDaily ? 'p.payment_date' : 'p.created_at'} DESC
     `;
 
@@ -743,7 +747,11 @@ app.get('/payments/daily', async (req, res) => {
         ? appendPaymentsUserFilter(totalsParams, userFilter)
         : '';
 
-    const [detailResult, totalsResult] = await Promise.all([
+    const [summaryResult, detailResult, totalsResult] = await Promise.all([
+      db.query(
+        summaryQuery.replace('__USER_FILTER__', summaryUserSql),
+        summaryParams,
+      ),
       db.query(
         detailQuery.replace('__USER_FILTER__', detailUserSql),
         detailParams,

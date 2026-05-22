@@ -2,6 +2,29 @@
  * Introspeksi kolom opsional tabel `items` (DB baru vs lama).
  */
 
+let _cachedItemsCreatedByExists = null;
+
+async function itemsHasCreatedByColumn(db) {
+  if (_cachedItemsCreatedByExists !== null) return _cachedItemsCreatedByExists;
+  try {
+    const r = await db.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'items'
+          AND column_name = 'created_by'
+        LIMIT 1
+      `,
+      []
+    );
+    _cachedItemsCreatedByExists = r.rows.length > 0;
+  } catch (_) {
+    _cachedItemsCreatedByExists = false;
+  }
+  return _cachedItemsCreatedByExists;
+}
+
 async function getItemsColumnFlags(client) {
   const r = await client.query(
     `
@@ -175,6 +198,7 @@ function formatDbErrorForClient(error) {
 }
 
 module.exports = {
+  itemsHasCreatedByColumn,
   getItemsColumnFlags,
   itemSelectStockFields,
   updateItemStatusAndStock,

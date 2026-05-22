@@ -24,52 +24,30 @@ class BranchApiService {
     throw Exception('Respons cabang tidak valid (bukan daftar JSON).');
   }
 
-  /// GET daftar cabang: coba `/branches` lalu `/api/branches` (proxy/prod sering hanya `/api`).
   Future<List<Map<String, dynamic>>> fetchBranches() async {
-    final headers = NetworkConfig.defaultHeaders;
-    Object? lastError;
-
-    for (final path in const ['/branches', '/api/branches']) {
-      try {
-        final response = await http.get(
-          Uri.parse('$baseUrl$path'),
-          headers: headers,
-        );
-        if (response.statusCode == 200) {
-          return _decodeBranchList(response.body);
-        }
-        if (response.statusCode == 404) {
-          lastError = 'HTTP 404 $path';
-          continue;
-        }
-        throw Exception(
-          'Gagal memuat cabang (${response.statusCode}) $path: ${response.body}',
-        );
-      } catch (e) {
-        lastError = e;
-        if (path == '/api/branches') {
-          throw Exception('Error fetching branches: $e');
-        }
-      }
+    final response = await http.get(
+      Uri.parse('$baseUrl/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (response.statusCode == 200) {
+      return _decodeBranchList(response.body);
     }
-    throw Exception('Error fetching branches: $lastError');
+    throw Exception(
+      'Gagal memuat cabang (${response.statusCode}): ${response.body}',
+    );
   }
 
   Future<Map<String, dynamic>?> fetchBranchById(String branchId) async {
     try {
-      for (final prefix in const ['/branches/', '/api/branches/']) {
-        final response = await http.get(
-          Uri.parse('$baseUrl$prefix$branchId'),
-          headers: NetworkConfig.defaultHeaders,
-        );
-        if (response.statusCode == 200) {
-          return json.decode(response.body) as Map<String, dynamic>;
-        }
-        if (response.statusCode != 404) {
-          throw Exception('Failed to load branch: ${response.statusCode}');
-        }
+      final response = await http.get(
+        Uri.parse('$baseUrl/branches/$branchId'),
+        headers: NetworkConfig.defaultHeaders,
+      );
+      if (response.statusCode == 200) {
+        return json.decode(response.body) as Map<String, dynamic>;
       }
-      return null;
+      if (response.statusCode == 404) return null;
+      throw Exception('Failed to load branch: ${response.statusCode}');
     } catch (e) {
       throw Exception('Error fetching branch: $e');
     }

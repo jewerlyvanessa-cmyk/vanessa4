@@ -591,22 +591,20 @@ Future<void> printFakturOrder(
 
     Future<String?> fetchBranchLogoUrl() async {
       for (final branchId in orderedBranchIdsForLogo()) {
-        for (final p in ['/branches/$branchId', '/api/branches/$branchId']) {
-          try {
-            final resp = await http
-                .get(
-                  Uri.parse('${NetworkConfig.baseUrl}$p'),
-                  headers: NetworkConfig.defaultHeaders,
-                )
-                .timeout(const Duration(seconds: 3));
-            if (resp.statusCode != 200) continue;
-            final decoded = jsonDecode(resp.body);
-            if (decoded is Map && decoded['logo_url'] != null) {
-              final url = photoUrl(decoded['logo_url']);
-              if (url != null && url.isNotEmpty) return url;
-            }
-          } catch (_) {}
-        }
+        try {
+          final resp = await http
+              .get(
+                Uri.parse('${NetworkConfig.baseUrl}/branches/$branchId'),
+                headers: NetworkConfig.defaultHeaders,
+              )
+              .timeout(const Duration(seconds: 3));
+          if (resp.statusCode != 200) continue;
+          final decoded = jsonDecode(resp.body);
+          if (decoded is Map && decoded['logo_url'] != null) {
+            final url = photoUrl(decoded['logo_url']);
+            if (url != null && url.isNotEmpty) return url;
+          }
+        } catch (_) {}
       }
       return null;
     }
@@ -617,24 +615,22 @@ Future<void> printFakturOrder(
       if (branchLogoUrlFromOrderData(orderData) != null) return;
       for (final bid in orderedBranchIdsForLogo()) {
         if (bid.isEmpty) continue;
-        for (final p in ['/branches/$bid', '/api/branches/$bid']) {
-          try {
-            final resp = await http
-                .get(
-                  Uri.parse('${NetworkConfig.baseUrl}$p'),
-                  headers: NetworkConfig.defaultHeaders,
-                )
-                .timeout(const Duration(seconds: 3));
-            if (resp.statusCode != 200) continue;
-            final decoded = jsonDecode(resp.body);
-            if (decoded is! Map) continue;
-            final s = decoded['logo_url']?.toString().trim();
-            if (s == null || s.isEmpty) continue;
-            orderData['logo_url'] = s;
-            orderData['branch_logo_url'] = s;
-            return;
-          } catch (_) {}
-        }
+        try {
+          final resp = await http
+              .get(
+                Uri.parse('${NetworkConfig.baseUrl}/branches/$bid'),
+                headers: NetworkConfig.defaultHeaders,
+              )
+              .timeout(const Duration(seconds: 3));
+          if (resp.statusCode != 200) continue;
+          final decoded = jsonDecode(resp.body);
+          if (decoded is! Map) continue;
+          final s = decoded['logo_url']?.toString().trim();
+          if (s == null || s.isEmpty) continue;
+          orderData['logo_url'] = s;
+          orderData['branch_logo_url'] = s;
+          return;
+        } catch (_) {}
       }
     }
 
@@ -925,18 +921,13 @@ Future<void> printFakturOrder(
       (() async {
         // 1) Proxy dulu: same-origin + JWT; server bisa stream file lokal atau tarik logo_url HTTPS lain (hindari CORS web ke domain lain).
         for (final bid in orderedBranchIdsForLogo()) {
-          for (final logoPath in ['/branches/$bid/logo', '/api/branches/$bid/logo']) {
-            final proxy = '${NetworkConfig.baseUrl}$logoPath';
-            final viaProxy = await fetchBytes(
-              proxy,
-              timeout: const Duration(seconds: 25),
-              imageBinary: true,
-              // Sama seperti foto item: jangan pakai validatePdfRaster di sini.
-              // Pre-check MemoryImage terlalu ketat — beberapa JPEG/WebP valid ditolak
-              // sehingga logo hilang khususnya di faktur AMBIL (multi-cabang / proxy).
-            );
-            if (viaProxy != null) return viaProxy;
-          }
+          final proxy = '${NetworkConfig.baseUrl}/branches/$bid/logo';
+          final viaProxy = await fetchBytes(
+            proxy,
+            timeout: const Duration(seconds: 25),
+            imageBinary: true,
+          );
+          if (viaProxy != null) return viaProxy;
         }
         final direct = await fetchBytes(
           branchLogoUrlFast,

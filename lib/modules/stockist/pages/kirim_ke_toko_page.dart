@@ -41,17 +41,10 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
   }
 
   Future<http.Response> _fetchBranchesList(String baseUrl) async {
-    final primary = await http.get(
+    return http.get(
       Uri.parse('$baseUrl/branches'),
       headers: NetworkConfig.defaultHeaders,
     );
-    if (primary.statusCode == 200) return primary;
-    final fallback = await http.get(
-      Uri.parse('$baseUrl/api/branches'),
-      headers: NetworkConfig.defaultHeaders,
-    );
-    if (fallback.statusCode == 200) return fallback;
-    return primary;
   }
 
   Future<void> _loadData() async {

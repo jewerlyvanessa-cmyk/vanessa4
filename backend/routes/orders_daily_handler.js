@@ -9,34 +9,11 @@ const {
   timestampOnBusinessDateSql,
   paymentActivityDateSql,
 } = require('../lib/order_calendar_date_sql');
-const { paymentsHasPaymentDateColumn } = require('../lib/payments_schema_helpers');
+const {
+  paymentsHasPaymentDateColumn,
+  paymentsHasRevenueBranchColumn,
+} = require('../lib/payments_schema_helpers');
 const { resolveCsOrderUserFilterFromReq } = require('../lib/order_scope_helpers');
-
-/** @type {boolean | null} */
-let _cachedPaymentsRevenueBranchColumn = null;
-
-async function paymentsHasRevenueBranchColumn() {
-  if (_cachedPaymentsRevenueBranchColumn !== null) {
-    return _cachedPaymentsRevenueBranchColumn;
-  }
-  try {
-    const r = await db.query(
-      `
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'payments'
-          AND column_name = 'revenue_branch_id'
-        LIMIT 1
-      `,
-      []
-    );
-    _cachedPaymentsRevenueBranchColumn = r.rows.length > 0;
-  } catch (_) {
-    _cachedPaymentsRevenueBranchColumn = false;
-  }
-  return _cachedPaymentsRevenueBranchColumn;
-}
 
 /**
  * Scope harian:
@@ -141,11 +118,12 @@ async function fetchOrdersDailyPayload(req) {
   const createdDateMatch = (paramRef) =>
     timestampOnBusinessDateSql('o.created_at', paramRef);
 
-  const hasPaymentDateCol = await paymentsHasPaymentDateColumn(db);
+  const [hasPaymentDateCol, hasRevBranch] = await Promise.all([
+    paymentsHasPaymentDateColumn(db),
+    paymentsHasRevenueBranchColumn(db),
+  ]);
   const paymentDateMatch = (alias, paramRef) =>
     paymentActivityDateSql(alias, paramRef, hasPaymentDateCol);
-
-  const hasRevBranch = await paymentsHasRevenueBranchColumn();
   const nowDateRef = `(timezone('${ORDER_CALENDAR_TIMEZONE}', now()))`;
 
   let branchActivityWhere;
@@ -153,10 +131,11 @@ async function fetchOrdersDailyPayload(req) {
     const dateRef = filterUid != null ? '$3' : '$2';
     const activitySql = `(
           ${createdDateMatch(dateRef)}
-          OR o.order_id IN (
-            SELECT p.order_id
+          OR EXISTS (
+            SELECT 1
             FROM payments p
-            WHERE p.status = 'completed'
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
               AND ${paymentDateMatch('p', dateRef)}
           )
         )`;
@@ -174,10 +153,11 @@ async function fetchOrdersDailyPayload(req) {
   } else {
     const activitySql = `(
           ${createdDateMatch(nowDateRef)}
-          OR o.order_id IN (
-            SELECT p.order_id
+          OR EXISTS (
+            SELECT 1
             FROM payments p
-            WHERE p.status = 'completed'
+            WHERE p.order_id = o.order_id
+              AND p.status = 'completed'
               AND ${paymentDateMatch('p', nowDateRef)}
           )
         )`;

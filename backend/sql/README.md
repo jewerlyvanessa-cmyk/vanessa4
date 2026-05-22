@@ -6,6 +6,7 @@
 |--------|------|--------|
 | 1 | `vanessa3_schema_new_database.sql` | Database kosong |
 | 2 | **`patch_vanessa3_production_complete.sql`** | **Wajib** setelah skema atau DB lama |
+| 2b | `patch_perf_hot_paths.sql` | Indeks order/pembayaran/transfer harian (opsional, disarankan) |
 | 3 | `seed_minimal.sql` | User/cabang awal (opsional) |
 | 4 | `backend/.env` + `pm2 restart` | API harus baca env DB yang sama |
 

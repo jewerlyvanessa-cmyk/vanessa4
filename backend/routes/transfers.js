@@ -6,6 +6,7 @@ const {
   extractTransferSourceTypeFromNotes,
   transferSkipStockMovementOnComplete,
 } = require('../lib/transfer_helpers');
+const { getTransfersOptionalColumns } = require('../lib/transfers_schema_helpers');
 
 /** GET/POST/PUT /transfers */
 function registerTransfersRoutes(app, deps) {
@@ -15,30 +16,7 @@ app.get('/transfers', async (req, res) => {
   try {
     const { branch_id, status, type, purpose, created_by, branch_type_scope } = req.query;
 
-    // Backward-compatible: columns may not exist yet.
-    async function hasTransfersColumn(columnName) {
-      try {
-        const r = await db.query(
-          `
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'transfers'
-              AND column_name = $1
-            LIMIT 1
-          `,
-          [columnName]
-        );
-        return r.rows.length > 0;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
-      hasTransfersColumn('source_type'),
-      hasTransfersColumn('courier'),
-    ]);
+    const { hasSourceTypeCol, hasCourierCol } = await getTransfersOptionalColumns(db);
 
     let query = `
       SELECT
@@ -181,29 +159,7 @@ app.post('/transfers', async (req, res) => {
       ? sourceTypeNormalized
       : 'stok';
 
-    async function hasTransfersColumn(columnName) {
-      try {
-        const r = await db.query(
-          `
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'transfers'
-              AND column_name = $1
-            LIMIT 1
-          `,
-          [columnName]
-        );
-        return r.rows.length > 0;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    const [hasSourceTypeCol, hasCourierCol] = await Promise.all([
-      hasTransfersColumn('source_type'),
-      hasTransfersColumn('courier'),
-    ]);
+    const { hasSourceTypeCol, hasCourierCol } = await getTransfersOptionalColumns(db);
 
     const trimmedCourier =
       bodyCourier == null || String(bodyCourier).trim() === ''

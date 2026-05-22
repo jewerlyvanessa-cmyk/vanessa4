@@ -5,63 +5,15 @@ const {
   normalizeBranchType,
   ensureBranchesBranchTypeColumn,
 } = require('../lib/branches_schema');
+const { handleBranchesListGet } = require('../lib/branches_list_handler');
 
 const router = express.Router();
 
 // GET /api/branches/:id/logo — sama dengan GET /branches/:id/logo di server.js (faktur PDF / Flutter web)
 router.get('/branches/:id/logo', (req, res) => handleBranchLogoGet(req, res, pool));
 
-// GET /api/branches - Get all branches
-router.get('/branches', async (req, res) => {
-  try {
-    await ensureBranchesBranchTypeColumn(pool);
-    const typeFilter = String(req.query.branch_type ?? '').trim().toLowerCase();
-    const allowedTypes = new Set(['toko', 'warehouse', 'workshop', 'pusat']);
-    const params = [];
-    let where = '';
-    if (allowedTypes.has(typeFilter)) {
-      where = ' WHERE branch_type = $1';
-      params.push(typeFilter);
-    }
-    const result = await pool.query(
-      `
-      SELECT
-        branch_id,
-        name,
-        code,
-        alias,
-        initials,
-        address,
-        phone_number,
-        status,
-        branch_type,
-        created_at,
-        updated_at
-      FROM branches
-      ${where}
-      ORDER BY name ASC
-    `,
-      params
-    );
-    const rows = result.rows.map((row) => ({
-      branch_id: row.branch_id != null ? String(row.branch_id) : '',
-      name: row.name,
-      code: row.code,
-      alias: row.alias,
-      initials: row.initials,
-      address: row.address,
-      phone_number: row.phone_number,
-      status: row.status,
-      branch_type: normalizeBranchType(row.branch_type),
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
-    res.json(rows);
-  } catch (err) {
-    console.error('Error fetching branches:', err.message);
-    res.status(500).json({ error: 'Server Error' });
-  }
-});
+// GET /api/branches — sama dengan GET /branches (handler bersama)
+router.get('/branches', (req, res) => handleBranchesListGet(req, res, pool));
 
 // GET /api/branches/:id - Get branch by ID (sertakan logo_url agar sama dengan GET /branches/:id — dipakai faktur PDF / klien)
 router.get('/branches/:id', async (req, res) => {

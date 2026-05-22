@@ -108,21 +108,21 @@ Future<Uint8List?> _httpGetBytes(
 Future<String?> fetchBranchLogoUrlFromBranchesApi(String branchId) async {
   final id = branchId.trim();
   if (id.isEmpty) return null;
-  for (final p in ['/branches/$id', '/api/branches/$id']) {
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('${NetworkConfig.baseUrl}$p'),
-            headers: NetworkConfig.defaultHeaders,
-          )
-          .timeout(const Duration(seconds: 6));
-      if (resp.statusCode != 200) continue;
+  try {
+    final resp = await http
+        .get(
+          Uri.parse('${NetworkConfig.baseUrl}/branches/$id'),
+          headers: NetworkConfig.defaultHeaders,
+        )
+        .timeout(const Duration(seconds: 6));
+    if (resp.statusCode == 200) {
       final decoded = jsonDecode(resp.body);
-      if (decoded is! Map) continue;
-      final s = decoded['logo_url']?.toString().trim();
-      if (s != null && s.isNotEmpty) return s;
-    } catch (_) {}
-  }
+      if (decoded is Map) {
+        final s = decoded['logo_url']?.toString().trim();
+        if (s != null && s.isNotEmpty) return s;
+      }
+    }
+  } catch (_) {}
   return null;
 }
 
@@ -136,13 +136,10 @@ Future<Uint8List?> loadBranchLogoRasterBytesForPdf(String branchId) async {
 
   Uint8List? out;
   try {
-    for (final logoPath in ['/branches/$id/logo', '/api/branches/$id/logo']) {
-      final proxy = '${NetworkConfig.baseUrl}$logoPath';
-      final via = await _httpGetBytes(proxy, imageBinary: true);
-      if (via != null && via.isNotEmpty) {
-        out = via;
-        break;
-      }
+    final proxy = '${NetworkConfig.baseUrl}/branches/$id/logo';
+    final via = await _httpGetBytes(proxy, imageBinary: true);
+    if (via != null && via.isNotEmpty) {
+      out = via;
     }
     if (out == null) {
       final remote = await fetchBranchLogoUrlFromBranchesApi(id);

@@ -125,9 +125,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Request log awal rantai — berlaku untuk semua route yang didaftarkan setelahnya.
+// Request log — nonaktif di production (kurangi noise I/O).
 app.use((req, res, next) => {
-  console.log(`HTTP ${req.method} ${req.url}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`HTTP ${req.method} ${req.url}`);
+  }
   next();
 });
 

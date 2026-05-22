@@ -34,28 +34,27 @@ Future<WorkshopSuratJalanBranches> resolveWorkshopSuratJalanBranches({
   String notes = '',
 }) async {
   var toName = 'Workshop / Bengkel';
-  for (final path in ['/branches', '/api/branches']) {
-    try {
-      final resp = await http.get(
-        Uri.parse('${NetworkConfig.baseUrl}$path'),
-        headers: NetworkConfig.defaultHeaders,
-      );
-      if (resp.statusCode != 200) continue;
+  try {
+    final resp = await http.get(
+      Uri.parse('${NetworkConfig.baseUrl}/branches'),
+      headers: NetworkConfig.defaultHeaders,
+    );
+    if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body);
-      if (data is! List) continue;
-      for (final e in data) {
-        if (e is! Map) continue;
-        final type = (e['branch_type'] ?? '').toString().trim().toLowerCase();
-        if (type != 'workshop') continue;
-        final n = (e['name'] ?? '').toString().trim();
-        if (n.isNotEmpty) {
-          toName = n;
-          break;
+      if (data is List) {
+        for (final e in data) {
+          if (e is! Map) continue;
+          final type = (e['branch_type'] ?? '').toString().trim().toLowerCase();
+          if (type != 'workshop') continue;
+          final n = (e['name'] ?? '').toString().trim();
+          if (n.isNotEmpty) {
+            toName = n;
+            break;
+          }
         }
       }
-      break;
-    } catch (_) {}
-  }
+    }
+  } catch (_) {}
   return WorkshopSuratJalanBranches(
     fromBranchName: storeBranchName.isEmpty ? 'Toko' : storeBranchName,
     toBranchName: toName,

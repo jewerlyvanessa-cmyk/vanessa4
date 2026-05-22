@@ -39,18 +39,10 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
   }
 
   Future<http.Response> _fetchBranchesList(String baseUrl) async {
-    final q = Uri(queryParameters: {'branch_type': widget.branchTypeScope});
-    final primary = await http.get(
-      Uri.parse('$baseUrl/branches').replace(queryParameters: q.queryParameters),
-      headers: NetworkConfig.defaultHeaders,
+    final uri = Uri.parse('$baseUrl/branches').replace(
+      queryParameters: {'branch_type': widget.branchTypeScope},
     );
-    if (primary.statusCode == 200) return primary;
-    final fallback = await http.get(
-      Uri.parse('$baseUrl/api/branches').replace(queryParameters: q.queryParameters),
-      headers: NetworkConfig.defaultHeaders,
-    );
-    if (fallback.statusCode == 200) return fallback;
-    return primary;
+    return http.get(uri, headers: NetworkConfig.defaultHeaders);
   }
 
   List<Map<String, dynamic>> _parseBranchesList(dynamic branchesData) {

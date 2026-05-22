@@ -111,7 +111,7 @@ class _FakturPageState extends State<FakturPage> {
     if (branchId.isEmpty) return 'VANESSA GOLD & DIAMOND';
 
     try {
-      final url = '${NetworkConfig.baseUrl}/api/branches/$branchId';
+      final url = '${NetworkConfig.baseUrl}/branches/$branchId';
       final resp = await http
           .get(Uri.parse(url), headers: NetworkConfig.defaultHeaders)
           .timeout(const Duration(seconds: 8));
