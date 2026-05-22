@@ -330,7 +330,21 @@ abstract final class OwnerDashboardService {
     return (qty: stockListSumQuantity(visible), sku: visible.length);
   }
 
-  @Deprecated('Use loadDashboard')
+  /// Ringkasan kartu saja (tanpa muat ulang daftar order jika cache ada).
+  static Future<OwnerDashboardSnapshot> loadSummary({
+    required List<Map<String, dynamic>> branches,
+    String? dateYmd,
+    bool forceRefresh = false,
+  }) async {
+    final d = await loadDashboard(
+      branches: branches,
+      dateYmd: dateYmd ?? BusinessCalendar.todayYmd(),
+      forceRefresh: forceRefresh,
+    );
+    return d.snapshot;
+  }
+
+  @Deprecated('Use loadSummary or loadDashboard')
   static Future<OwnerDashboardSnapshot> loadSnapshot({
     required List<Map<String, dynamic>> branches,
     String? dateYmd,

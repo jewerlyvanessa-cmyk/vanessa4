@@ -677,6 +677,166 @@ function registerOrdersCoreRoutes(app, deps) {
     return true;
   }
   
+  function assertStoreOperationalCategoryManager(req, res) {
+    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
+    if (role === 'manajer' || role === 'superadmin' || role === 'owner') {
+      return true;
+    }
+    res.status(403).json({ error: 'Hanya manajer dapat mengelola kategori' });
+    return false;
+  }
+
+  function mapStoreOperationalCategoryRow(r) {
+    return {
+      category_id: r.category_id != null ? String(r.category_id) : null,
+      name: r.name,
+      entry_kind: r.entry_kind === 'income' ? 'income' : 'expense',
+      sort_order: r.sort_order != null ? Number(r.sort_order) : 0,
+      is_active: r.is_active !== false,
+    };
+  }
+
+  app.get('/store-operational/categories', async (req, res) => {
+    try {
+      const kindRaw = (req.query.entry_kind ?? '').toString().trim().toLowerCase();
+      const params = [];
+      let kindSql = '';
+      if (kindRaw === 'income' || kindRaw === 'expense') {
+        params.push(kindRaw);
+        kindSql = ` AND entry_kind = $${params.length}`;
+      }
+      const result = await db.query(
+        `
+          SELECT category_id, name, entry_kind, sort_order, is_active
+          FROM store_operational_categories
+          WHERE is_active = TRUE
+            ${kindSql}
+          ORDER BY entry_kind, sort_order, lower(name)
+        `,
+        params
+      );
+      return res.status(200).json(result.rows.map(mapStoreOperationalCategoryRow));
+    } catch (e) {
+      console.error('Error listing store-operational categories:', e);
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Tabel kategori belum tersedia',
+          details:
+            'Jalankan backend/migrations/20260521_store_operational_categories.sql lalu restart server.',
+        });
+      }
+      return res.status(500).json({
+        error: 'Internal server error',
+        detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+      });
+    }
+  });
+
+  app.post('/store-operational/categories', async (req, res) => {
+    try {
+      if (!assertStoreOperationalCategoryManager(req, res)) return;
+
+      const { name, entry_kind } = req.body ?? {};
+      const catName = (name ?? '').toString().trim();
+      if (!catName || catName.length > 120) {
+        return res.status(400).json({
+          error: 'Nama kategori wajib diisi (maks. 120 karakter)',
+        });
+      }
+      const kindRaw = (entry_kind ?? '').toString().trim().toLowerCase();
+      const entryKind = kindRaw === 'income' ? 'income' : 'expense';
+
+      const maxSort = await db.query(
+        `
+          SELECT COALESCE(MAX(sort_order), 0) AS mx
+          FROM store_operational_categories
+          WHERE entry_kind = $1
+        `,
+        [entryKind]
+      );
+      const nextSort = Number(maxSort.rows[0]?.mx || 0) + 10;
+
+      const ins = await db.query(
+        `
+          INSERT INTO store_operational_categories (name, entry_kind, sort_order)
+          VALUES ($1, $2, $3)
+          RETURNING category_id, name, entry_kind, sort_order, is_active
+        `,
+        [catName, entryKind, nextSort]
+      );
+      return res.status(201).json(mapStoreOperationalCategoryRow(ins.rows[0]));
+    } catch (e) {
+      console.error('Error creating store-operational category:', e);
+      if (e && e.code === '23505') {
+        return res.status(409).json({
+          error: 'Kategori dengan nama ini sudah ada untuk jenis yang sama',
+        });
+      }
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Tabel kategori belum tersedia',
+          details:
+            'Jalankan backend/migrations/20260521_store_operational_categories.sql lalu restart server.',
+        });
+      }
+      return res.status(500).json({
+        error: 'Internal server error',
+        detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+      });
+    }
+  });
+
+  app.patch('/store-operational/categories/:category_id', async (req, res) => {
+    try {
+      if (!assertStoreOperationalCategoryManager(req, res)) return;
+
+      const categoryIdRaw = (req.params.category_id ?? '').toString().trim();
+      const categoryId = parseInt(categoryIdRaw, 10);
+      if (!Number.isFinite(categoryId) || categoryId <= 0) {
+        return res.status(400).json({ error: 'category_id tidak valid' });
+      }
+
+      const catName = (req.body?.name ?? '').toString().trim();
+      if (!catName || catName.length > 120) {
+        return res.status(400).json({
+          error: 'Nama kategori wajib diisi (maks. 120 karakter)',
+        });
+      }
+
+      const upd = await db.query(
+        `
+          UPDATE store_operational_categories
+          SET name = $2, updated_at = NOW()
+          WHERE category_id = $1 AND is_active = TRUE
+          RETURNING category_id, name, entry_kind, sort_order, is_active
+        `,
+        [categoryId, catName]
+      );
+      if (upd.rows.length === 0) {
+        return res.status(404).json({ error: 'Kategori tidak ditemukan' });
+      }
+      return res.status(200).json(mapStoreOperationalCategoryRow(upd.rows[0]));
+    } catch (e) {
+      console.error('Error updating store-operational category:', e);
+      if (e && e.code === '23505') {
+        return res.status(409).json({
+          error: 'Kategori dengan nama ini sudah ada untuk jenis yang sama',
+        });
+      }
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Tabel kategori belum tersedia',
+          details:
+            'Jalankan backend/migrations/20260521_store_operational_categories.sql lalu restart server.',
+        });
+      }
+      return res.status(500).json({
+        error: 'Internal server error',
+        detail: process.env.NODE_ENV !== 'production' ? e.message : undefined,
+      });
+    }
+  });
+
   // Pengeluaran operasional toko (Keuangan Toko — kasir)
   app.get('/store-operational', async (req, res) => {
     try {

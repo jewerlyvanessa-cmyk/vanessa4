@@ -16,6 +16,7 @@ import 'package:vanessa3/utils/file_uploader.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/kasir_scope_filter.dart';
 import 'package:vanessa3/utils/store_operational_print.dart';
+import 'package:vanessa3/modules/manajer/widgets/store_operational_categories_sheet.dart';
 
 // Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
@@ -23,9 +24,19 @@ import 'package:image_picker/image_picker.dart'
 
 enum _MoneyKind { expense, income }
 
+/// Kasir: hanya entri milik user login. Manajer: semua entri cabang aktif + kelola kategori.
+enum StoreOperationalPageScope { kasir, manajer }
+
 /// Pencatatan pemasukan & pengeluaran operasional toko (bukan pembayaran order) per cabang.
 class KeuanganTokoPage extends ConsumerStatefulWidget {
-  const KeuanganTokoPage({super.key});
+  const KeuanganTokoPage({
+    super.key,
+    this.scope = StoreOperationalPageScope.kasir,
+    this.title,
+  });
+
+  final StoreOperationalPageScope scope;
+  final String? title;
 
   @override
   ConsumerState<KeuanganTokoPage> createState() => _KeuanganTokoPageState();
@@ -57,9 +68,21 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   _MoneyKind _kind = _MoneyKind.expense;
   String _category = _expenseCategories.first;
 
-  List<String> get _categoriesForKind => _kind == _MoneyKind.income
-      ? _incomeCategories
-      : _expenseCategories;
+  List<String> _managerExpenseCategories = [];
+  List<String> _managerIncomeCategories = [];
+  bool _loadingCategories = false;
+  String? _categoriesError;
+
+  List<String> get _categoriesForKind {
+    if (!_isManajer) {
+      return _kind == _MoneyKind.income
+          ? _incomeCategories
+          : _expenseCategories;
+    }
+    return _kind == _MoneyKind.income
+        ? _managerIncomeCategories
+        : _managerExpenseCategories;
+  }
 
   bool _entryIsIncome(Map<String, dynamic> e) =>
       e['entry_kind']?.toString() == 'income';
@@ -83,6 +106,14 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   late DateTime _rangeStart;
   late DateTime _rangeEnd;
 
+  bool get _isManajer => widget.scope == StoreOperationalPageScope.manajer;
+
+  String get _pageTitle =>
+      widget.title ?? (_isManajer ? 'Pencatatan Keuangan' : 'Keuangan Toko');
+
+  String get _activeBranchId =>
+      ref.read(userStateProvider).branch.trim();
+
   @override
   void dispose() {
     _amountController.dispose();
@@ -96,7 +127,93 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     final t = managerReportDateOnly(DateTime.now());
     _rangeStart = t;
     _rangeEnd = t;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadEntries());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_isManajer) await _loadCategories();
+      await _loadEntries();
+    });
+  }
+
+  void _syncSelectedCategory() {
+    final list = _categoriesForKind;
+    if (list.isEmpty) return;
+    if (!list.contains(_category)) {
+      setState(() => _category = list.first);
+    }
+  }
+
+  Future<void> _loadCategories() async {
+    if (!_isManajer) return;
+    setState(() {
+      _loadingCategories = true;
+      _categoriesError = null;
+    });
+    try {
+      final res = await ApiClient.get('/store-operational/categories');
+      if (res.statusCode != 200) {
+        setState(() {
+          _loadingCategories = false;
+          _categoriesError = _categoriesLoadHint(res.statusCode);
+          _managerExpenseCategories = List<String>.from(_expenseCategories);
+          _managerIncomeCategories = List<String>.from(_incomeCategories);
+        });
+        _syncSelectedCategory();
+        return;
+      }
+      final decoded = jsonDecode(res.body);
+      final all = decoded is List
+          ? decoded
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      final expense = <String>[];
+      final income = <String>[];
+      for (final row in all) {
+        final name = row['name']?.toString().trim() ?? '';
+        if (name.isEmpty) continue;
+        if (row['entry_kind']?.toString() == 'income') {
+          income.add(name);
+        } else {
+          expense.add(name);
+        }
+      }
+      setState(() {
+        _loadingCategories = false;
+        _managerExpenseCategories =
+            expense.isNotEmpty ? expense : List<String>.from(_expenseCategories);
+        _managerIncomeCategories =
+            income.isNotEmpty ? income : List<String>.from(_incomeCategories);
+      });
+      _syncSelectedCategory();
+    } catch (e) {
+      setState(() {
+        _loadingCategories = false;
+        _categoriesError = null;
+        _managerExpenseCategories = List<String>.from(_expenseCategories);
+        _managerIncomeCategories = List<String>.from(_incomeCategories);
+      });
+      _syncSelectedCategory();
+    }
+  }
+
+  /// Pesan singkat jika API kategori belum tersedia di server (deploy / migrasi).
+  String? _categoriesLoadHint(int statusCode) {
+    if (statusCode == 404) {
+      return 'Server belum punya API kategori (404). Deploy backend terbaru + jalankan patch_store_operational_categories.sql, lalu restart. Daftar bawaan dipakai sementara.';
+    }
+    if (statusCode == 503) {
+      return 'Tabel kategori belum ada di database (503). Jalankan patch_store_operational_categories.sql lalu restart backend.';
+    }
+    return null;
+  }
+
+  Future<void> _openCategoryManager() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const StoreOperationalCategoriesSheet(),
+    );
+    if (mounted) await _loadCategories();
   }
 
   bool get _singleDayFilter {
@@ -105,11 +222,10 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     return managerReportSameCalendarDay(s, e);
   }
 
-  String _branchLabel() {
-    final u = ref.read(userStateProvider);
-    final bid = u.branch;
+  String _branchLabel([String? branchIdOverride]) {
+    final bid = branchIdOverride ?? _activeBranchId;
     if (bid.isEmpty) return 'Cabang';
-    for (final b in u.branches) {
+    for (final b in ref.read(userStateProvider).branches) {
       final id = '${b['branch_id'] ?? b['id'] ?? ''}';
       if (id == bid) {
         return (b['alias'] ?? b['branch_name'] ?? b['name'] ?? bid)
@@ -119,13 +235,15 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     return 'Cabang $bid';
   }
 
-  /// Query scope: cabang aktif + entri milik user login (selaras laporan kasir).
+  /// Query API: cabang wajib; filter user hanya untuk kasir.
   Map<String, String>? _listScopeQuery() {
-    final u = ref.read(userStateProvider);
-    final branchId = u.branch.trim();
-    final userId = u.userId;
-    if (userId == null) return null;
+    final branchId = _activeBranchId;
     if (branchId.isEmpty) return null;
+    if (_isManajer) {
+      return {'branch_id': branchId};
+    }
+    final userId = ref.read(userStateProvider).userId;
+    if (userId == null) return null;
     return {
       'branch_id': branchId,
       'user_id': userId.toString(),
@@ -133,9 +251,13 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   }
 
   String _scopeSubtitle() {
+    final branch = _branchLabel();
+    if (_isManajer) {
+      return '$branch · Semua entri cabang aktif';
+    }
     final u = ref.read(userStateProvider);
     final cashier = u.username.isEmpty ? 'Kasir' : u.username;
-    return '${_branchLabel()} · $cashier${u.userId != null ? ' (ID ${u.userId})' : ''}';
+    return '$branch · $cashier${u.userId != null ? ' (ID ${u.userId})' : ''}';
   }
 
   Future<void> _pickDateRange() async {
@@ -232,7 +354,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
 
   Future<void> _openEntrySheet(Map<String, dynamic> e) async {
     final proofUrl = _normalizeUrl(e['proof_photo_url']);
-    final branchId = ref.read(userStateProvider).branch;
+    final branchId = _activeBranchId;
     final entryId = e['entry_id']?.toString() ?? '';
 
     String kindLabel(bool income) => income ? 'Pemasukan' : 'Pengeluaran';
@@ -466,14 +588,24 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
         return;
       }
       final decoded = jsonDecode(res.body);
-      final filteredUid = int.tryParse(scope['user_id'] ?? '') ?? 0;
-      final entries = filteredUid > 0
-          ? parseKasirOperationalListResponse(
-              decoded,
-              filteredUid,
-              requestedUserScope: true,
-            )
-          : <Map<String, dynamic>>[];
+      final List<Map<String, dynamic>> entries;
+      if (_isManajer) {
+        entries = decoded is List
+            ? decoded
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList()
+            : <Map<String, dynamic>>[];
+      } else {
+        final filteredUid = int.tryParse(scope['user_id'] ?? '') ?? 0;
+        entries = filteredUid > 0
+            ? parseKasirOperationalListResponse(
+                decoded,
+                filteredUid,
+                requestedUserScope: true,
+              )
+            : <Map<String, dynamic>>[];
+      }
       setState(() {
         _entries = entries;
         _loadingList = false;
@@ -498,7 +630,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     if (!_formKey.currentState!.validate()) return;
 
     final userState = ref.read(userStateProvider);
-    final branch = userState.branch.trim();
+    final branch = _activeBranchId;
     if (userState.userId == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -601,7 +733,8 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   @override
   Widget build(BuildContext context) {
     ref.listen(userStateProvider, (prev, next) {
-      if (prev?.branch != next.branch || prev?.userId != next.userId) {
+      if (!_isManajer &&
+          (prev?.branch != next.branch || prev?.userId != next.userId)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _loadEntries();
         });
@@ -634,7 +767,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Keuangan Toko'),
+        title: Text(_pageTitle),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(28),
           child: Align(
@@ -651,6 +784,12 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
           ),
         ),
         actions: [
+          if (_isManajer)
+            IconButton(
+              icon: const Icon(Icons.category_outlined),
+              tooltip: 'Kelola kategori',
+              onPressed: _openCategoryManager,
+            ),
           IconButton(
             icon: const Icon(Icons.print_outlined),
             tooltip: 'Cetak PDF',
@@ -669,7 +808,9 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
           padding: const EdgeInsets.all(16),
           children: [
             Text(
-              'Catat pemasukan/pengeluaran operasional — hanya entri Anda di cabang aktif (di luar pembayaran order).',
+              _isManajer
+                  ? 'Catat uang masuk dan uang keluar operasional cabang aktif (di luar pembayaran order).'
+                  : 'Catat pemasukan/pengeluaran operasional — hanya entri Anda di cabang aktif (di luar pembayaran order).',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: cs.onSurfaceVariant,
                     fontSize: AppTypography.bodySmall,
@@ -716,27 +857,67 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                         onSelectionChanged: (s) {
                           setState(() {
                             _kind = s.first;
-                            _category = _categoriesForKind.first;
                           });
+                          _syncSelectedCategory();
                         },
                       ),
                       const SizedBox(height: 12),
+                      if (_isManajer && _categoriesError != null) ...[
+                        Text(
+                          _categoriesError!,
+                          style: TextStyle(
+                            color: cs.error,
+                            fontSize: AppTypography.bodySmall,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       DropdownButtonFormField<String>(
                         key: ValueKey<String>('cat_$_kind'),
-                        initialValue: _category,
-                        decoration: const InputDecoration(
+                        initialValue: _categoriesForKind.contains(_category)
+                            ? _category
+                            : (_categoriesForKind.isNotEmpty
+                                ? _categoriesForKind.first
+                                : null),
+                        decoration: InputDecoration(
                           labelText: 'Kategori',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: _isManajer && _loadingCategories
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              : null,
                         ),
                         items: _categoriesForKind
                             .map(
                               (c) => DropdownMenuItem(value: c, child: Text(c)),
                             )
                             .toList(),
-                        onChanged: (v) {
-                          if (v != null) setState(() => _category = v);
-                        },
+                        onChanged: (_loadingCategories ||
+                                _categoriesForKind.isEmpty)
+                            ? null
+                            : (v) {
+                                if (v != null) setState(() => _category = v);
+                              },
                       ),
+                      if (_isManajer) ...[
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: _openCategoryManager,
+                            icon: const Icon(Icons.edit_note, size: 18),
+                            label: const Text('Kelola kategori'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _amountController,
@@ -1063,9 +1244,19 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                               ),
                         ),
                         if (notes.isNotEmpty) Text(notes),
+                        if (_isManajer &&
+                            (e['user_id']?.toString().trim().isNotEmpty ??
+                                false))
+                          Text(
+                            'User ID: ${e['user_id']}',
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
                       ],
                     ),
-                    isThreeLine: notes.isNotEmpty,
+                    isThreeLine: notes.isNotEmpty ||
+                        (_isManajer &&
+                            (e['user_id']?.toString().trim().isNotEmpty ??
+                                false)),
                     trailing: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.end,

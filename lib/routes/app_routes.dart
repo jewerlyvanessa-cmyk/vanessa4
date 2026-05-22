@@ -120,6 +120,7 @@ class AppRoutes {
   static const String kasirKeuangan = '/kasir/keuangan';
   static const String kasirReports = '/kasir/reports';
   static const String kasirPayment = '/kasir/payment';
+  static const String manajerKeuangan = '/manager/keuangan';
   static const String manajerSystemSettings = '/manager/system_settings';
   static const String stockist = '/stockist';
   static const String switchBranchRole = '/switch_branch_role';
@@ -147,6 +148,10 @@ class AppRoutes {
     manajerStockCabang: (context) => const StockCabangPage(),
     manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
+    manajerKeuangan: (context) => const KeuanganTokoPage(
+          scope: StoreOperationalPageScope.manajer,
+          title: 'Pencatatan Keuangan',
+        ),
     warehouseStock: (context) => const StockPage(),
     warehouseGoodsTransfer: (context) =>
         const GoodsTransferPage(branchTypeScope: 'warehouse'),

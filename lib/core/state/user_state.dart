@@ -62,8 +62,15 @@ class UserStateNotifier extends StateNotifier<UserState> {
   static const String _apiBaseUrlKey = 'api_base_url';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
+  Future<void>? _loadFuture;
+
   UserStateNotifier() : super(UserState()) {
-    _loadUserData();
+    _loadFuture = _loadUserData();
+  }
+
+  /// Tunggu restore sesi dari storage (web: hindari flash login / rute salah).
+  Future<void> ensureLoaded() async {
+    await (_loadFuture ?? _loadUserData());
   }
 
   Future<void> _loadUserData() async {

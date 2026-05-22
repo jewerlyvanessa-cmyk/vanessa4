@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'core/state/user_state.dart';
 import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
 import 'providers/network_provider.dart';
@@ -108,9 +109,13 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
         Locale('en', 'US'),
       ],
       locale: const Locale('id', 'ID'),
-      routes: AppRoutes.routes,
+      // Web: hash di URL (#/dashboard) tidak boleh melewati gate login.
+      initialRoute: '/',
+      routes: <String, WidgetBuilder>{
+        '/': (context) => const _AppHomeGate(),
+        ...AppRoutes.routes,
+      },
       onGenerateRoute: AppRoutes.onGenerateRoute,
-      home: const _AppHomeGate(),
       builder: (context, child) {
         final mq = ResponsiveLayout.clampMediaQuery(MediaQuery.of(context));
         Widget navigatorChild = MediaQuery(
@@ -193,23 +198,32 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
 }
 
 
-class _AppHomeGate extends ConsumerWidget {
+class _AppHomeGate extends ConsumerStatefulWidget {
   const _AppHomeGate();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final userState = ref.watch(userStateProvider);
-    final hasSession = userState.userId != null && userState.role.isNotEmpty;
-    if (!hasSession) {
-      // LoginPage is registered in AppRoutes.routes, but returning it directly
-      // avoids relying on initialRoute during async state hydration.
-      return const LoginPage();
-    }
+  ConsumerState<_AppHomeGate> createState() => _AppHomeGateState();
+}
 
-    // Route to the correct main page based on current role.
-    // We intentionally build via AppRoutes.routes to avoid importing every module here.
-    final role = userState.role.trim();
-    final route = switch (role) {
+class _AppHomeGateState extends ConsumerState<_AppHomeGate> {
+  bool _hydrated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.read(userStateProvider.notifier).ensureLoaded().then((_) {
+      if (mounted) setState(() => _hydrated = true);
+    });
+  }
+
+  bool _hasValidSession(UserState userState) {
+    return userState.userId != null &&
+        userState.role.trim().isNotEmpty &&
+        userState.authToken.trim().isNotEmpty;
+  }
+
+  String _homeRouteForRole(String role) {
+    return switch (role.trim().toLowerCase()) {
       'cs' => AppRoutes.cs,
       'kasir' => AppRoutes.kasir,
       'superadmin' => AppRoutes.superadmin,
@@ -222,16 +236,40 @@ class _AppHomeGate extends ConsumerWidget {
       'stockist' => AppRoutes.stockist,
       _ => AppRoutes.dashboard,
     };
+  }
 
-    // Use Navigator to *redirect* so we never stay on the wrong home widget.
+  @override
+  Widget build(BuildContext context) {
+    if (!_hydrated) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final userState = ref.watch(userStateProvider);
+    if (!_hasValidSession(userState)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final name = ModalRoute.of(context)?.settings.name;
+        if (name != AppRoutes.login && name != '/') {
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            AppRoutes.login,
+            (r) => false,
+          );
+        }
+      });
+      return const LoginPage();
+    }
+
+    final route = _homeRouteForRole(userState.role);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final current = ModalRoute.of(context)?.settings.name;
       if (current != route) {
         Navigator.of(context).pushNamedAndRemoveUntil(route, (r) => false);
       }
     });
 
-    // While redirecting, show a lightweight placeholder to avoid flashing dashboard content.
     return const Scaffold(
       body: Center(child: CircularProgressIndicator()),
     );

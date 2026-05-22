@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/owner/data/owner_dashboard_service.dart';
 import 'package:vanessa3/modules/owner/widgets/owner_global_orders_section.dart';
-import 'package:vanessa3/modules/owner/widgets/owner_summary_card.dart';
+import 'package:vanessa3/shared_widgets/global_summary_card.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
@@ -107,7 +107,7 @@ class _OwnerMainPageState extends ConsumerState<OwnerMainPage> {
             : (w - gap * (cols - 1)) / cols;
 
         final cards = [
-          OwnerSummaryCard(
+          GlobalSummaryCard(
             icon: Icons.trending_up,
             color: Colors.orange,
             title: 'PENJUALAN GLOBAL',
@@ -118,7 +118,7 @@ class _OwnerMainPageState extends ConsumerState<OwnerMainPage> {
             onTap: () =>
                 pushAppRoute(context, AppRoutes.ownerSalesGlobal),
           ),
-          OwnerSummaryCard(
+          GlobalSummaryCard(
             icon: Icons.currency_exchange,
             color: Colors.deepOrange,
             title: 'BUYBACK GLOBAL',
@@ -129,7 +129,7 @@ class _OwnerMainPageState extends ConsumerState<OwnerMainPage> {
             onTap: () =>
                 pushAppRoute(context, AppRoutes.ownerBuybackGlobal),
           ),
-          OwnerSummaryCard(
+          GlobalSummaryCard(
             icon: Icons.inventory,
             color: Colors.teal,
             title: 'STOK GLOBAL',
