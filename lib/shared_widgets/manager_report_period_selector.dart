@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 
 /// Batas hari inklusif, selaras backend (`/payments/daily-summary`, order dashboard).
 const int kManagerReportMaxRangeDays = 93;
@@ -85,12 +86,11 @@ class ManagerReportPeriodSelector extends StatelessWidget {
     final last = DateTime(now.year, now.month, now.day);
     final s0 = managerReportDateOnly(rangeStart);
     final e0 = managerReportDateOnly(rangeEnd);
-    final picked = await showDateRangePicker(
+    final picked = await showAppDateRangePicker(
       context: context,
       firstDate: first,
       lastDate: last,
       initialDateRange: DateTimeRange(start: s0, end: e0),
-      locale: const Locale('id', 'ID'),
     );
     if (picked == null) return;
     var s = managerReportDateOnly(picked.start);
@@ -115,12 +115,11 @@ class ManagerReportPeriodSelector extends StatelessWidget {
     final first = DateTime(now.year - 1);
     final last = DateTime(now.year, now.month, now.day);
     final cur = managerReportDateOnly(rangeStart);
-    final picked = await showDatePicker(
+    final picked = await showAppDatePicker(
       context: context,
       initialDate: cur,
       firstDate: first,
       lastDate: last,
-      locale: const Locale('id', 'ID'),
     );
     if (picked == null) return;
     final d = managerReportDateOnly(picked);

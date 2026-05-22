@@ -8,6 +8,7 @@ import 'package:vanessa3/utils/network_config.dart';
 const String kFakturPaymentSummaryKey = '_faktur_payment_summary';
 const String kFakturBranchesKey = '_faktur_branches';
 const String kFakturItemConditionsKey = '_faktur_item_conditions';
+const String kFakturContextLoadedKey = '_faktur_context_loaded';
 
 /// Ringkasan pembayaran untuk faktur ambil.
 Future<Map<String, double>?> fetchPaymentSummaryForPickupFaktur(
@@ -49,6 +50,7 @@ Future<bool> enrichOrderDataForFakturPrint(
 }) async {
   final oid = orderData['order_id']?.toString().trim() ?? '';
   if (oid.isEmpty) return false;
+  if (orderData[kFakturContextLoadedKey] == true) return true;
 
   final pickupBranchId = () {
     if (kind != FakturPrintKind.pickup) return '';
@@ -94,6 +96,7 @@ Future<bool> enrichOrderDataForFakturPrint(
       orderData[kFakturItemConditionsKey] = conds;
     }
 
+    orderData[kFakturContextLoadedKey] = true;
     return true;
   } catch (_) {
     return false;

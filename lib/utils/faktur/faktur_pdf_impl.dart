@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
+import 'package:vanessa3/utils/pdf_print_delivery.dart';
 import 'package:vanessa3/utils/faktur/faktur_constants.dart';
 import 'package:vanessa3/utils/faktur/faktur_image_fetch.dart';
 import 'package:vanessa3/utils/faktur/faktur_metadata.dart';
@@ -472,11 +472,13 @@ Future<void> printFakturOrderImpl(
     })();
 
     final prefetchPhase2 = await Future.wait([
-      fakturFetchBytes(
-        primaryPhotoUrlResolved,
-        imageBinary: true,
-        timeout: const Duration(seconds: 10),
-      ),
+      primaryPhotoUrlResolved == null
+          ? Future<Uint8List?>.value(null)
+          : fakturFetchBytes(
+              primaryPhotoUrlResolved,
+              imageBinary: true,
+              timeout: const Duration(seconds: 5),
+            ),
       fetchBuybackConditionFallback(
         isBuyback: isBuyback,
         item: primaryItem,
@@ -1897,21 +1899,13 @@ Future<void> printFakturOrderImpl(
         ? 'faktur_ambil_${orderData['order_number'] ?? orderData['order_id'] ?? 'order'}.pdf'
         : 'faktur_${orderData['order_number'] ?? orderData['order_id'] ?? 'order'}.pdf';
     final pdfBytes = await doc.save();
-    try {
-      final info = await Printing.info();
-      if (info.canPrint) {
-        await Printing.layoutPdf(
-          name: filename,
-          format: kFakturPageFormat,
-          onLayout: (_) async => pdfBytes,
-        );
-      } else {
-        await Printing.sharePdf(bytes: pdfBytes, filename: filename);
-      }
-    } catch (_) {
-      // Fallback for devices/emulators without stable print service.
-      await Printing.sharePdf(bytes: pdfBytes, filename: filename);
-    }
+    if (!context.mounted) return;
+    await deliverPdfDocument(
+      context,
+      pdfBytes: pdfBytes,
+      filename: filename,
+      format: kFakturPageFormat,
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(

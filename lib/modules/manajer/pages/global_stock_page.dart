@@ -26,7 +26,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
 
   List<dynamic> _items = const [];
   String _search = '';
-  String _selectedStatus = 'all';
+  String _selectedStatus = 'ready';
   String _selectedBranchId = 'all';
   String? _jenisDetailFocus;
 

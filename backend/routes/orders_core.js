@@ -12,6 +12,7 @@ const {
 } = require('../lib/payments_schema_helpers');
 const {
   getItemsColumnFlags,
+  itemSelectStockFields,
   insertManualOrderItem,
   formatDbErrorForClient,
   updateItemStatusAndStock,
@@ -24,6 +25,12 @@ const {
   getItemConditionsColumns,
   getOrdersJumlahColumnMode,
 } = require('../lib/orders_http_helpers');
+const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
+const { resolveNotaOrder } = require('../lib/order_nota_helpers');
+const {
+  timestampOnBusinessDateSql,
+  timestampOnBusinessDateBetweenSql,
+} = require('../lib/order_calendar_date_sql');
 
 function registerOrdersCoreRoutes(app, deps) {
   const { db, upload, notifyClients, getOrdersDaily } = deps;
@@ -709,13 +716,17 @@ function registerOrdersCoreRoutes(app, deps) {
         const rangeUserSql = hasUserFilter
           ? ` AND user_id = $${rangeParams.length}::bigint`
           : '';
+        const rangeDateSql = timestampOnBusinessDateBetweenSql(
+          'created_at',
+          '$2',
+          '$3'
+        );
         result = await db.query(
           `
           SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
           FROM store_operational_entries
           WHERE branch_id = $1
-            AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
-            AND created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+            AND ${rangeDateSql}
             ${rangeUserSql}
           ORDER BY created_at DESC
         `,
@@ -735,13 +746,13 @@ function registerOrdersCoreRoutes(app, deps) {
         const dayUserSql = hasUserFilter
           ? ` AND user_id = $${dayParams.length}::bigint`
           : '';
+        const dayDateSql = timestampOnBusinessDateSql('created_at', '$2');
         result = await db.query(
           `
           SELECT entry_id, branch_id, user_id, amount, category, notes, entry_kind, proof_photo_url, created_at
           FROM store_operational_entries
           WHERE branch_id = $1
-            AND created_at >= ($2::date AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
-            AND created_at < (($2::date + INTERVAL '1 day') AT TIME ZONE '${ORDER_CALENDAR_TIMEZONE}')
+            AND ${dayDateSql}
             ${dayUserSql}
           ORDER BY created_at DESC
         `,

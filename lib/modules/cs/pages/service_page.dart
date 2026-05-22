@@ -20,6 +20,7 @@ import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 int? toInt(dynamic value) {
@@ -1588,7 +1589,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
                         hintText: 'Tanggal estimasi selesai',
                       ),
                       onTap: () async {
-                        final DateTime? picked = await showDatePicker(
+                        final DateTime? picked = await showAppDatePicker(
                           context: context,
                           initialDate: DateTime.now().add(
                             const Duration(days: 4),

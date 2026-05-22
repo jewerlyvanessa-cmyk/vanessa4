@@ -7,6 +7,7 @@ import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/modules/cs/pages/faktur_page.dart';
 import 'package:vanessa3/modules/admin_toko/data/daily_orders_payments_repository.dart';
 import 'package:vanessa3/modules/admin_toko/utils/daily_orders_payments_helpers.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
 import 'package:vanessa3/utils/surat_jalan_workshop_print.dart';
@@ -96,10 +97,9 @@ class _DailyOrdersPaymentsPageState
   }
 
   Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
+    final DateTime? picked = await showAppDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime(2020),
       lastDate: BusinessCalendar.todayWibDateOnly(),
     );
     if (picked != null && picked != _selectedDate) {

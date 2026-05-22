@@ -129,14 +129,12 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
         'user_id': userId.toString(),
       };
       final payQuery = <String, String>{...scopeQ, ...periodQ};
-      final payRes = await ApiClient.get(
-        '/payments/daily-summary',
-        query: payQuery,
-      );
-      final opsRes = await ApiClient.get(
-        '/store-operational',
-        query: {...scopeQ, ...periodQ},
-      );
+      final results = await Future.wait([
+        ApiClient.get('/payments/daily-summary', query: payQuery),
+        ApiClient.get('/store-operational', query: {...scopeQ, ...periodQ}),
+      ]);
+      final payRes = results[0];
+      final opsRes = results[1];
 
       if (payRes.statusCode != 200) {
         setState(() {
@@ -153,28 +151,20 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
         return;
       }
 
-      final payDecoded = jsonDecode(payRes.body);
-      final opsDecoded = jsonDecode(opsRes.body);
-
-      var payments = <Map<String, dynamic>>[];
-      if (payDecoded is Map) {
-        final tx = payDecoded['transactions'];
-        if (tx is List) {
-          payments = filterKasirPaymentsForUser(tx, userId);
-        }
-      }
-
-      var ops = <Map<String, dynamic>>[];
-      if (opsDecoded is List) {
-        ops = filterKasirOperationalForUser(opsDecoded, userId);
-      }
-
-      final summary = summarizeKasirPaymentTransactions(payments);
+      final payParsed = parseKasirPaymentsDailySummaryResponse(
+        jsonDecode(payRes.body),
+        userId,
+      );
+      final ops = parseKasirOperationalListResponse(
+        jsonDecode(opsRes.body),
+        userId,
+        requestedUserScope: true,
+      );
 
       setState(() {
-        _payments = payments;
+        _payments = payParsed.transactions;
         _operational = ops;
-        _paymentSummary = summary;
+        _paymentSummary = payParsed.summary;
         _loading = false;
       });
     } on UnauthorizedException catch (_) {
@@ -191,10 +181,16 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map) {
-        final det = decoded['details']?.toString().trim();
+        final det = (decoded['details'] ?? decoded['detail'])
+            ?.toString()
+            .trim();
         final err = decoded['error']?.toString().trim();
         if (det != null && det.isNotEmpty) return '$fallback: $det';
-        if (err != null && err.isNotEmpty) return '$fallback: $err';
+        if (err != null &&
+            err.isNotEmpty &&
+            err != 'Internal server error') {
+          return '$fallback: $err';
+        }
       }
     } catch (_) {}
     return '$fallback (HTTP $status)';
@@ -228,7 +224,7 @@ class _KasirReportsPageState extends ConsumerState<KasirReportsPage> {
     await printKasirCombinedFinanceReport(
       context,
       periodTitle: managerReportPeriodTitle(_periodStart, _periodEnd),
-      periodSlug: managerReportIsoDate(_periodStart),
+      periodSlug: kasirReportPeriodSlug(_periodStart, _periodEnd),
       branchLabel: '${_branchLabel()} (${us.branch})',
       branchIdForLogo: us.branch.trim(),
       cashierLabel:

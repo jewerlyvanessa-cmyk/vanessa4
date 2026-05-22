@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 int _stockMutationQty(Map<String, dynamic> m) {
@@ -278,7 +279,7 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
 
   Future<void> _pickSingleDayFilter() async {
     final now = DateTime.now();
-    final picked = await showDatePicker(
+    final picked = await showAppDatePicker(
       context: context,
       initialDate: _startDate ?? now,
       firstDate: DateTime(now.year - 3),
@@ -297,7 +298,7 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
     final initialRange = (_startDate != null && _endDate != null)
         ? DateTimeRange(start: _startDate!, end: _endDate!)
         : DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now);
-    final picked = await showDateRangePicker(
+    final picked = await showAppDateRangePicker(
       context: context,
       firstDate: DateTime(now.year - 3),
       lastDate: DateTime(now.year + 2),

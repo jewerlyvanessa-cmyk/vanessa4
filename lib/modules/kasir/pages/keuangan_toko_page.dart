@@ -11,6 +11,7 @@ import 'package:vanessa3/core/network/api_exceptions.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/file_uploader.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/kasir_scope_filter.dart';
@@ -140,9 +141,8 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   Future<void> _pickDateRange() async {
     final now = DateTime.now();
     final today = managerReportDateOnly(now);
-    final picked = await showDateRangePicker(
+    final picked = await showAppDateRangePicker(
       context: context,
-      locale: const Locale('id', 'ID'),
       firstDate: DateTime(2020),
       lastDate: today,
       initialDateRange: DateTimeRange(
@@ -414,14 +414,13 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     try {
       final d = jsonDecode(body);
       if (d is Map) {
-        final err = d['error']?.toString();
-        final det = d['details']?.toString() ?? d['detail']?.toString();
-        if (err != null && err.isNotEmpty) {
-          return (det != null && det.isNotEmpty) ? '$err\n\n$det' : err;
-        }
+        final err = d['error']?.toString().trim();
+        final det = (d['details'] ?? d['detail'])?.toString().trim();
+        if (det != null && det.isNotEmpty) return det;
+        if (err != null && err.isNotEmpty) return err;
       }
     } catch (_) {}
-    return '$fallback ($statusCode)';
+    return '$fallback (HTTP $statusCode)';
   }
 
   Future<void> _loadEntries() async {
@@ -467,12 +466,14 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
         return;
       }
       final decoded = jsonDecode(res.body);
-      final uid = scope['user_id'];
-      final filteredUid = int.tryParse(uid ?? '');
-      List<Map<String, dynamic>> entries = [];
-      if (decoded is List && filteredUid != null && filteredUid > 0) {
-        entries = filterKasirOperationalForUser(decoded, filteredUid);
-      }
+      final filteredUid = int.tryParse(scope['user_id'] ?? '') ?? 0;
+      final entries = filteredUid > 0
+          ? parseKasirOperationalListResponse(
+              decoded,
+              filteredUid,
+              requestedUserScope: true,
+            )
+          : <Map<String, dynamic>>[];
       setState(() {
         _entries = entries;
         _loadingList = false;

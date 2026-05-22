@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stockist_input_report_print.dart';
 
@@ -54,7 +55,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
   }
 
   Future<void> _pickDateRange() async {
-    final picked = await showDateRangePicker(
+    final picked = await showAppDateRangePicker(
       context: context,
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 1)),

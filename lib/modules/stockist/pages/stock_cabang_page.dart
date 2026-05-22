@@ -26,7 +26,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   List<dynamic> _items = [];
   String? _selectedBranchId;
   String _search = '';
-  String _selectedStatus = 'all';
+  String _selectedStatus = 'ready';
   String? _jenisDetailFocus;
 
   @override

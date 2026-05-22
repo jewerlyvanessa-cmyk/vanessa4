@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:vanessa3/utils/faktur/faktur_payment_api.dart'
+    show enrichOrderDataForFakturPrint;
 import 'package:vanessa3/utils/faktur_print.dart'
     show
         printFakturOrder,
@@ -22,8 +25,9 @@ class FakturPage extends StatefulWidget {
 }
 
 class _FakturPageState extends State<FakturPage> {
+  late Map<String, dynamic> _orderData;
   late final Future<String> _branchTitleFuture;
-  late final Future<double> _serviceCustomDpFuture;
+  late Future<double> _serviceCustomDpFuture;
 
   String _normalizeOrderType(dynamic raw) {
     return (raw ?? '').toString().trim().toLowerCase();
@@ -78,8 +82,19 @@ class _FakturPageState extends State<FakturPage> {
   @override
   void initState() {
     super.initState();
+    _orderData = Map<String, dynamic>.from(widget.orderData);
     _branchTitleFuture = _resolveBranchTitle();
-    _serviceCustomDpFuture = resolveFakturDpAmount(widget.orderData);
+    _serviceCustomDpFuture = resolveFakturDpAmount(_orderData);
+    unawaited(_preloadFakturPrintContext());
+  }
+
+  /// Muat ringkasan bayar + logo cabang di background agar tombol cetak lebih cepat.
+  Future<void> _preloadFakturPrintContext() async {
+    await enrichOrderDataForFakturPrint(_orderData);
+    if (!mounted) return;
+    setState(() {
+      _serviceCustomDpFuture = resolveFakturDpAmount(_orderData);
+    });
   }
 
   String _branchTitleFromOrderData() {
@@ -159,7 +174,7 @@ class _FakturPageState extends State<FakturPage> {
 
   @override
   Widget build(BuildContext context) {
-    final orderData = widget.orderData;
+    final orderData = _orderData;
     if (orderData.isEmpty || !orderData.containsKey('order_id')) {
       return Scaffold(
         appBar: AppBar(title: const Text('Faktur Order')),
@@ -205,15 +220,12 @@ class _FakturPageState extends State<FakturPage> {
             IconButton(
               icon: const Icon(Icons.receipt_long_outlined),
               tooltip: 'Cetak faktur pengambilan (AMBIL)',
-              onPressed: () => printPickupServiceCustomFaktur(
-                context,
-                orderData,
-              ),
+              onPressed: () => printPickupServiceCustomFaktur(context, _orderData),
             ),
           IconButton(
             icon: const Icon(Icons.print),
             tooltip: 'Cetak faktur order (referensi)',
-            onPressed: () => printFakturOrder(context, orderData),
+            onPressed: () => printFakturOrder(context, _orderData),
           ),
         ],
       ),

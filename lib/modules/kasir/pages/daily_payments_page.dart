@@ -9,6 +9,7 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/utils/kasir_report_print.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/kasir_scope_filter.dart';
 
 class DailyPaymentsPage extends ConsumerStatefulWidget {
@@ -342,13 +343,13 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final parsed = parseKasirPaymentsDailySummaryResponse(
+          jsonDecode(response.body),
+          uid,
+        );
         setState(() {
-          final tx = (data['transactions'] as List?) ?? [];
-          // Cadangan klien: production kadang masih mengembalikan seluruh cabang.
-          final filtered = filterKasirPaymentsForUser(tx, uid);
-          _dailyPayments = filtered;
-          _summary = summarizeKasirPaymentTransactions(filtered);
+          _dailyPayments = parsed.transactions;
+          _summary = Map<String, dynamic>.from(parsed.summary);
           // Ringkasan metode pembayaran: pakai rule yang sama seperti total.
           // - jual/service/custom = masuk
           // - buyback = keluar
@@ -407,10 +408,9 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
   }
 
   Future<void> _selectDate() async {
-    final picked = await showDatePicker(
+    final picked = await showAppDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime(2020),
       lastDate: BusinessCalendar.todayWibDateOnly(),
     );
     if (picked != null && picked != _selectedDate) {

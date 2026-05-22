@@ -7,6 +7,7 @@ import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
 import 'providers/network_provider.dart';
 import 'providers/user_state_provider.dart';
+import 'utils/auth_session_end.dart';
 import 'utils/network_config.dart';
 import 'utils/network_connectivity.dart';
 import 'utils/responsive_layout.dart';
@@ -50,9 +51,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
     WebSocketNotifier.onAdminForceLogout = _onAdminForceLogout;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      NetworkConfig.onUnauthorized = () {
-        ref.read(userStateProvider.notifier).logout();
-      };
+      NetworkConfig.onUnauthorized = _onSessionEndedUnauthorized;
     });
   }
 
@@ -63,16 +62,24 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
     super.dispose();
   }
 
+  void _onSessionEndedUnauthorized() {
+    _endSessionAndRedirectToLogin(
+      message: 'Sesi telah berakhir. Silakan login kembali.',
+    );
+  }
+
   void _onAdminForceLogout(String? reason) {
-    ref.read(userStateProvider.notifier).logout();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = VanessaApp.navigatorKey.currentContext;
-      if (ctx == null) return;
-      final text = (reason != null && reason.trim().isNotEmpty)
+    _endSessionAndRedirectToLogin(
+      message: (reason != null && reason.trim().isNotEmpty)
           ? reason.trim()
-          : 'Anda dilogoutkan oleh administrator.';
-      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(text)));
-    });
+          : 'Anda dilogoutkan oleh administrator.',
+    );
+  }
+
+  void _endSessionAndRedirectToLogin({String? message}) {
+    ref.read(webSocketProvider.notifier).disconnect();
+    ref.read(userStateProvider.notifier).logout();
+    navigateToLoginClearingStack(VanessaApp.navigatorKey, message: message);
   }
 
   @override

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
-import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/main.dart';
 import 'package:vanessa3/shared_widgets/switch_branch_role_widget.dart';
+import 'package:vanessa3/utils/auth_session_end.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Logo + judul modul — teks memendek otomatis di layar sempit (hindari overflow AppBar).
@@ -99,7 +100,7 @@ class ModuleDashboardAppBar extends ConsumerWidget implements PreferredSizeWidge
           onPressed: () {
             ref.read(webSocketProvider.notifier).disconnect();
             ref.read(userStateProvider.notifier).logout();
-            Navigator.pushReplacementNamed(context, AppRoutes.login);
+            navigateToLoginClearingStack(VanessaApp.navigatorKey);
           },
         ),
       ],

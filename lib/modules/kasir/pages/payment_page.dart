@@ -1,18 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
-import 'dart:io';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/data/offline_queue.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
-import 'package:vanessa3/utils/file_uploader.dart';
+import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/payment_proof_upload.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
-
-// Conditional imports for platform-specific packages
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) '../../../utils/image_picker_stub.dart';
 
 class PaymentPage extends ConsumerStatefulWidget {
   final Map<String, dynamic> order;
@@ -30,15 +27,14 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   bool _isProcessing = false;
-  final ImagePicker _picker = ImagePicker();
-  File? _proofFile;
+  bool _proofPicking = false;
+  bool _proofUploading = false;
+  CsOrderPhotoPickResult? _proofPick;
   String? _proofUrl;
 
   @override
   void initState() {
     super.initState();
-    // Amount that will be recorded as payment amount.
-    // For cash, we will record the order total as amount, while capturing "uang diterima" separately.
     _amountController.text = (widget.order['remaining_amount'] ?? widget.order['total'])
             ?.toString() ??
         '0';
@@ -52,34 +48,83 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   }
 
   Future<void> _pickProofFromCamera() async {
-    final picked = await _picker.pickImage(source: ImageSource.camera);
-    if (picked == null) return;
-    setState(() {
-      _proofFile = File(picked.path);
-      _proofUrl = null;
-    });
+    setState(() => _proofPicking = true);
+    try {
+      final pick = await CsOrderPhotoPicker.pickFromCamera(imageQuality: 80);
+      if (pick != null && mounted) {
+        setState(() {
+          _proofPick = pick;
+          _proofUrl = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _proofPicking = false);
+    }
   }
 
   Future<void> _pickProofFromGallery() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    setState(() {
-      _proofFile = File(picked.path);
-      _proofUrl = null;
-    });
+    setState(() => _proofPicking = true);
+    try {
+      final pick = await CsOrderPhotoPicker.pickFromGallery(imageQuality: 80);
+      if (pick != null && mounted) {
+        setState(() {
+          _proofPick = pick;
+          _proofUrl = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _proofPicking = false);
+    }
   }
 
   Future<String?> _ensureProofUploaded() async {
     if (!_methodRequiresProof()) return null;
     if (_proofUrl != null && _proofUrl!.trim().isNotEmpty) return _proofUrl;
-    final f = _proofFile;
-    if (f == null) return null;
-    final url = await FileUploader.uploadImage(f);
-    if (url == null || url.trim().isEmpty) return null;
-    setState(() {
-      _proofUrl = url;
-    });
-    return url;
+    final pick = _proofPick;
+    if (pick == null || !pick.hasPhoto) return null;
+
+    setState(() => _proofUploading = true);
+    try {
+      final token = ref.read(userStateProvider).authToken;
+      final url = await PaymentProofUpload.upload(pick, token: token);
+      if (url != null && url.trim().isNotEmpty && mounted) {
+        setState(() => _proofUrl = url);
+      }
+      return url;
+    } finally {
+      if (mounted) setState(() => _proofUploading = false);
+    }
+  }
+
+  Widget? _proofPreview() {
+    final pick = _proofPick;
+    if (pick == null) return null;
+    if (pick.bytes != null && pick.bytes!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.memory(
+          pick.bytes!,
+          width: 220,
+          height: 220,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    if (!kIsWeb) {
+      final file = pick.file;
+      if (file != null) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.file(
+            file,
+            width: 220,
+            height: 220,
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+    return null;
   }
 
   double _orderTotal() {
@@ -122,7 +167,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Bukti pembayaran wajib diupload untuk transfer/QRIS/e-wallet.'),
+              content: Text(
+                'Bukti pembayaran wajib. Ambil foto atau pilih dari galeri.',
+              ),
             ),
           );
         }
@@ -135,7 +182,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           ? _composeNotesForCash(_notesController.text)
           : _notesController.text;
 
-      // Service/custom: DP → cabang order; pelunasan → cabang pickup (lihat backend).
       final orderType =
           (widget.order['order_type'] ?? '').toString().toLowerCase();
       final hc = widget.order['has_completed_payment'];
@@ -170,7 +216,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('Pembayaran berhasil!')));
-          Navigator.pop(context, true); // Return to queue with success
+          Navigator.pop(context, true);
         }
       } else {
         if (mounted) {
@@ -182,7 +228,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         }
       }
     } catch (e) {
-      // Offline-first: queue failed payment attempt for retry.
       try {
         final isCash = _paymentMethod == 'cash';
         final amountToRecord = isCash ? _orderTotal() : (double.tryParse(_amountController.text) ?? 0);
@@ -222,9 +267,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           createdAt: DateTime.now(),
         );
         await OfflineQueue.instance.enqueue(item);
-      } catch (_) {
-        // ignore queue failures
-      }
+      } catch (_) {}
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -241,7 +284,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch health check status for Live indicator
     final isServerHealthy = ref.watch(healthCheckProvider);
     final orderType =
         (widget.order['order_type'] ?? '').toString().toLowerCase();
@@ -254,6 +296,8 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         : 'Terbayar';
     final sisaLabel =
         isServiceLike ? 'Sisa tagihan (pelunasan)' : 'Sisa Tagihan';
+
+    final proofBusy = _proofPicking || _proofUploading;
 
     return Scaffold(
       appBar: AppBar(
@@ -278,7 +322,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         context: context,
         formKey: _formKey,
         children: [
-              // Order Summary
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -308,7 +351,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
               ),
               const SizedBox(height: 24),
 
-              // Payment Method
               const Text('Metode Pembayaran'),
               const SizedBox(height: 8),
               Wrap(
@@ -339,7 +381,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
               ),
               const SizedBox(height: 16),
 
-              // Amount
               if (_paymentMethod == 'cash') ...[
                 TextFormField(
                   controller: _cashReceivedController,
@@ -349,10 +390,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                     labelText: 'Uang diterima',
                     prefixText: 'Rp ',
                   ),
-                  onChanged: (_) {
-                    // Re-render kembalian
-                    setState(() {});
-                  },
+                  onChanged: (_) => setState(() {}),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Uang diterima wajib diisi';
@@ -412,35 +450,38 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: _pickProofFromCamera,
-                        icon: const Icon(Icons.camera_alt),
+                        onPressed: proofBusy ? null : _pickProofFromCamera,
+                        icon: proofBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.photo_camera_outlined),
                         label: const Text('Kamera'),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: _pickProofFromGallery,
-                        icon: const Icon(Icons.photo_library),
+                        onPressed: proofBusy ? null : _pickProofFromGallery,
+                        icon: proofBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.photo_library_outlined),
                         label: const Text('Galeri'),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (_proofFile != null)
-                  Center(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.file(
-                        _proofFile!,
-                        width: 220,
-                        height: 220,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                if (_proofFile == null && (_proofUrl == null || _proofUrl!.trim().isEmpty))
+                if (_proofPreview() != null)
+                  Center(child: _proofPreview()!),
+                if (_proofPick == null &&
+                    (_proofUrl == null || _proofUrl!.trim().isEmpty))
                   const Text(
                     'Wajib upload bukti untuk metode ini.',
                     style: TextStyle(color: Colors.red, fontSize: 12),
@@ -448,7 +489,6 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                 const SizedBox(height: 16),
               ],
 
-              // Notes
               TextFormField(
                 controller: _notesController,
                 maxLines: 3,
@@ -460,11 +500,10 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
               ),
               const SizedBox(height: 24),
 
-              // Process Payment Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _isProcessing ? null : _processPayment,
+                  onPressed: (_isProcessing || proofBusy) ? null : _processPayment,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     backgroundColor: Colors.green,
@@ -514,9 +553,8 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       onSelected: (_) {
         setState(() {
           _paymentMethod = value;
-          // Reset proof when switching methods
           if (!_methodRequiresProof()) {
-            _proofFile = null;
+            _proofPick = null;
             _proofUrl = null;
           }
         });
