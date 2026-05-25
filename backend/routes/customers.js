@@ -146,14 +146,16 @@ router.post('/customers', async (req, res) => {
       console.log('Connecting to database...');
     }
 
-    // Validasi data
-    if (!name || !phone) {
-      return res.status(400).json({ success: false, message: 'Name and phone are required.' });
+    const nameTrim = (name ?? '').toString().trim();
+    const phoneTrim = (phone ?? '').toString().trim();
+
+    if (!nameTrim) {
+      return res.status(400).json({ success: false, message: 'Name is required.' });
     }
 
     // Insert ke tabel customers (backward-compatible: only include columns that exist)
     const cols = ['name', 'phone', 'address'];
-    const values = [name, phone, address || null];
+    const values = [nameTrim, phoneTrim || null, address || null];
 
     if (email !== undefined && (await customersHasColumn('email'))) {
       cols.push('email');

@@ -29,6 +29,7 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
     {'value': 'branches', 'label': 'Cabang (Branches)'},
     {'value': 'items', 'label': 'Barang (Items)'},
     {'value': 'users', 'label': 'Pengguna (Users)'},
+    {'value': 'orders', 'label': 'Order / Transaksi (Orders)'},
   ];
 
   @override
@@ -336,6 +337,15 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
                       'Duplikasi',
                       'Data dengan ID yang sama akan diupdate, bukan ditambahkan',
                     ),
+                    if (_selectedDataType == 'orders') ...[
+                      const SizedBox(height: 12),
+                      _buildInstructionItem(
+                        'Order',
+                        'order_type: jual, buyback, service, custom. '
+                        'Update by order_id atau order_number jika sudah ada. '
+                        'Baris item order tidak diimport lewat file ini.',
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -477,8 +487,11 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
         ),
       );
 
-      // Add additional data
       request.fields['dataType'] = _selectedDataType;
+
+      final authHeaders = Map<String, String>.from(NetworkConfig.defaultHeaders)
+        ..remove('Content-Type');
+      request.headers.addAll(authHeaders);
 
       // Send request
       final response = await request.send();

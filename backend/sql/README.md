@@ -59,6 +59,30 @@ WHERE p.status = 'completed'
 | `patch_missing_columns.sql` | Subset kolom tanpa status orders |
 | `patch_items_ownership_only.sql` | Minimal setelah transaksi error |
 
+## Backup ke Google Drive (Superadmin)
+
+Menu **BACKUP DRIVE** di app Superadmin memanggil `POST /api/admin/backup/google-drive` (pg_dump → upload).
+
+**Setup di server API** (`backend/.env`):
+
+1. Google Cloud Console → aktifkan **Google Drive API** → buat **Service Account** → unduh JSON key.
+2. Buat folder di Google Drive → **Share** ke email service account (peran **Editor**).
+3. Salin **Folder ID** dari URL folder ke `GOOGLE_DRIVE_FOLDER_ID`.
+4. Set path JSON di server (jangan commit ke git):
+
+```env
+GOOGLE_DRIVE_FOLDER_ID=xxxxxxxxxxxxxxxx
+GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH=/home/vanessa/secrets/gdrive-sa.json
+```
+
+5. Di **root project** (bukan hanya folder backend): `npm install` lalu `chmod +x backend/scripts/verify_api_start.sh && backend/scripts/verify_api_start.sh`
+6. Restart API: `cd backend && pm2 restart vanessa --update-env` (atau `pm2 start ecosystem.config.cjs`)
+7. Server harus punya perintah `pg_dump` di PATH.
+
+**Login gagal / `Failed to fetch` / HTTP 502:** API tidak jalan. Penyebab umum setelah deploy backup Drive: `googleapis` belum di-install atau PM2 jalan tanpa `node_modules` root. Perbaikan di kode: `googleapis` hanya di-load saat backup (bukan saat startup). Tetap wajib `npm install` + restart PM2.
+
+Backup lokal manual: `./backend/scripts/export_full_database.sh` → `backend/sql/exports/`.
+
 ## Pindah server (data + struktur)
 
 ```bash

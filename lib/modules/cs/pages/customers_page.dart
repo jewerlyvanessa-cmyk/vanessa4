@@ -130,16 +130,17 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
 
   Future<bool> addCustomer({
     required String name,
-    required String phone,
+    String? phone,
     String? email,
     String? address,
     String? branchId,
   }) async {
     final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers');
     try {
+      final phoneTrim = phone?.trim() ?? '';
       final body = <String, dynamic>{
         'name': name.trim(),
-        'phone': phone.trim(),
+        'phone': phoneTrim.isEmpty ? null : phoneTrim,
         'address': (address == null || address.trim().isEmpty)
             ? null
             : address.trim(),
@@ -199,9 +200,9 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
         headers: NetworkConfig.defaultHeaders,
         body: json.encode({
           'name': name,
-          'email': email,
-          'phone': phone,
-          'address': address,
+          'email': email.trim().isEmpty ? null : email.trim(),
+          'phone': phone.trim().isEmpty ? null : phone.trim(),
+          'address': address.trim().isEmpty ? null : address.trim(),
         }),
       );
       if (response.statusCode == 200) {
@@ -764,11 +765,10 @@ class CustomersPage extends ConsumerWidget {
   }
 
   String? _validatePhone(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Nomor telepon tidak boleh kosong';
-    }
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
     final phoneRegex = RegExp(r'^[\+]?[0-9]{10,15}$');
-    if (!phoneRegex.hasMatch(value.trim())) {
+    if (!phoneRegex.hasMatch(trimmed)) {
       return 'Nomor telepon tidak valid (10-15 digit)';
     }
     return null;
@@ -1102,7 +1102,7 @@ dataRowMinHeight: narrow ? 40 : 44,
                       TextFormField(
                         controller: phoneController,
                         decoration: const InputDecoration(
-                          labelText: 'Nomor Telepon *',
+                          labelText: 'Nomor Telepon (opsional)',
                         ),
                         validator: _validatePhone,
                         keyboardType: TextInputType.phone,
@@ -1234,7 +1234,7 @@ dataRowMinHeight: narrow ? 40 : 44,
                   TextFormField(
                     controller: phoneController,
                     decoration: const InputDecoration(
-                      labelText: 'Nomor Telepon',
+                      labelText: 'Nomor Telepon (opsional)',
                     ),
                     validator: _validatePhone,
                     keyboardType: TextInputType.phone,

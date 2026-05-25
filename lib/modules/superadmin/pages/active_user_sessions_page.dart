@@ -292,7 +292,7 @@ class _ActiveUserSessionsPageState extends ConsumerState<ActiveUserSessionsPage>
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                'Daftar ini memuat pengguna yang sedang terhubung ke server (app terbuka, WebSocket aktif, token valid).',
+                                'Semua user yang sedang terhubung (WebSocket aktif) di seluruh cabang — tidak difilter cabang login Anda.',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                       color: Colors.grey[700],
                                     ),
@@ -335,8 +335,10 @@ const desktopW = 900.0;
                                     final role = _roleLabel(
                                       u['role_active']?.toString(),
                                     );
-                                    final branch =
-                                        (u['branch_id'] ?? '').toString();
+                                    final branch = (u['branch_display'] ??
+                                            u['branch_id'] ??
+                                            '')
+                                        .toString();
                                     final sessions = int.tryParse(
                                           u['sessions']?.toString() ?? '',
                                         ) ??

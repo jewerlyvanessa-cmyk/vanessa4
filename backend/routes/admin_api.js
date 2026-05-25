@@ -115,8 +115,64 @@ function registerAdminApiRoutes(app, deps) {
     }
   });
   
-  app.get('/api/admin/active-sessions', requireRoles('superadmin'), (req, res) => {
-    res.json(wsPresence.getActivePresenceSnapshot());
+  async function enrichActivePresenceSnapshot(snapshot) {
+    const users = Array.isArray(snapshot?.users) ? snapshot.users : [];
+    const globalRoles = new Set(['superadmin', 'owner', 'manajer']);
+    const branchIdNums = new Set();
+    for (const u of users) {
+      const role = String(u.role_active ?? '').trim().toLowerCase();
+      if (globalRoles.has(role)) continue;
+      for (const raw of u.branch_ids || []) {
+        const n = parseInt(String(raw), 10);
+        if (Number.isFinite(n) && n > 0) branchIdNums.add(n);
+      }
+    }
+    const nameById = new Map();
+    if (branchIdNums.size > 0) {
+      try {
+        const r = await db.query(
+          `
+            SELECT branch_id, name, alias
+            FROM branches
+            WHERE branch_id = ANY($1::bigint[])
+          `,
+          [[...branchIdNums]],
+        );
+        for (const row of r.rows) {
+          const id = String(row.branch_id);
+          const alias = (row.alias ?? '').toString().trim();
+          const name = (row.name ?? '').toString().trim();
+          nameById.set(id, alias || name || id);
+        }
+      } catch (e) {
+        console.warn('[active-sessions] enrich branches:', e.message);
+      }
+    }
+    for (const u of users) {
+      const role = String(u.role_active ?? '').trim().toLowerCase();
+      if (globalRoles.has(role)) {
+        u.branch_display = 'Lintas cabang';
+        u.branch_id = '';
+        continue;
+      }
+      const labels = (u.branch_ids || [])
+        .map((id) => nameById.get(String(id)) || String(id))
+        .filter((s) => s.trim() !== '');
+      u.branch_display = labels.length ? labels.join(', ') : '—';
+      u.branch_id = u.branch_ids?.[0] != null ? String(u.branch_ids[0]) : '';
+    }
+    return snapshot;
+  }
+
+  app.get('/api/admin/active-sessions', requireRoles('superadmin'), async (req, res) => {
+    try {
+      const snapshot = wsPresence.getActivePresenceSnapshot();
+      await enrichActivePresenceSnapshot(snapshot);
+      res.json(snapshot);
+    } catch (error) {
+      console.error('Error fetching active sessions:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
   
   // Superadmin: logout paksa semua koneksi Live (WebSocket) milik user — klien menerima force_logout.
@@ -141,6 +197,50 @@ function registerAdminApiRoutes(app, deps) {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  app.get(
+    '/api/admin/backup/google-drive/status',
+    requireRoles('superadmin'),
+    (req, res) => {
+      try {
+        const { getGoogleDriveBackupStatus } = require('../lib/google_drive_backup');
+        res.json(getGoogleDriveBackupStatus());
+      } catch (error) {
+        console.error('[backup/google-drive/status]', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/backup/google-drive',
+    requireRoles('superadmin'),
+    async (req, res) => {
+      try {
+        const { getGoogleDriveBackupStatus, runDatabaseBackupToGoogleDrive } =
+          require('../lib/google_drive_backup');
+        const result = await runDatabaseBackupToGoogleDrive();
+        res.json(result);
+      } catch (error) {
+        if (error.code === 'NOT_CONFIGURED' || error.code === 'MODULE_NOT_FOUND') {
+          let status = {};
+          try {
+            status = require('../lib/google_drive_backup').getGoogleDriveBackupStatus();
+          } catch (_) {
+            /* ignore */
+          }
+          return res.status(503).json({
+            error: error.message,
+            ...status,
+          });
+        }
+        console.error('[backup/google-drive]', error);
+        res.status(500).json({
+          error: error.message || 'Gagal backup ke Google Drive',
+        });
+      }
+    },
+  );
 }
 
 module.exports = { registerAdminApiRoutes };

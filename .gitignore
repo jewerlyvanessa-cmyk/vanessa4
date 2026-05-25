@@ -57,6 +57,13 @@ app.*.map.json
 /backend/.env
 /backend/.env.*
 !/backend/.env.example
+/backend/secrets/
+**/*-service-account*.json
+**/gdrive*.json
+
+# DB export dumps (local backup)
+/backend/sql/exports/*.sql
+!/backend/sql/exports/.gitkeep
 
 # User uploads (runtime — keep directory only)
 /backend/uploads/*

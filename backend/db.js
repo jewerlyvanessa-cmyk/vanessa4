@@ -36,12 +36,18 @@ if (!mustHaveEnv && (!process.env.DB_PASSWORD || process.env.DB_PASSWORD === 'pa
   );
 }
 
+/** Semua TIMESTAMP tanpa zona (orders.created_at, dll.) = jam dinding WIB. */
+const DB_SESSION_TIMEZONE =
+  process.env.DB_TIMEZONE || 'Asia/Jakarta';
+
 const poolConfig = {
   user: process.env.DB_USER || 'vanessa_store',
   host: process.env.DB_HOST || 'vanessa.id',
   database: process.env.DB_NAME || 'vanessa_store',
   password: process.env.DB_PASSWORD || 'Aza|ia2I{28gQbLk',
   port: parseInt(process.env.DB_PORT || '5432', 10),
+  // Timezone saat koneksi dibuka — hindari SET TIME ZONE terpisah (race + deprecation pg@9)
+  options: `-c timezone=${DB_SESSION_TIMEZONE}`,
 };
 
 if (process.env.DB_SSL === 'true') {
@@ -51,20 +57,6 @@ if (process.env.DB_SSL === 'true') {
 }
 
 const pool = new Pool(poolConfig);
-
-/** Semua TIMESTAMP tanpa zona (orders.created_at, dll.) = jam dinding WIB. */
-const DB_SESSION_TIMEZONE =
-  process.env.DB_TIMEZONE || 'Asia/Jakarta';
-
-async function applySessionTimezone(client) {
-  await client.query(`SET TIME ZONE '${DB_SESSION_TIMEZONE}'`);
-}
-
-pool.on('connect', (client) => {
-  applySessionTimezone(client).catch((err) => {
-    console.error('[db] SET TIME ZONE failed:', err.message);
-  });
-});
 
 console.log(
   `[db] Pool: ${poolConfig.user}@${poolConfig.host}:${poolConfig.port}/${poolConfig.database}` +
@@ -78,9 +70,5 @@ pool.on('error', (err) => {
 
 module.exports = {
   query: (text, params) => pool.query(text, params),
-  getClient: async () => {
-    const client = await pool.connect();
-    await applySessionTimezone(client);
-    return client;
-  },
+  getClient: () => pool.connect(),
 };

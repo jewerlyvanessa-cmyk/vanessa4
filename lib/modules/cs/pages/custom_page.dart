@@ -219,12 +219,16 @@ class _CustomPageState extends ConsumerState<CustomPage> {
             ),
             TextField(
               controller: emailController,
-              decoration: const InputDecoration(labelText: 'Email'),
+              decoration: const InputDecoration(
+                labelText: 'Email (opsional)',
+              ),
               keyboardType: TextInputType.emailAddress,
             ),
             TextField(
               controller: phoneController,
-              decoration: const InputDecoration(labelText: 'No. Telepon'),
+              decoration: const InputDecoration(
+                labelText: 'No. Telepon (opsional)',
+              ),
             ),
             TextField(
               controller: addressController,
@@ -256,8 +260,12 @@ class _CustomPageState extends ConsumerState<CustomPage> {
             'email': emailController.text.trim().isEmpty
                 ? null
                 : emailController.text.trim(),
-            'phone': phoneController.text,
-            'address': addressController.text,
+            'phone': phoneController.text.trim().isEmpty
+                ? null
+                : phoneController.text.trim(),
+            'address': addressController.text.trim().isEmpty
+                ? null
+                : addressController.text.trim(),
           }),
         );
 

@@ -8,12 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$BACKEND_DIR"
 
-# Muat variabel dari .env jika ada
+# Muat DB_* dari .env (hindari `source` penuh — JWT_SECRET bisa mengandung spasi)
 if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
+  eval "$(node -e "
+    const fs = require('fs');
+    const p = require('path').join(process.cwd(), '.env');
+    require('dotenv').config({ path: p });
+    for (const k of ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD']) {
+      const v = process.env[k] || '';
+      console.log('export ' + k + '=' + JSON.stringify(String(v)));
+    }
+  ")"
 fi
 
 DB_HOST="${DB_HOST:-localhost}"

@@ -13,6 +13,7 @@ import './branch_management_page.dart';
 import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import 'import_data_page.dart';
 import 'export_data_page.dart';
+import 'backup_google_drive_page.dart';
 import 'active_user_sessions_page.dart';
 
 class SuperadminMainPage extends ConsumerStatefulWidget {
@@ -147,6 +148,17 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const ExportDataPage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.cloud_upload,
+                    label: 'BACKUP DRIVE',
+                    iconColor: Colors.indigo,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const BackupGoogleDrivePage(),
                       ),
                     ),
                   ),

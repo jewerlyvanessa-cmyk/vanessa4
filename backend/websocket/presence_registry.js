@@ -39,13 +39,17 @@ function createWsPresenceRegistry(secretKey) {
           user_id: uid,
           username: meta.username,
           role_active: meta.role,
-          branch_id: meta.branch_id,
+          branch_ids: [],
           sessions: 0,
           connected_since: meta.connected_at,
         });
       }
       const row = byUser.get(uid);
       row.sessions += 1;
+      const bid = (meta.branch_id ?? '').toString().trim();
+      if (bid && !row.branch_ids.includes(bid)) {
+        row.branch_ids.push(bid);
+      }
       if (meta.connected_at < row.connected_since) {
         row.connected_since = meta.connected_at;
       }

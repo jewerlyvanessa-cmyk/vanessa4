@@ -94,7 +94,7 @@ class ApiClient {
   }
 
   static Map<String, String> _headers(Map<String, String>? extra) {
-    return <String, String>{...NetworkConfig.defaultHeaders, if (extra != null) ...extra};
+    return <String, String>{...NetworkConfig.defaultHeaders, ...?extra};
   }
 
   static String _errorMessageFromResponse(http.Response response) {

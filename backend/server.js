@@ -40,6 +40,7 @@ const { registerServerMiscRoutes } = require('./routes/server_misc');
 const { registerAdminApiRoutes } = require('./routes/admin_api');
 const { registerItemsRoutes } = require('./routes/items');
 const { registerSuppliersRoutes } = require('./routes/suppliers');
+const { registerImportDataRoutes } = require('./routes/import_data');
 
 
 const authRequired = authenticateToken(SECRET_KEY);
@@ -169,6 +170,8 @@ registerAdminApiRoutes(app, {
   requireRoles,
   authRequired,
 });
+
+registerImportDataRoutes(app, { db, authRequired, requireRoles });
 
 app.use(
   '/workshop-orders',

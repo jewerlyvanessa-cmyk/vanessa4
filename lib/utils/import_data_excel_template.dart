@@ -6,6 +6,18 @@ const Map<String, List<String>> importDataTemplateColumns = {
   'branches': ['name', 'code', 'alias', 'initials', 'address', 'phone_number'],
   'items': ['name', 'weight', 'material', 'purity', 'status', 'branch_id'],
   'users': ['username', 'password_hash', 'status'],
+  'orders': [
+    'order_id',
+    'order_type',
+    'order_number',
+    'branch_id',
+    'user_id',
+    'customer_id',
+    'total',
+    'diskon',
+    'status',
+    'mode',
+  ],
 };
 
 /// Contoh baris kedua (petunjuk isian, boleh dihapus sebelum import).
@@ -33,6 +45,18 @@ const Map<String, List<String>> importDataTemplateSampleRow = {
     '1',
   ],
   'users': ['user_baru', '(isi password / hash)', 'active'],
+  'orders': [
+    '',
+    'jual',
+    'ORD-2025-001',
+    '1',
+    '1',
+    '1',
+    '1500000',
+    '0',
+    'completed',
+    '',
+  ],
 };
 
 String importTemplateFilename(String dataType) =>
