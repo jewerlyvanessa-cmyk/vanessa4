@@ -56,6 +56,7 @@ function registerOrdersCoreRoutes(app, deps) {
       let query = `
         SELECT
           o.*,
+          u.username AS created_by_username,
           c.name as customer_name,
           c.phone as customer_phone,
           c.address as customer_address,
@@ -82,6 +83,7 @@ function registerOrdersCoreRoutes(app, deps) {
           i.tipe as item_tipe,
           ${itemsPhotoSelect}
         FROM orders o
+        LEFT JOIN users u ON u.user_id = o.user_id
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN order_items oi ON o.order_id = oi.order_id
         LEFT JOIN items i ON oi.item_id = i.item_id
@@ -353,9 +355,11 @@ function registerOrdersCoreRoutes(app, deps) {
         : null;
 
       const ordRes = await db.query(
-        `SELECT order_id, order_type, branch_id, pickup_branch_id, metadata, total
-         FROM orders
-         WHERE order_id = $1
+        `SELECT o.order_id, o.order_type, o.branch_id, o.pickup_branch_id, o.metadata, o.total,
+                o.user_id, u.username AS created_by_username
+         FROM orders o
+         LEFT JOIN users u ON u.user_id = o.user_id
+         WHERE o.order_id = $1
          LIMIT 1`,
         [orderId]
       );
@@ -462,8 +466,14 @@ function registerOrdersCoreRoutes(app, deps) {
         kerusakan: [],
       }));
 
+      const creatorUsername = (order.created_by_username ?? '').toString().trim();
+
       return res.status(200).json({
         order_id: orderId,
+        user_id: order.user_id != null ? String(order.user_id) : '',
+        created_by_username: creatorUsername || null,
+        created_by_name: creatorUsername || null,
+        cs_name: creatorUsername || null,
         payment_summary: {
           order_id: orderId,
           total,
@@ -2064,8 +2074,10 @@ function registerOrdersCoreRoutes(app, deps) {
       try {
         // Fetch the latest order row (including generated `jumlah`)
         const orderFreshResult = await itemsClient.query(
-          `SELECT o.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+          `SELECT o.*, u.username AS created_by_username,
+                  c.name as customer_name, c.phone as customer_phone, c.address as customer_address
            FROM orders o
+           LEFT JOIN users u ON u.user_id = o.user_id
            LEFT JOIN customers c ON o.customer_id = c.customer_id
            WHERE o.order_id = $1
            LIMIT 1`,

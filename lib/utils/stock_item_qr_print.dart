@@ -4,6 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:vanessa3/utils/save_download_bytes.dart';
+import 'package:vanessa3/utils/open_pdf_web_stub.dart'
+    if (dart.library.html) 'package:vanessa3/utils/open_pdf_web.dart'
+    as open_pdf_web;
 
 /// Label stok thermal: 80 × 12 mm (satu label per halaman PDF).
 const double kStockLabelWidthMm = 80;
@@ -351,7 +355,11 @@ Future<void> _saveLabelPdf(
       return;
     }
 
-    await Printing.sharePdf(bytes: bytes, filename: _labelPdfFileName());
+    await saveDownloadBytes(
+      filename: _labelPdfFileName(),
+      bytes: bytes,
+      mimeType: 'application/pdf',
+    );
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -402,20 +410,54 @@ Future<void> _runPrint(
     final bytes = await buildPdf();
     if (!context.mounted) return;
 
-    if (_useNativeLabelPrint && context.mounted) {
-      final output = await _askLabelOutput(context);
-      if (!context.mounted || output == null) return;
+    // Selalu tawarkan opsi Simpan PDF. Untuk web/desktop, ini sering lebih stabil
+    // daripada langsung print (driver/browser kadang gagal render barcode/QR).
+    final output = await _askLabelOutput(context);
+    if (!context.mounted || output == null) return;
 
-      if (output == _LabelOutput.savePdf) {
-        await _saveLabelPdf(context, bytes);
-        return;
+    if (output == _LabelOutput.savePdf) {
+      await _saveLabelPdf(context, bytes);
+      return;
+    }
+
+    // Web: lebih andal buka PDF di tab baru, lalu user print dari viewer browser.
+    // `Printing.layoutPdf` sering gagal render barcode/QR pada beberapa driver/printer.
+    if (kIsWeb) {
+      await open_pdf_web.openPdfInBrowserTab(bytes: bytes);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'PDF label dibuka di tab baru. Gunakan Print di viewer browser untuk hasil paling stabil.',
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
       }
+      return;
+    }
 
+    if (_useNativeLabelPrint && context.mounted) {
       final ok = await _printLabelNative(
         bytes,
         pageCount: _estimateLabelPdfPageCount(bytes),
       );
       if (ok) return;
+
+      // Fallback: beberapa printer/driver Android kadang gagal render page custom kecil.
+      // Simpan PDF lalu minta user cetak dari viewer/Files (biasanya lebih stabil).
+      if (!context.mounted) return;
+      await _saveLabelPdf(context, bytes);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Cetak langsung gagal. PDF label sudah disimpan — buka file tersebut lalu cetak dari viewer untuk hasil paling stabil.',
+          ),
+          duration: Duration(seconds: 5),
+        ),
+      );
+      return;
     }
 
     await Printing.layoutPdf(

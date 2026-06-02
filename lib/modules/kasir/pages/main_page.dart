@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import 'package:vanessa3/core/network/api_client.dart';
-import 'package:intl/intl.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
@@ -13,7 +12,7 @@ import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
+import 'package:vanessa3/modules/kasir/widgets/kasir_payment_queue_table.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -158,28 +157,15 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
     });
   }
 
-  String _queueNota(Map<String, dynamic> order) {
-    final n = order['order_number']?.toString().trim() ?? '';
-    return n.isEmpty ? '—' : n;
-  }
-
-  String _queueFmtMoney(num n) => NumberFormat.currency(
-    locale: 'id_ID',
-    symbol: 'Rp ',
-    decimalDigits: 0,
-  ).format(n);
-
-  num _queueAmountDue(Map<String, dynamic> order) {
-    for (final k in const ['remaining_amount', 'amount']) {
-      final v = order[k];
-      if (v == null) continue;
-      if (v is num) return v;
-      final parsed = num.tryParse(v.toString());
-      if (parsed != null) return parsed;
+  List<Map<String, dynamic>> get _pendingOrdersNormalized {
+    final out = <Map<String, dynamic>>[];
+    for (final raw in _pendingOrders) {
+      if (raw is! Map) continue;
+      final order = Map<String, dynamic>.from(raw);
+      normalizeKasirOrderMap(order);
+      out.add(order);
     }
-    final t = order['total'];
-    if (t is num) return t;
-    return num.tryParse(t?.toString() ?? '0') ?? 0;
+    return out;
   }
 
   @override
@@ -325,145 +311,18 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
                             )
                           : LayoutBuilder(
                               builder: (context, c) {
-                                final cs = Theme.of(context).colorScheme;
-                                final w = c.maxWidth;
-                                final h = c.maxHeight;
-                                final rows = <DataRow>[];
-                                for (var i = 0;
-                                    i < _pendingOrders.length;
-                                    i++) {
-                                  final raw = _pendingOrders[i];
-                                  if (raw is! Map) continue;
-                                  final order = Map<String, dynamic>.from(raw);
-                                  normalizeKasirOrderMap(order);
-                                  rows.add(
-                                    DataRow(
-                                      color: WidgetStateProperty.resolveWith(
-                                        (s) {
-                                          if (s.contains(
-                                            WidgetState.hovered,
-                                          )) {
-                                            return cs.primary
-                                                .withValues(alpha: 0.06);
-                                          }
-                                          return i.isOdd
-                                              ? cs.surfaceContainerHighest
-                                                  .withValues(alpha: 0.4)
-                                              : null;
-                                        },
-                                      ),
-                                      onSelectChanged: (selected) {
-                                        if (selected == true) {
-                                          _openPaymentPageForQueue(order);
-                                        }
-                                      },
-                                      cells: [
-                                        DataCell(
-                                          Text(
-                                            _queueNota(order),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: AppTypography.tableCell,
-                                            ),
-                                          ),
-                                          onTap: () =>
-                                              _openPaymentPageForQueue(order),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            '${order['order_type'] ?? '—'}',
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: AppTypography.tableCell,
-                                            ),
-                                          ),
-                                          onTap: () =>
-                                              _openPaymentPageForQueue(order),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            kasirOrderItemTitle(order),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: AppTypography.tableCell,
-                                            ),
-                                          ),
-                                          onTap: () =>
-                                              _openPaymentPageForQueue(order),
-                                        ),
-                                        DataCell(
-                                          Text(
-                                            _queueFmtMoney(
-                                              _queueAmountDue(order),
-                                            ),
-                                            style: TextStyle(
-                                              fontSize: AppTypography.tableCell,
-                                              fontWeight: FontWeight.w700,
-                                              color: cs.primary,
-                                            ),
-                                          ),
-                                          onTap: () =>
-                                              _openPaymentPageForQueue(order),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }
-                                return Scrollbar(
-                                  child: SizedBox(
-                                    width: w,
-                                    height: h,
-                                    child: ClipRect(
-                                      child: FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        alignment: Alignment.topLeft,
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.vertical,
-                                          child: DataTable(
-                                            headingRowHeight: 32,
-                                            dataRowMinHeight: 36,
-                                            dataRowMaxHeight: 52,
-                                            headingRowColor:
-                                                WidgetStateProperty.all(
-                                              cs.surfaceContainerHigh,
-                                            ),
-                                            columnSpacing: 6,
-                                            horizontalMargin: 6,
-                                            showCheckboxColumn: false,
-                                            dividerThickness: 0.5,
-                                            columns: [
-                                              DataColumn(
-                                                label: dataTableColumnLabel(
-                                                  'No. Nota',
-                                                ),
-                                              ),
-                                              DataColumn(
-                                                label: dataTableColumnLabel(
-                                                  'Order',
-                                                ),
-                                              ),
-                                              DataColumn(
-                                                label: dataTableColumnLabel(
-                                                  'Item',
-                                                ),
-                                              ),
-                                              DataColumn(
-                                                label: dataTableColumnLabel(
-                                                  'Jumlah',
-                                                ),
-                                                numeric: true,
-                                              ),
-                                            ],
-                                            rows: rows,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                return KasirPaymentQueueTable(
+                                  orders: _pendingOrdersNormalized,
+                                  width: c.maxWidth,
+                                  maxHeight: c.maxHeight,
+                                  showOrderTypeColumn: false,
+                                  decorated: false,
+                                  cellPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
                                   ),
+                                  onOrderTap: (order) =>
+                                      _openPaymentPageForQueue(order),
                                 );
                               },
                             ),

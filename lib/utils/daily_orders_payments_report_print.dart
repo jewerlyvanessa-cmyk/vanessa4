@@ -155,7 +155,7 @@ Future<void> printDailyOrdersPaymentsReportPdf(
               pw.Text('Tidak ada order pada filter ini.')
             else
               pw.TableHelper.fromTextArray(
-                headers: const ['No. Nota', 'Order', 'Item', 'Total', 'Status'],
+                headers: const ['No. Nota', 'Order', 'Item', 'Jumlah', 'Status'],
                 data: orderTable.map((o) {
                   final total = _orderTotal(o);
                   return [

@@ -2,21 +2,9 @@
 
 const WebSocket = require('ws');
 
-const WS_KEEPALIVE_MS = 25000;
-
 /** @param {import('http').Server} httpServer */
 function attachWebSocketServer(httpServer, presence) {
   const wss = new WebSocket.Server({ server: httpServer });
-
-  const _pingInterval = setInterval(() => {
-    wss.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.ping();
-        } catch (_) { }
-      }
-    });
-  }, WS_KEEPALIVE_MS);
 
   wss.on('connection', (ws, req) => {
     console.log('New client connected');

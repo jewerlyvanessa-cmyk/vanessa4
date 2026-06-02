@@ -231,15 +231,4 @@ abstract final class ResponsiveLayout {
     );
   }
 
-  /// Lebar maks konten di layar lebar (web desktop).
-  static Widget constrainContent(BuildContext context, Widget child) {
-    final w = widthOf(context);
-    if (w <= mediumMax) return child;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 960),
-        child: child,
-      ),
-    );
-  }
 }

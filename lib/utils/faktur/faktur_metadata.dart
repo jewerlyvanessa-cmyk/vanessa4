@@ -1,5 +1,29 @@
 import 'dart:convert';
 
+/// Nama CS / user yang membuat order (orders.user_id → users.username).
+String fakturCsDisplayName(Map<String, dynamic> orderData) {
+  for (final key in [
+    'created_by_name',
+    'cs_name',
+    'created_by_username',
+    'order_user_name',
+    'creator_username',
+  ]) {
+    final s = orderData[key]?.toString().trim() ?? '';
+    if (s.isNotEmpty && s != '-' && s.toLowerCase() != 'null') {
+      return s;
+    }
+  }
+  final user = orderData['user'];
+  if (user is Map) {
+    for (final key in ['display_name', 'name', 'username']) {
+      final s = user[key]?.toString().trim() ?? '';
+      if (s.isNotEmpty) return s;
+    }
+  }
+  return '-';
+}
+
 Map<String, dynamic> fakturMetadataMap(Map<String, dynamic> orderData) {
   final raw = orderData['metadata'];
   if (raw is Map) return Map<String, dynamic>.from(raw);

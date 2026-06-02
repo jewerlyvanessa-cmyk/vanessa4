@@ -38,7 +38,7 @@ class DailyOrdersPaymentsTable extends StatelessWidget {
       DataColumn(label: dataTableColumnLabel('Nama item')),
       DataColumn(
         numeric: true,
-        label: dataTableColumnLabel('Total', numeric: true),
+        label: dataTableColumnLabel('Jumlah', numeric: true),
       ),
       DataColumn(label: dataTableColumnLabel('Status')),
     ];
@@ -46,13 +46,15 @@ class DailyOrdersPaymentsTable extends StatelessWidget {
     final rows = transactions.map((p) {
       final oid = p['order_id']?.toString() ?? '';
       final order = orderById[oid];
-      final no =
-          dailyOrderItemFieldStr(p, const ['order_number', 'nota_order']).trim();
+      final no = dailyOrderItemFieldStr(p, const [
+        'order_number',
+        'nota_order',
+      ]).trim();
       final displayPayNo = no != '—'
           ? no
           : displayOrderNumber(order ?? const {});
-      final orderType =
-          (order?['order_type'] ?? p['order_type'] ?? '—').toString();
+      final orderType = (order?['order_type'] ?? p['order_type'] ?? '—')
+          .toString();
       final statusRaw = order?['status']?.toString();
       final amt = dailyOrdersToNum(p['amount']);
       final isOut = paymentIsExpenseOrderType(orderType);

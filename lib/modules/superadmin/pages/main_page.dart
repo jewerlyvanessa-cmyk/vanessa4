@@ -14,6 +14,7 @@ import 'package:vanessa3/modules/cs/pages/customers_page.dart';
 import 'import_data_page.dart';
 import 'export_data_page.dart';
 import 'backup_google_drive_page.dart';
+import 'backup_local_page.dart';
 import 'active_user_sessions_page.dart';
 
 class SuperadminMainPage extends ConsumerStatefulWidget {
@@ -159,6 +160,17 @@ class _SuperadminMainPageState extends ConsumerState<SuperadminMainPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const BackupGoogleDrivePage(),
+                      ),
+                    ),
+                  ),
+                  ModuleMenuEntry(
+                    icon: Icons.phone_android,
+                    label: 'BACKUP LOKAL',
+                    iconColor: Colors.brown,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const BackupLocalPage(),
                       ),
                     ),
                   ),

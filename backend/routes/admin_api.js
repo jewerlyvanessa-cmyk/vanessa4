@@ -1,10 +1,12 @@
 'use strict';
 
+const fs = require('fs');
+
 function registerAdminApiRoutes(app, deps) {
   const { db, wsPresence, orderCalendarTimezone, requireRoles, authRequired } = deps;
   const ORDER_CALENDAR_TIMEZONE = orderCalendarTimezone;
   app.get('/api/whoami', authRequired, (req, res) => {
-    res.json({ user: req.user ?? null });
+    res.json({ user: req.user ?? null }); 
   });
   
   // Debug helper: sanity-check "Order Today" counts on server.
@@ -208,6 +210,67 @@ function registerAdminApiRoutes(app, deps) {
       } catch (error) {
         console.error('[backup/google-drive/status]', error);
         res.status(500).json({ error: 'Internal server error' });
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/backup/local',
+    requireRoles('superadmin'),
+    async (req, res) => {
+      let dump;
+      try {
+        const { createPgDumpTempFile } = require('../lib/db_pg_dump');
+        dump = await createPgDumpTempFile();
+        const stat = fs.statSync(dump.filePath);
+        res.setHeader('Content-Type', 'application/sql; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${dump.fileName}"`,
+        );
+        res.setHeader('Content-Length', String(stat.size));
+
+        const stream = fs.createReadStream(dump.filePath);
+        const cleanup = () => {
+          try {
+            dump.cleanup();
+          } catch (_) {
+            /* ignore */
+          }
+        };
+        stream.on('error', (err) => {
+          cleanup();
+          if (!res.headersSent) {
+            res.status(500).json({
+              error: err.message || 'Gagal membaca file backup',
+            });
+          } else {
+            res.end();
+          }
+        });
+        res.on('close', cleanup);
+        stream.on('end', cleanup);
+        stream.pipe(res);
+      } catch (error) {
+        if (dump) {
+          try {
+            dump.cleanup();
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        console.error('[backup/local]', error);
+        if (!res.headersSent) {
+          const msg = error.message || 'Gagal backup lokal';
+          const hint =
+            msg.includes('pg_dump') || msg.includes('ENOENT')
+              ? 'Pastikan pg_dump terpasang di server dan PATH benar.'
+              : undefined;
+          res.status(500).json({
+            error: msg,
+            hint,
+          });
+        }
       }
     },
   );

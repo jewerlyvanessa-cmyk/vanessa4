@@ -163,14 +163,6 @@ app.use(
   requireRoles('superadmin', 'admin_workshop', 'tukang', 'manajer', 'stockist', 'admin_warehouse')
 );
 
-registerAdminApiRoutes(app, {
-  db,
-  wsPresence,
-  orderCalendarTimezone: ORDER_CALENDAR_TIMEZONE,
-  requireRoles,
-  authRequired,
-});
-
 registerImportDataRoutes(app, { db, authRequired, requireRoles });
 
 app.use(
@@ -213,7 +205,17 @@ app.use('/api', userInfoRoute);
 
 registerWorkshopRoutes(app, { db, notifyClients: sendNotificationToClients });
 
+// Admin API (backup lokal/Drive, sesi aktif) — didaftarkan terakhir agar tidak tertutup router /api lain.
+registerAdminApiRoutes(app, {
+  db,
+  wsPresence,
+  orderCalendarTimezone: ORDER_CALENDAR_TIMEZONE,
+  requireRoles,
+  authRequired,
+});
+
 const server = app.listen(port, '0.0.0.0', () => {
+  console.log('[routes] POST /api/admin/backup/local (superadmin backup lokal)');
   console.log(`Server running at http://0.0.0.0:${port}`);
   console.log(`Accessible at http://localhost:${port} and http://10.0.2.2:${port} (Android emulator)`);
 });

@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
-import 'package:intl/intl.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'payment_page.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
+import 'package:vanessa3/modules/kasir/widgets/kasir_payment_queue_table.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exceptions.dart';
 import '../../../utils/logger.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
 
 class PaymentQueuePage extends ConsumerStatefulWidget {
   const PaymentQueuePage({super.key});
@@ -25,29 +24,13 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
   String _error = '';
   final TextEditingController _searchController = TextEditingController();
 
-  String _orderNota(Map<String, dynamic> order) {
-    final n = order['order_number']?.toString().trim() ?? '';
-    return n.isEmpty ? '—' : n;
-  }
+  String _orderNota(Map<String, dynamic> order) =>
+      KasirPaymentQueueTable.orderNota(order);
 
-  String _fmtMoney(num n) => NumberFormat.currency(
-    locale: 'id_ID',
-    symbol: 'Rp ',
-    decimalDigits: 0,
-  ).format(n);
+  String _fmtMoney(num n) => KasirPaymentQueueTable.fmtMoney(n);
 
-  num _amountDue(Map<String, dynamic> order) {
-    for (final k in const ['remaining_amount', 'amount']) {
-      final v = order[k];
-      if (v == null) continue;
-      if (v is num) return v;
-      final n = num.tryParse(v.toString());
-      if (n != null) return n;
-    }
-    final t = order['total'];
-    if (t is num) return t;
-    return num.tryParse(t?.toString() ?? '0') ?? 0;
-  }
+  num _amountDue(Map<String, dynamic> order) =>
+      KasirPaymentQueueTable.amountDue(order);
 
   String _paymentMethodLabel(Map<String, dynamic> order) {
     final m = (order['payment_method'] ?? order['method'] ?? '')
@@ -399,121 +382,11 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
                       },
                     );
                   }
-                  final rows = <DataRow>[];
-                  for (var i = 0; i < filtered.length; i++) {
-                    final order = filtered[i];
-                    if (order.isNotEmpty) normalizeKasirOrderMap(order);
-                    rows.add(
-                      DataRow(
-                        onSelectChanged: order.isEmpty
-                            ? null
-                            : (selected) {
-                                if (selected == true) goPay(order);
-                              },
-                        color: WidgetStateProperty.resolveWith((s) {
-                          if (s.contains(WidgetState.hovered)) {
-                            return cs.primary.withValues(alpha: 0.06);
-                          }
-                          return i.isOdd
-                              ? cs.surfaceContainerHighest
-                                  .withValues(alpha: 0.45)
-                              : null;
-                        }),
-                        cells: [
-                          DataCell(
-                            Text(
-                              _orderNota(order),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: AppTypography.tableCell,
-                              ),
-                            ),
-                            onTap: order.isEmpty ? null : () => goPay(order),
-                          ),
-                          DataCell(
-                            Text(
-                              '${order['order_type'] ?? '—'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: order.isEmpty ? null : () => goPay(order),
-                          ),
-                          DataCell(
-                            Text(
-                              kasirOrderItemTitle(order),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: order.isEmpty ? null : () => goPay(order),
-                          ),
-                          DataCell(
-                            Text(
-                              _fmtMoney(_amountDue(order)),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: cs.primary,
-                              ),
-                            ),
-                            onTap: order.isEmpty ? null : () => goPay(order),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return Material(
-                    elevation: 0,
-                    color: cs.surfaceContainerLow.withValues(alpha: 0.65),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(
-                        color: cs.outlineVariant.withValues(alpha: 0.45),
-                      ),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Scrollbar(
-                      child: SizedBox(
-                        width: w,
-                        height: h,
-                        child: ClipRect(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.topLeft,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.vertical,
-                              child: DataTable(
-                                headingRowColor: WidgetStateProperty.all(
-                                  cs.surfaceContainerHigh,
-                                ),
-                                dataRowMinHeight: 40,
-                                dataRowMaxHeight: 56,
-                                columnSpacing: 6,
-                                horizontalMargin: 6,
-                                showCheckboxColumn: false,
-                                dividerThickness: 0.5,
-                                columns: [
-                                  DataColumn(
-                                    label: dataTableColumnLabel('No. Nota'),
-                                  ),
-                                  DataColumn(
-                                    label: dataTableColumnLabel('Order'),
-                                  ),
-                                  DataColumn(
-                                    label: dataTableColumnLabel('Item'),
-                                  ),
-                                  DataColumn(
-                                    label: dataTableColumnLabel('Jumlah'),
-                                    numeric: true,
-                                  ),
-                                ],
-                                rows: rows,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                  return KasirPaymentQueueTable(
+                    orders: filtered,
+                    width: w,
+                    maxHeight: h,
+                    onOrderTap: goPay,
                   );
                                 },
                               ),

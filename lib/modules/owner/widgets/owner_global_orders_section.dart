@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/admin_toko/utils/daily_orders_payments_helpers.dart';
 import 'package:vanessa3/modules/admin_toko/widgets/daily_orders_daily_table.dart';
+import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
 
 /// Blok daftar order global (dashboard Owner atau halaman penuh).
-class OwnerGlobalOrdersSection extends StatefulWidget {
+class OwnerGlobalOrdersSection extends ConsumerStatefulWidget {
   const OwnerGlobalOrdersSection({
     super.key,
     required this.ordersRaw,
@@ -26,12 +28,32 @@ class OwnerGlobalOrdersSection extends StatefulWidget {
   final bool showSectionTitle;
 
   @override
-  State<OwnerGlobalOrdersSection> createState() =>
+  ConsumerState<OwnerGlobalOrdersSection> createState() =>
       _OwnerGlobalOrdersSectionState();
 }
 
-class _OwnerGlobalOrdersSectionState extends State<OwnerGlobalOrdersSection> {
+class _OwnerGlobalOrdersSectionState
+    extends ConsumerState<OwnerGlobalOrdersSection> {
   AdminOrderFilter _orderFilter = AdminOrderFilter.all;
+
+  /// Ambil label singkat cabang dari daftar cabang user (field `alias`).
+  /// Jika tidak ada, fallback ke `initials`, lalu `name`.
+  String _branchAliasFromData(Map<String, dynamic> row) {
+    final branchId = row['branch_id']?.toString().trim() ?? '';
+    if (branchId.isEmpty) return '';
+    final user = ref.read(userStateProvider);
+    for (final b in user.branches) {
+      if (b['branch_id']?.toString() == branchId) {
+        final alias = (b['alias'] ?? '').toString().trim();
+        if (alias.isNotEmpty) return alias;
+        final initials = (b['initials'] ?? '').toString().trim();
+        if (initials.isNotEmpty) return initials.toUpperCase();
+        final name = (b['name'] ?? '').toString().trim();
+        if (name.isNotEmpty) return name;
+      }
+    }
+    return '';
+  }
 
   List<dynamic> _filteredTableRaw() {
     return rawOrdersForTable(
@@ -142,9 +164,9 @@ class _OwnerGlobalOrdersSectionState extends State<OwnerGlobalOrdersSection> {
             emptyFilterMessage: 'Tidak ada order untuk filter yang dipilih.',
             onOrderTap: (_) {},
             statusCellBuilder: (row) {
-              final branch = (row['branch_name'] ?? '').toString();
               final status = (row['status'] ?? '-').toString();
-              if (branch.isEmpty) {
+              final branchLabel = _branchAliasFromData(row);
+              if (branchLabel.isEmpty) {
                 return Text(status);
               }
               return Column(
@@ -153,7 +175,7 @@ class _OwnerGlobalOrdersSectionState extends State<OwnerGlobalOrdersSection> {
                 children: [
                   Text(status, style: const TextStyle(fontSize: 12)),
                   Text(
-                    branch,
+                    branchLabel,
                     style: TextStyle(
                       fontSize: 10,
                       color: theme.colorScheme.onSurfaceVariant,

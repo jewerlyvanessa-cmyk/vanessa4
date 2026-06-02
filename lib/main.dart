@@ -122,10 +122,6 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
           data: mq,
           child: child ?? const SizedBox.shrink(),
         );
-        navigatorChild = ResponsiveLayout.constrainContent(
-          context,
-          navigatorChild,
-        );
         navigatorChild = ResponsiveLayout.webMobileChrome(navigatorChild);
 
         // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web

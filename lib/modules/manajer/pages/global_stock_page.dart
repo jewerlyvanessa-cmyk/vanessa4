@@ -216,6 +216,57 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     return out;
   }
 
+  /// Sama seperti [_filteredItems] tapi **tanpa** filter search.
+  /// Dipakai ringkasan tabel per-cabang agar tampil konsisten seperti laporan global.
+  List<dynamic> get _statusFilteredItemsNoSearch {
+    final out = <dynamic>[];
+    for (final it in _items) {
+      if (it is! Map) continue;
+      final item = Map<String, dynamic>.from(it);
+      if (!stockItemHasPositiveQuantity(item)) continue;
+      if (_selectedStatus != 'all' &&
+          !stockItemVisibleForStatusFilter(item, _selectedStatus)) {
+        continue;
+      }
+      out.add(item);
+    }
+    return out;
+  }
+
+  List<_BranchStockSummaryRow> get _branchSummaryRows {
+    final byBranch = <String, List<dynamic>>{};
+    for (final it in _statusFilteredItemsNoSearch) {
+      if (it is! Map) continue;
+      final bid = (it['branch_id'] ?? '').toString().trim();
+      if (bid.isEmpty) continue;
+      (byBranch[bid] ??= <dynamic>[]).add(it);
+    }
+    final out = <_BranchStockSummaryRow>[];
+    for (final e in byBranch.entries) {
+      final bid = e.key;
+      final items = e.value;
+      String name = bid;
+      for (final it in items) {
+        final n = (it is Map ? (it['branch_name'] ?? '') : '').toString().trim();
+        if (n.isNotEmpty) {
+          name = n;
+          break;
+        }
+      }
+      out.add(
+        _BranchStockSummaryRow(
+          branchId: bid,
+          branchName: name,
+          skuCount: items.length,
+          qtySum: stockListSumQuantity(items),
+          weightGramSum: stockListSumWeightGram(items),
+        ),
+      );
+    }
+    out.sort((a, b) => b.qtySum.compareTo(a.qtySum));
+    return out;
+  }
+
   void _onSearchChanged(String v) => setState(() {
         _search = v;
         _jenisDetailFocus = null;
@@ -326,37 +377,187 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
                               });
                               _load();
                             },
-                            summaryItems: _filteredItems,
+                            summaryItems: _statusFilteredItemsNoSearch,
                             filterLabel: 'Filter status',
                           ),
                         ],
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                      child: StockInventorySearchFieldStateful(
-                        controller: _searchCtrl,
-                        onQueryChanged: _onSearchChanged,
-                        enabled: !_loading && _error.isEmpty,
-                        hintText:
-                            'Cari kode, nama, jenis, cabang, material, status…',
-                      ),
-                    ),
-                    Expanded(
-                      child: StockJenisTwoStepPanel(
-                        filteredItems: _filteredItems,
-                        selectedJenisLabel: _jenisDetailFocus,
-                        onSelectedJenisLabelChanged: (v) =>
-                            setState(() => _jenisDetailFocus = v),
-                        detailBuilder: (context, items) =>
-                            StockInventoryGroupedTable(
-                          filteredItems: items,
-                          showStockistActions: false,
+                    if (_selectedBranchId == 'all') ...[
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          child: _GlobalStockBranchSummaryTable(
+                            rows: _branchSummaryRows,
+                            selectedStatus: _selectedStatus,
+                          ),
                         ),
                       ),
-                    ),
+                    ] else ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                        child: StockInventorySearchFieldStateful(
+                          controller: _searchCtrl,
+                          onQueryChanged: _onSearchChanged,
+                          enabled: !_loading && _error.isEmpty,
+                          hintText:
+                              'Cari kode, nama, jenis, cabang, material, status…',
+                        ),
+                      ),
+                      Expanded(
+                        child: StockJenisTwoStepPanel(
+                          filteredItems: _filteredItems,
+                          selectedJenisLabel: _jenisDetailFocus,
+                          onSelectedJenisLabelChanged: (v) =>
+                              setState(() => _jenisDetailFocus = v),
+                          detailBuilder: (context, items) =>
+                              StockInventoryGroupedTable(
+                            filteredItems: items,
+                            showStockistActions: false,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
+    );
+  }
+}
+
+class _BranchStockSummaryRow {
+  const _BranchStockSummaryRow({
+    required this.branchId,
+    required this.branchName,
+    required this.skuCount,
+    required this.qtySum,
+    required this.weightGramSum,
+  });
+
+  final String branchId;
+  final String branchName;
+  final int skuCount;
+  final int qtySum;
+  final double weightGramSum;
+}
+
+class _GlobalStockBranchSummaryTable extends StatelessWidget {
+  const _GlobalStockBranchSummaryTable({
+    required this.rows,
+    required this.selectedStatus,
+  });
+
+  final List<_BranchStockSummaryRow> rows;
+  final String selectedStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final scope = stockUiFilterScopeLabel(selectedStatus);
+
+    Widget headerCell(String label, {bool right = false}) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Align(
+          alignment: right ? Alignment.centerRight : Alignment.centerLeft,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ),
+      );
+    }
+
+    Widget cell(
+      String text, {
+      bool right = false,
+      bool strong = false,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Align(
+          alignment: right ? Alignment.centerRight : Alignment.centerLeft,
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: right ? TextAlign.right : TextAlign.left,
+            style: strong
+                ? const TextStyle(fontWeight: FontWeight.w700)
+                : null,
+          ),
+        ),
+      );
+    }
+
+    final tableRows = <TableRow>[
+      TableRow(
+        decoration: BoxDecoration(color: cs.surfaceContainerHigh),
+        children: [
+          headerCell('Cabang ($scope)'),
+          headerCell('SKU', right: true),
+          headerCell('Qty', right: true),
+          headerCell('Berat', right: true),
+        ],
+      ),
+    ];
+
+    for (var i = 0; i < rows.length; i++) {
+      final r = rows[i];
+      tableRows.add(
+        TableRow(
+          decoration: BoxDecoration(
+            color: i.isOdd
+                ? cs.surfaceContainerHighest.withValues(alpha: 0.35)
+                : null,
+          ),
+          children: [
+            cell(r.branchName),
+            cell('${r.skuCount}', right: true),
+            cell('${r.qtySum}', right: true, strong: true),
+            cell(stockListFormatWeightGram(r.weightGramSum), right: true),
+          ],
+        ),
+      );
+    }
+
+    if (rows.isEmpty) {
+      return Center(
+        child: Text(
+          'Tidak ada stok untuk filter ini.',
+          style: TextStyle(color: cs.onSurfaceVariant),
+        ),
+      );
+    }
+
+    return Material(
+      color: cs.surfaceContainerLow.withValues(alpha: 0.55),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          child: Table(
+            columnWidths: const {
+              0: FlexColumnWidth(3.4),
+              1: FlexColumnWidth(1),
+              2: FlexColumnWidth(1),
+              3: FlexColumnWidth(1.4),
+            },
+            border: TableBorder(
+              horizontalInside: BorderSide(
+                color: cs.outlineVariant.withValues(alpha: 0.45),
+                width: 0.5,
+              ),
+            ),
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: tableRows,
+          ),
+        ),
+      ),
     );
   }
 }

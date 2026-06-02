@@ -96,6 +96,17 @@ Future<bool> enrichOrderDataForFakturPrint(
       orderData[kFakturItemConditionsKey] = conds;
     }
 
+    for (final key in [
+      'created_by_username',
+      'created_by_name',
+      'cs_name',
+    ]) {
+      final v = root[key]?.toString().trim() ?? '';
+      if (v.isNotEmpty) {
+        orderData[key] = v;
+      }
+    }
+
     orderData[kFakturContextLoadedKey] = true;
     return true;
   } catch (_) {

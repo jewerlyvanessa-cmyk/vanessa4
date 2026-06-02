@@ -23,7 +23,7 @@ class DailyOrdersDailyTable extends StatelessWidget {
   final void Function(Map<String, dynamic> order) onOrderTap;
   final Widget Function(Map<String, dynamic> row) statusCellBuilder;
   final List<Map<String, dynamic>> Function(List<Map<String, dynamic>> deduped)
-      filterDeduped;
+  filterDeduped;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +79,7 @@ class _OrdersTableMobile extends StatelessWidget {
   final void Function(Map<String, dynamic> order) onOrderTap;
   final Widget Function(Map<String, dynamic> row) statusCellBuilder;
   final List<Map<String, dynamic>> Function(List<Map<String, dynamic>> deduped)
-      filterDeduped;
+  filterDeduped;
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +164,10 @@ class _OrdersTableMobile extends StatelessWidget {
                   return DataRow(
                     cells: [
                       DataCell(
-                        Text(no, style: const TextStyle(fontSize: 12, height: 1.2)),
+                        Text(
+                          no,
+                          style: const TextStyle(fontSize: 12, height: 1.2),
+                        ),
                         onTap: openRow,
                       ),
                       DataCell(
@@ -190,10 +193,7 @@ class _OrdersTableMobile extends StatelessWidget {
                         ),
                         onTap: openRow,
                       ),
-                      DataCell(
-                        statusCellBuilder(o),
-                        onTap: openRow,
-                      ),
+                      DataCell(statusCellBuilder(o), onTap: openRow),
                     ],
                   );
                 }).toList(),
@@ -234,10 +234,9 @@ class _OrdersTableWeb extends StatelessWidget {
         maxLines: maxLines,
         overflow: TextOverflow.ellipsis,
         textAlign: align,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontSize: 12,
-              height: 1.2,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(fontSize: 12, height: 1.2),
       );
     }
 
@@ -252,10 +251,10 @@ class _OrdersTableWeb extends StatelessWidget {
     }
 
     final headerStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-          fontWeight: FontWeight.w600,
-          fontSize: 11,
-          height: 1.15,
-        );
+      fontWeight: FontWeight.w600,
+      fontSize: 11,
+      height: 1.15,
+    );
 
     Widget tappableCell(
       Map<String, dynamic> row,
@@ -275,7 +274,7 @@ class _OrdersTableWeb extends StatelessWidget {
           tableCell(Text('No. Nota', style: headerStyle)),
           tableCell(Text('Order', style: headerStyle)),
           tableCell(Text('Item', style: headerStyle)),
-          tableCell(Text('Total', style: headerStyle), numeric: true),
+          tableCell(Text('Jumlah', style: headerStyle), numeric: true),
           tableCell(Text('Status', style: headerStyle)),
         ],
       ),
@@ -293,10 +292,7 @@ class _OrdersTableWeb extends StatelessWidget {
               lines[i],
               cell((lines[i]['order_type'] ?? '—').toString(), maxLines: 1),
             ),
-            tappableCell(
-              lines[i],
-              cell(lineItemName(lines[i]), maxLines: 1),
-            ),
+            tappableCell(lines[i], cell(lineItemName(lines[i]), maxLines: 1)),
             tappableCell(
               lines[i],
               FittedBox(

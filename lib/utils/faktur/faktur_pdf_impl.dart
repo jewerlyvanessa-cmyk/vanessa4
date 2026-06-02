@@ -12,17 +12,18 @@ import 'package:vanessa3/utils/faktur/faktur_image_fetch.dart';
 import 'package:vanessa3/utils/faktur/faktur_metadata.dart';
 import 'package:vanessa3/utils/faktur/faktur_payment_api.dart';
 import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/utils/pdf_fonts.dart';
 import 'package:vanessa3/utils/terbilang.dart';
 
 Future<void> printFakturOrderImpl(
-
   BuildContext context,
   Map<String, dynamic> orderData, {
   FakturPrintKind kind = FakturPrintKind.orderTransaction,
 }) async {
   try {
+    await PdfFonts.ensureLoaded();
     final items = orderData['items'] as List<dynamic>? ?? [];
-    final doc = pw.Document();
+    final doc = pw.Document(theme: PdfFonts.theme);
 
     String? branchLogoUrlFromOrderData(Map<String, dynamic> data) {
       for (final raw in [
@@ -367,8 +368,7 @@ Future<void> printFakturOrderImpl(
     final isServiceOrder = orderType == 'service';
     final isCustomOrder = orderType == 'custom';
     final isServiceOrCustom = isServiceOrder || isCustomOrder;
-    final isPickupFaktur =
-        kind == FakturPrintKind.pickup && isServiceOrCustom;
+    final isPickupFaktur = kind == FakturPrintKind.pickup && isServiceOrCustom;
     Map<String, double>? pickupPaymentSnapshot;
     final isSaleOrder = orderType == 'jual';
     final metadata = toMap(orderData['metadata']);
@@ -479,14 +479,10 @@ Future<void> printFakturOrderImpl(
               imageBinary: true,
               timeout: const Duration(seconds: 5),
             ),
-      fetchBuybackConditionFallback(
-        isBuyback: isBuyback,
-        item: primaryItem,
-      ),
+      fetchBuybackConditionFallback(isBuyback: isBuyback, item: primaryItem),
     ]);
     final primaryPhotoBytes = prefetchPhase2[0] as Uint8List?;
-    final buybackConditionFallback =
-        prefetchPhase2[1] as Map<String, dynamic>;
+    final buybackConditionFallback = prefetchPhase2[1] as Map<String, dynamic>;
 
     String fmtMoney(dynamic v) {
       final n = double.tryParse(v?.toString() ?? '');
@@ -548,34 +544,36 @@ Future<void> printFakturOrderImpl(
     final pickupSaldoVersusDp = isPickupFaktur
         ? (pickupTotalBiayaPdf - pickupDpLinePdf)
         : 0.0;
-    final pickupDpDisplay =
-        pickupDpLinePdf > 0 ? 'Rp. ${fmtMoney(pickupDpLinePdf)}' : '-';
-    final serviceDpDisplay =
-        serviceDpAmount > 0 ? 'Rp. ${fmtMoney(serviceDpAmount)}' : '-';
+    final pickupDpDisplay = pickupDpLinePdf > 0
+        ? 'Rp. ${fmtMoney(pickupDpLinePdf)}'
+        : '-';
+    final serviceDpDisplay = serviceDpAmount > 0
+        ? 'Rp. ${fmtMoney(serviceDpAmount)}'
+        : '-';
     final pickupSaldoLineLabel = !isPickupFaktur
         ? ''
         : pickupSaldoVersusDp > 0
-            ? 'Kurang Bayar'
-            : pickupSaldoVersusDp < 0
-                ? 'Sisa Uang Muka'
-                : 'Lunas';
+        ? 'Kurang Bayar'
+        : pickupSaldoVersusDp < 0
+        ? 'Sisa Uang Muka'
+        : 'Lunas';
     final pickupSaldoLineValue = !isPickupFaktur
         ? '-'
         : 'Rp. ${fmtMoney(pickupSaldoVersusDp.abs())}';
     final pickupPaymentStatusLeft = !isPickupFaktur
         ? ''
         : pickupSaldoVersusDp > 0
-            ? 'Telah dibayar ke kasir'
-            : pickupSaldoVersusDp < 0
-                ? 'Telah dibayar ke customer'
-                : 'Lunas';
+        ? 'Telah dibayar ke kasir'
+        : pickupSaldoVersusDp < 0
+        ? 'Telah dibayar ke customer'
+        : 'Lunas';
     final pickupPaymentStatusRight = !isPickupFaktur
         ? ''
         : pickupSaldoVersusDp > 0
-            ? 'Rp. ${fmtMoney(pickupSaldoVersusDp)}'
-            : pickupSaldoVersusDp < 0
-                ? 'Rp. ${fmtMoney(-pickupSaldoVersusDp)}'
-                : '';
+        ? 'Rp. ${fmtMoney(pickupSaldoVersusDp)}'
+        : pickupSaldoVersusDp < 0
+        ? 'Rp. ${fmtMoney(-pickupSaldoVersusDp)}'
+        : '';
 
     String toTitleCase(String s) {
       final cleaned = s.trim();
@@ -593,14 +591,12 @@ Future<void> printFakturOrderImpl(
 
     final terbilangText = isPickupFaktur
         ? (pickupSaldoVersusDp != 0
-            ? toTitleCase(
-                '${terbilang(pickupSaldoVersusDp.abs().toInt()).trim()} rupiah'
-                    .trim(),
-              )
-            : '')
-        : toTitleCase(
-            '${terbilang(totalFinal.toInt()).trim()} rupiah'.trim(),
-          );
+              ? toTitleCase(
+                  '${terbilang(pickupSaldoVersusDp.abs().toInt()).trim()} rupiah'
+                      .trim(),
+                )
+              : '')
+        : toTitleCase('${terbilang(totalFinal.toInt()).trim()} rupiah'.trim());
 
     final noNota = (orderData['order_number'] ?? orderData['order_id'] ?? '-')
         .toString();
@@ -639,8 +635,7 @@ Future<void> printFakturOrderImpl(
         return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
       }
       try {
-        final dt =
-            DateTime.parse(orderData['created_at'].toString()).toLocal();
+        final dt = DateTime.parse(orderData['created_at'].toString()).toLocal();
         return '${dt.day.toString().padLeft(2, '0')} ${monthNames[dt.month - 1]} ${dt.year}';
       } catch (_) {
         return tanggal.split(' ').first;
@@ -648,12 +643,7 @@ Future<void> printFakturOrderImpl(
     })();
     final customerName = (orderData['customer_name'] ?? '-').toString();
     final customerAddr = (orderData['customer_address'] ?? '-').toString();
-    final csName =
-        (orderData['created_by_name'] ??
-                orderData['cs_name'] ??
-                orderData['username'] ??
-                '-')
-            .toString();
+    final csName = fakturCsDisplayName(orderData);
 
     final idProduk =
         (orderItemSource['kode_produk'] ?? orderItemSource['item_code'] ?? '-')
@@ -710,8 +700,8 @@ Future<void> printFakturOrderImpl(
             totalLine > 0
         ? totalLine / beratNum
         : null;
-    final hargaPerGramOrderItems = hargaPerGramOrderItemsRaw != null &&
-            hargaPerGramOrderItemsRaw > 0
+    final hargaPerGramOrderItems =
+        hargaPerGramOrderItemsRaw != null && hargaPerGramOrderItemsRaw > 0
         ? fmtMoney(hargaPerGramOrderItemsRaw)
         : (derivedHargaPerGram != null ? fmtMoney(derivedHargaPerGram) : '-');
     final hargaPerGramOrderItemsDisplay = hargaPerGramOrderItems == '-'
@@ -784,7 +774,7 @@ Future<void> printFakturOrderImpl(
 
           pw.Widget textLine(
             String text, {
-            double size = 14,
+            double size = 12,
             PdfColor? color,
             pw.FontWeight? weight,
             pw.FontStyle? style,
@@ -812,7 +802,6 @@ Future<void> printFakturOrderImpl(
               text,
               textAlign: align,
               style: pw.TextStyle(
-                font: pw.Font.helvetica(),
                 fontSize: 10,
                 fontWeight: weight,
                 fontStyle: style,
@@ -878,18 +867,18 @@ Future<void> printFakturOrderImpl(
                             width: pxX(96),
                             child: pw.Text(
                               label,
-                              style: pw.TextStyle(fontSize: 10.5),
+                              style: pw.TextStyle(fontSize: 10),
                             ),
                           ),
                           pw.Text(
                             ': ',
-                            style: const pw.TextStyle(fontSize: 10.5),
+                            style: const pw.TextStyle(fontSize: 10),
                           ),
                           pw.SizedBox(width: pxX(4)),
                           pw.Expanded(
                             child: pw.Text(
                               value,
-                              style: pw.TextStyle(fontSize: 10.5),
+                              style: pw.TextStyle(fontSize: 10),
                             ),
                           ),
                         ],
@@ -900,7 +889,7 @@ Future<void> printFakturOrderImpl(
                   pw.Widget buybackInfoLine(
                     String label,
                     String value, {
-                    bool boldValue = false,
+                    bool boldValue = true,
                     double labelWidthPx = 110,
                     double colonWidthPx = 8,
                     double leftInsetPx = 0,
@@ -914,8 +903,7 @@ Future<void> printFakturOrderImpl(
                             ? pw.TextOverflow.clip
                             : pw.TextOverflow.visible,
                         style: pw.TextStyle(
-                          font: pw.Font.helvetica(),
-                          fontSize: 9.5,
+                          fontSize: 9,
                           fontWeight: weight,
                           color: PdfColors.black,
                         ),
@@ -991,6 +979,7 @@ Future<void> printFakturOrderImpl(
                                         'MENERIMA SERVIS EMAS DAN PERAK',
                                         size: 11,
                                         color: PdfColors.white,
+                                        weight: pw.FontWeight.bold,
                                       ),
                                     ),
                                   ),
@@ -1008,6 +997,7 @@ Future<void> printFakturOrderImpl(
                                         'HARGA MENGIKUTI PASAR',
                                         size: 11,
                                         color: PdfColors.white,
+                                        weight: pw.FontWeight.bold,
                                       ),
                                     ),
                                   ),
@@ -1278,7 +1268,7 @@ Future<void> printFakturOrderImpl(
                                                 width: pxX(132),
                                                 child: detailItemText(
                                                   'ID Barang',
-                                                  align: pw.TextAlign.left,
+                                                  align: pw.TextAlign.center,
                                                 ),
                                               ),
                                               pw.Expanded(
@@ -1326,13 +1316,13 @@ Future<void> printFakturOrderImpl(
                                                 width: pxX(132),
                                                 child: detailItemText(
                                                   idProdukWithOldNota,
-                                                  align: pw.TextAlign.left,
+                                                  align: pw.TextAlign.center,
                                                 ),
                                               ),
                                               pw.Expanded(
                                                 child: detailItemText(
                                                   deskripsiDenganKadar,
-                                                  align: pw.TextAlign.left,
+                                                  align: pw.TextAlign.center,
                                                 ),
                                               ),
                                               pw.SizedBox(
@@ -1497,7 +1487,8 @@ Future<void> printFakturOrderImpl(
                                       color: PdfColors.grey500,
                                     ),
                                     pw.SizedBox(height: pxY(2)),
-                                    if (isPickupFaktur && pickupSaldoVersusDp == 0)
+                                    if (isPickupFaktur &&
+                                        pickupSaldoVersusDp == 0)
                                       pw.Center(child: detailItemText('Lunas'))
                                     else
                                       pw.Row(
@@ -1531,6 +1522,7 @@ Future<void> printFakturOrderImpl(
                                       pw.Center(
                                         child: detailItemText(
                                           'KALAU AMBIL BAWA BUKTI ORDER INI, TIDAK BAWA TIDAK DILAYANI',
+                                          weight: pw.FontWeight.bold,
                                         ),
                                       ),
                                     if (isPickupFaktur &&
@@ -1541,7 +1533,8 @@ Future<void> printFakturOrderImpl(
                                           horizontal: pxX(8),
                                         ),
                                         child: detailItemText(
-                                          'Terbilang : $terbilangText',
+                                          'Terbilang : \n'
+                                          '$terbilangText',
                                           style: pw.FontStyle.italic,
                                         ),
                                       ),
@@ -1563,11 +1556,11 @@ Future<void> printFakturOrderImpl(
                                   children: [
                                     pw.Expanded(
                                       child: pw.Text(
-                                        'Terbilang : ${twoLineTerbilang(terbilangText)}',
+                                        'Terbilang : '
+                                        '${twoLineTerbilang(terbilangText)}',
                                         maxLines: 2,
                                         overflow: pw.TextOverflow.clip,
                                         style: pw.TextStyle(
-                                          font: pw.Font.helvetica(),
                                           fontSize: 10,
                                           fontStyle: pw.FontStyle.italic,
                                           color: PdfColors.black,
@@ -1587,17 +1580,17 @@ Future<void> printFakturOrderImpl(
                                           pw.Text(
                                             'TOTAL',
                                             style: pw.TextStyle(
-                                              font: pw.Font.helvetica(),
-                                              fontSize: 11.5,
+                                              fontSize: 10,
                                               color: PdfColors.black,
+                                              fontWeight: pw.FontWeight.bold,
                                             ),
                                           ),
                                           pw.Text(
                                             'Rp. ${fmtMoney(totalFinal)}',
                                             style: pw.TextStyle(
-                                              font: pw.Font.helvetica(),
-                                              fontSize: 11.5,
+                                              fontSize: 10,
                                               color: PdfColors.black,
+                                              fontWeight: pw.FontWeight.bold,
                                             ),
                                           ),
                                         ],
@@ -1624,7 +1617,8 @@ Future<void> printFakturOrderImpl(
                                             pw.CrossAxisAlignment.start,
                                         children: [
                                           detailItemText(
-                                            'Terbilang : $terbilangText',
+                                            'Terbilang : \n'
+                                            '$terbilangText',
                                             style: pw.FontStyle.italic,
                                           ),
                                         ],
@@ -1638,7 +1632,6 @@ Future<void> printFakturOrderImpl(
                                         pw.Text(
                                           'TOTAL',
                                           style: pw.TextStyle(
-                                            font: pw.Font.helvetica(),
                                             fontSize: 10,
                                             color: PdfColors.black,
                                           ),
@@ -1647,7 +1640,6 @@ Future<void> printFakturOrderImpl(
                                         pw.Text(
                                           'Rp. ${fmtMoney(totalFinal)}',
                                           style: pw.TextStyle(
-                                            font: pw.Font.helvetica(),
                                             fontSize: 10,
                                             color: PdfColors.black,
                                           ),
@@ -1685,9 +1677,10 @@ Future<void> printFakturOrderImpl(
                                                 child: pw.Text(
                                                   'KALAU MENJUAL HARUS BAWA NOTA INI, BARANG RUSAK LAIN HARGA',
                                                   style: pw.TextStyle(
-                                                    font: pw.Font.helvetica(),
-                                                    fontSize: 10,
+                                                    fontSize: 10.5,
                                                     color: PdfColors.white,
+                                                    fontWeight:
+                                                        pw.FontWeight.bold,
                                                   ),
                                                 ),
                                               ),
@@ -1708,7 +1701,7 @@ Future<void> printFakturOrderImpl(
                                                   padding: pw.EdgeInsets.only(
                                                     right: isSaleOrder
                                                         ? pxX(118)
-                                                        : pxX(108),
+                                                        : pxX(100),
                                                   ),
                                                   child: pw.Column(
                                                     children: [
@@ -1716,7 +1709,7 @@ Future<void> printFakturOrderImpl(
                                                         isBuyback
                                                             ? 'Telah diperiksa, diserahkan dan dibayar'
                                                             : 'Telah diperiksa, dibayar dan diserahkan',
-                                                        size: 10,
+                                                        size: 8.5,
                                                       ),
                                                       pw.SizedBox(
                                                         height: isSaleOrder
@@ -1740,8 +1733,8 @@ Future<void> printFakturOrderImpl(
                                                       pw.SizedBox(
                                                         // Taller signature area.
                                                         height: isSaleOrder
-                                                            ? pxY(24)
-                                                            : pxY(26),
+                                                            ? pxY(18)
+                                                            : pxY(20),
                                                       ),
                                                       pw.Row(
                                                         mainAxisAlignment: pw
@@ -1774,13 +1767,10 @@ Future<void> printFakturOrderImpl(
                                   ),
                                   pw.Positioned(
                                     right: pxX(8),
-                                    bottom:
-                                        footerBottomInset +
-                                        footerReservedHeight +
-                                        (isSaleOrder ? pxY(8) : pxY(6)),
+                                    bottom: 0,
                                     child: pw.Container(
-                                      width: pxX(100),
-                                      height: pxX(100),
+                                      width: pxX(120),
+                                      height: pxX(120),
                                       decoration: pw.BoxDecoration(
                                         color: PdfColors.white,
                                       ),
@@ -1801,7 +1791,7 @@ Future<void> printFakturOrderImpl(
                                   ),
                                   pw.Positioned(
                                     left: 0,
-                                    right: 0,
+                                    right: 70,
                                     bottom: footerBottomInset,
                                     child: pw.Container(
                                       color: green,
@@ -1812,9 +1802,9 @@ Future<void> printFakturOrderImpl(
                                         child: pw.Text(
                                           'SEMOGA ANDA TETAP MENJADI PELANGGAN SETIA KAMI',
                                           style: pw.TextStyle(
-                                            font: pw.Font.helvetica(),
-                                            fontSize: 10,
+                                            fontSize: 11,
                                             color: PdfColors.white,
+                                            fontWeight: pw.FontWeight.bold,
                                           ),
                                         ),
                                       ),
@@ -1852,9 +1842,9 @@ Future<void> printFakturOrderImpl(
                                   maxLines: 1,
                                   softWrap: false,
                                   style: pw.TextStyle(
-                                    font: pw.Font.helvetica(),
                                     fontSize: isServiceOrCustom ? 13 : 12,
                                     color: PdfColors.white,
+                                    fontWeight: pw.FontWeight.bold,
                                   ),
                                 ),
                               ),
