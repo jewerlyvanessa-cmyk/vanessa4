@@ -1,40 +1,36 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'package:vanessa3/core/network/api_client.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
-import 'customers_page.dart';
+import 'package:vanessa3/providers/customers_provider.dart';
 import 'faktur_page.dart';
 
-// Conditional imports for platform-specific packages
 import 'package:image_picker/image_picker.dart'
     if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
-import 'package:vanessa3/widgets/pickup_branch_field.dart';
-import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/cs_order_photo_upload.dart';
-import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/services/cs_order_submit_service.dart';
-
-int? toInt(dynamic value) {
-  if (value is int) return value;
-  if (value is String) return int.tryParse(value);
-  return null;
-}
+import 'package:vanessa3/modules/cs/logic/cs_form_utils.dart';
+import 'package:vanessa3/modules/cs/logic/cs_order_item_selection_dialog.dart';
+import 'package:vanessa3/modules/cs/logic/jual_add_customer.dart';
+import 'package:vanessa3/modules/cs/logic/service_item_form.dart';
+import 'package:vanessa3/modules/cs/logic/service_order_lookup.dart';
+import 'package:vanessa3/modules/cs/logic/service_order_payload.dart';
+import 'package:vanessa3/modules/cs/widgets/service_customer_field.dart';
+import 'package:vanessa3/modules/cs/widgets/service_detail_section.dart';
+import 'package:vanessa3/modules/cs/widgets/service_header_section.dart';
+import 'package:vanessa3/modules/cs/widgets/service_item_pricing_section.dart';
+import 'package:vanessa3/modules/cs/widgets/service_nota_lookup_field.dart';
 
 class ServicePage extends ConsumerStatefulWidget {
-  const ServicePage({super.key, this.client});
-
-  final http.Client? client;
+  const ServicePage({super.key});
 
   @override
   ConsumerState<ServicePage> createState() => _ServicePageState();
@@ -97,16 +93,10 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     );
   }
 
-  double _parseMoney(String raw) {
-    final s = raw.replaceAll(RegExp(r'[^0-9]'), '');
-    final v = double.tryParse(s);
-    return (v == null || v.isNaN || v.isInfinite) ? 0 : v;
-  }
+  double _parseMoney(String raw) => csParseMoney(raw);
 
-  /// Pastikan ada customer_id untuk POST /orders (backend menolak null).
-  /// Cocokkan nama ke [customersProvider] bila user mengetik tanpa memilih opsi / nota tanpa ID.
   int? _resolveCustomerIdForSubmit() {
-    final fromMap = toInt(_selectedCustomer?['customer_id']);
+    final fromMap = csToInt(_selectedCustomer?['customer_id']);
     if (fromMap != null && fromMap > 0) return fromMap;
 
     final name = _customerController.text.trim().isNotEmpty
@@ -120,7 +110,7 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     for (final c in ref.read(customersProvider).customers) {
       final cn = (c['name'] ?? c['nama'] ?? '').toString().trim().toLowerCase();
       if (cn == lower) {
-        final id = toInt(c['customer_id']);
+        final id = csToInt(c['customer_id']);
         if (id != null && id > 0) return id;
       }
     }
@@ -197,96 +187,25 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     await _lookupNotaLamaForService(controller);
   }
 
-  Future<void> _showAddCustomerDialog(String initialName) async {
-    final nameController = TextEditingController(text: initialName);
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final addressController = TextEditingController();
-
-    final result = await showDialog<bool>(
+  Future<void> _addCustomer(String initialName) async {
+    final customer = await JualAddCustomer.showDialogAndCreate(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Tambah Customer Baru'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Nama'),
-            ),
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email (opsional)',
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'No. Telepon (opsional)',
-              ),
-            ),
-            TextField(
-              controller: addressController,
-              decoration: const InputDecoration(labelText: 'Alamat'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Simpan'),
-          ),
-        ],
-      ),
+      ref: ref,
+      initialName: initialName,
+      syncController: _customerAutocompleteController ?? _customerController,
     );
-
-    if (result == true) {
-      try {
-        final response = await ApiClient.post(
-          '/api/customers',
-          body: jsonEncode({
-            'name': nameController.text,
-            'email': emailController.text.trim().isEmpty
-                ? null
-                : emailController.text.trim(),
-            'phone': phoneController.text.trim().isEmpty
-                ? null
-                : phoneController.text.trim(),
-            'address': addressController.text.trim().isEmpty
-                ? null
-                : addressController.text.trim(),
-          }),
-        );
-
-        if (response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          setState(() {
-            _selectedCustomer = data;
-            _customerPhoneController.text =
-                data['phone'] ?? data['no_hp'] ?? '';
-            _customerAddressController.text =
-                data['address'] ?? data['alamat'] ?? '';
-          });
-          ref.invalidate(customersProvider);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Customer berhasil ditambahkan')),
-            );
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Error: $e')));
-        }
-      }
+    if (customer != null && mounted) {
+      setState(() {
+        _selectedCustomer = customer;
+        _customerPhoneController.text =
+            customer['phone'] ?? customer['no_hp'] ?? '';
+        _customerAddressController.text =
+            customer['address'] ?? customer['alamat'] ?? '';
+        final nameStr =
+            customer['name']?.toString() ?? customer['nama']?.toString() ?? '';
+        _customerController.text = nameStr;
+        _customerAutocompleteController?.text = nameStr;
+      });
     }
   }
 
@@ -355,74 +274,42 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     final weightVal = double.tryParse(_beratController.text.trim()) ?? 0;
     final totalBiayaVal = _parseMoney(_totalBiayaController.text);
     final uangMukaVal = _parseMoney(_uangMukaController.text);
-    // Status awal selalu pending cabang: ada DP → kasir; tanpa DP → admin toko → workshop.
-    final initialServiceStatus = 'pending';
     final generatedKodeProduk = _notaOrderController.text.trim().isNotEmpty
         ? _notaOrderController.text.trim()
         : 'SERV-${DateTime.now().millisecondsSinceEpoch}';
 
-    final orderData = <String, dynamic>{
-      'order_type': 'service',
-      'status': initialServiceStatus,
-      'order_number': _notaOrderController.text.isNotEmpty
-          ? _notaOrderController.text
-          : null,
-      'branch_id': branchId,
-      'user_id': userId,
-      'mode': _modeToko.toLowerCase(),
-      'customer_id': customerId,
-      'service_estimated_total': totalBiayaVal,
-      'service_dp_amount': uangMukaVal,
-      'diskon': 0,
-      'order_items': [
-        {
-          'nama_item': _namaItemController.text.trim(),
-          'kode_produk': generatedKodeProduk,
-          'weight': weightVal,
-          'qty': 1,
-          'harga_per_gram': 0,
-          'manual_total': totalBiayaVal,
-          'photo_produk': fotoUrl,
-          'kategori': 'service',
-          'jenis': _jenisBarang,
-          'tipe': _jenisService,
-          'material': _materialController.text.trim(),
-          'purity': _kadarController.text.trim(),
-        },
-      ],
-      // Extra fields (backend may ignore; kept for future use)
-      'nota_lama': _notaLamaController.text.trim(),
-      'reference_order_number': _notaLamaController.text.trim().isEmpty
-          ? null
-          : _notaLamaController.text.trim(),
-      'kelengkapan': _kelengkapan,
-      'keterangan': _keteranganServiceController.text.trim(),
-      'estimasi_selesai': _estimasiSelesaiController.text.trim(),
-      'customer_name': _customerController.text,
-      'customer_phone': _customerPhoneController.text,
-      'customer_address': _customerAddressController.text,
-    };
-    if (_pickupBranchId != null && _pickupBranchId != branchId) {
-      orderData['pickup_branch_id'] = _pickupBranchId;
-    }
+    final orderData = ServiceOrderPayloadBuilder.build(
+      ServiceOrderFormInput(
+        modeToko: _modeToko,
+        orderNumber: _notaOrderController.text,
+        branchId: branchId,
+        userId: userId,
+        customerId: customerId,
+        namaItem: _namaItemController.text.trim(),
+        generatedKodeProduk: generatedKodeProduk,
+        weightVal: weightVal,
+        totalBiayaVal: totalBiayaVal,
+        uangMukaVal: uangMukaVal,
+        fotoUrl: fotoUrl,
+        jenisBarang: _jenisBarang,
+        jenisService: _jenisService,
+        material: _materialController.text.trim(),
+        kadar: _kadarController.text.trim(),
+        notaLama: _notaLamaController.text.trim(),
+        kelengkapan: _kelengkapan,
+        keterangan: _keteranganServiceController.text.trim(),
+        estimasiSelesai: _estimasiSelesaiController.text.trim(),
+        customerName: _customerController.text,
+        customerPhone: _customerPhoneController.text,
+        customerAddress: _customerAddressController.text,
+        pickupBranchId: _pickupBranchId,
+      ),
+    );
 
-    final fakturOverlay = <String, dynamic>{
-      ...orderData,
-      'customer_name': _customerController.text,
-      'customer_phone': _customerPhoneController.text,
-      'customer_address': _customerAddressController.text,
-    };
-    final itemsReq = orderData['order_items'];
-    if (itemsReq is List && itemsReq.isNotEmpty && itemsReq.first is Map) {
-      final first = Map<String, dynamic>.from(itemsReq.first as Map);
-      final tipe = first['tipe']?.toString().trim();
-      if (tipe != null && tipe.isNotEmpty) {
-        fakturOverlay['jenis_service'] = tipe;
-      }
-    }
-    if (uangMukaVal > 0) {
-      fakturOverlay['service_dp_amount'] = uangMukaVal;
-    }
+    final fakturOverlay = ServiceOrderPayloadBuilder.buildFakturOverlay(
+      orderData: orderData,
+      uangMukaVal: uangMukaVal,
+    );
 
     try {
       final result = await CsOrderSubmitService.submitJsonOrder(
@@ -505,35 +392,16 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     _notaLamaController.text = notaLama;
 
     try {
-      final response = await ApiClient.get(
-        '/orders',
-        query: {'order_number': notaLama},
-      );
+      final orderData = await ServiceOrderLookup.fetchOrder(notaLama);
 
-      if (response.statusCode != 200) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('Error: ${response.statusCode}')),
-        );
-        return;
-      }
-
-      final decoded = jsonDecode(response.body);
-      if (decoded == null) {
+      if (orderData == null || orderData.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('Order tidak ditemukan')),
         );
         return;
       }
-      if (decoded is! Map) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Format order tidak valid')),
-        );
-        return;
-      }
-      final orderData = Map<String, dynamic>.from(decoded);
 
-      if (orderData['order_type'] != 'jual' ||
-          orderData['status'] != 'completed') {
+      if (!ServiceOrderLookup.isEligible(orderData)) {
         messenger.showSnackBar(
           const SnackBar(
             content: Text(
@@ -544,35 +412,14 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         return;
       }
 
-      String pickStr(dynamic a, dynamic b) {
-        final s = a?.toString().trim() ?? '';
-        if (s.isNotEmpty) return s;
-        return b?.toString().trim() ?? '';
-      }
-
-      final custName = pickStr(orderData['customer_name'], orderData['name']);
-      final custPhone = pickStr(
-        orderData['customer_phone'],
-        orderData['phone'],
-      );
-      final custAddr = pickStr(
-        orderData['customer_address'],
-        orderData['address'],
-      );
+      final customer = ServiceOrderLookup.customerFromOrder(orderData);
+      final custName = customer['name']?.toString() ?? '';
 
       setState(() {
-        _selectedCustomer = {
-          'customer_id': orderData['customer_id'],
-          'name': custName,
-          'nama': custName,
-          'phone': custPhone,
-          'no_hp': custPhone,
-          'address': custAddr,
-          'alamat': custAddr,
-        };
+        _selectedCustomer = customer;
         _customerController.text = custName;
-        _customerPhoneController.text = custPhone;
-        _customerAddressController.text = custAddr;
+        _customerPhoneController.text = customer['phone']?.toString() ?? '';
+        _customerAddressController.text = customer['address']?.toString() ?? '';
         _customerAutocompleteController?.text = custName;
         _customerAutocompleteController?.selection = TextSelection.collapsed(
           offset: custName.length,
@@ -592,7 +439,12 @@ class _ServicePageState extends ConsumerState<ServicePage> {
           Map<String, dynamic>.from(validItems.first as Map),
         );
       } else {
-        final selected = await _showServiceItemPickDialog(validItems);
+        if (!mounted) return;
+        final selected = await CsOrderItemSelectionDialog.show(
+          context,
+          validItems,
+          title: 'Pilih item dari nota',
+        );
         if (selected != null) {
           _applyServiceItemFromOrder(selected);
         }
@@ -609,104 +461,13 @@ class _ServicePageState extends ConsumerState<ServicePage> {
   }
 
   void _applyServiceItemFromOrder(Map<String, dynamic> item) {
-    final namaItem =
-        item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '';
-    final berat = (item['weight'] ?? item['item_weight'] ?? 0).toString();
-    final material =
-        (item['material'] != null && item['material'].toString().isNotEmpty)
-        ? item['material']
-        : (item['item_material'] ?? '');
-    final kadar =
-        (item['purity'] != null && item['purity'].toString().isNotEmpty)
-        ? item['purity']
-        : (item['item_purity'] ?? '');
-
+    final snapshot = ServiceItemFormSnapshot.fromOrderItem(item);
     setState(() {
-      _namaItemController.text = namaItem.toString();
-      _beratController.text = berat;
-      _materialController.text = material.toString();
-      _kadarController.text = kadar.toString();
+      _namaItemController.text = snapshot.namaItem;
+      _beratController.text = snapshot.berat;
+      _materialController.text = snapshot.material;
+      _kadarController.text = snapshot.kadar;
     });
-  }
-
-  Future<Map<String, dynamic>?> _showServiceItemPickDialog(
-    List<dynamic> items,
-  ) async {
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (dialogContext) {
-        final cs = Theme.of(dialogContext).colorScheme;
-        final dataRows = <DataRow>[];
-        for (var i = 0; i < items.length; i++) {
-          final item = items[i] as Map<String, dynamic>;
-          final label =
-              item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '-';
-          final picked = Map<String, dynamic>.from(item);
-          dataRows.add(
-            DataRow(
-              color: WidgetStateProperty.resolveWith((s) {
-                if (s.contains(WidgetState.hovered)) {
-                  return cs.primary.withValues(alpha: 0.06);
-                }
-                return i.isOdd
-                    ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
-                    : null;
-              }),
-              onSelectChanged: (_) => Navigator.of(dialogContext).pop(picked),
-              cells: [
-                DataCell(Text(label.toString())),
-                DataCell(Text('${item['kode_produk'] ?? '—'}')),
-              ],
-            ),
-          );
-        }
-        return AlertDialog(
-          title: const Text('Pilih item dari nota'),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: math.min(
-              360.0,
-              MediaQuery.sizeOf(dialogContext).height * 0.5,
-            ),
-            child: Material(
-              elevation: 0,
-              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: cs.outlineVariant.withValues(alpha: 0.45),
-                ),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Scrollbar(
-                child: SingleChildScrollView(
-                  child: DataTable(
-                    headingRowColor: WidgetStateProperty.all(
-                      cs.surfaceContainerHigh,
-                    ),
-                    dataRowMinHeight: 40,
-                    columnSpacing: 12,
-                    horizontalMargin: 12,
-                    showCheckboxColumn: false,
-                    columns: [
-                      DataColumn(label: dataTableColumnLabel('Item')),
-                      DataColumn(label: dataTableColumnLabel('Kode')),
-                    ],
-                    rows: dataRows,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Batal'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _generateOrderNumber() {
@@ -760,7 +521,6 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
   @override
   Widget build(BuildContext context) {
-    final customerList = ref.watch(customersProvider);
     final userState = ref.watch(userStateProvider);
 
     // Listen to user state changes to regenerate order number when branch changes
@@ -790,816 +550,75 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         context: context,
         formKey: _formKey,
         children: [
-              // 1. Mode (TOKO/ONLINE)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 120,
-                    alignment: Alignment.centerLeft,
-                    child: const Text('Mode'),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8.0,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('TOKO'),
-                          selected: _modeToko == 'TOKO',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'TOKO';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('ONLINE'),
-                          selected: _modeToko == 'ONLINE',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'ONLINE';
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-              PickupBranchField(
+              ServiceHeaderSection(
+                modeToko: _modeToko,
+                notaOrderController: _notaOrderController,
                 orderBranchId: userState.branch,
                 branches: userState.branches,
-                value: _pickupBranchId,
-                onChanged: (v) => setState(() => _pickupBranchId = v),
+                pickupBranchId: _pickupBranchId,
+                onModeChanged: (mode) => setState(() => _modeToko = mode),
+                onPickupBranchChanged: (v) => setState(() => _pickupBranchId = v),
               ),
-              const SizedBox(height: 12.0),
-              // Order Number
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Order Number'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _notaOrderController,
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Order Number',
-                        filled: true,
-                        fillColor: Colors.grey,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-              // Bagian 1: Customer
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Customer'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: StatefulBuilder(
-                      builder: (context, setFieldState) {
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: customerList.isLoading
-                                  ? const TextField(
-                                      decoration: InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Loading customers...',
-                                      ),
-                                      enabled: false,
-                                    )
-                                  : Autocomplete<Map<String, dynamic>>(
-                                      initialValue: _selectedCustomer != null
-                                          ? TextEditingValue(
-                                              text:
-                                                  _selectedCustomer!['name'] ??
-                                                  _selectedCustomer!['nama'] ??
-                                                  '',
-                                            )
-                                          : null,
-                                      optionsBuilder:
-                                          (TextEditingValue textEditingValue) {
-                                            if (textEditingValue.text == '') {
-                                              return const Iterable<
-                                                Map<String, dynamic>
-                                              >.empty();
-                                            }
-                                            final input = textEditingValue.text
-                                                .toLowerCase();
-                                            final suggestions = customerList
-                                                .customers
-                                                .where((c) {
-                                                  final name =
-                                                      (c['name'] ??
-                                                              c['nama'] ??
-                                                              '')
-                                                          .toString()
-                                                          .toLowerCase();
-                                                  return name.contains(input);
-                                                })
-                                                .toList();
-                                            return suggestions; // Return new list each time
-                                          },
-                                      displayStringForOption: (option) =>
-                                          option['name'] ??
-                                          option['nama'] ??
-                                          '',
-                                      onSelected: (customer) {
-                                        setState(() {
-                                          _customerPhoneController.text =
-                                              customer['phone'] ??
-                                              customer['no_hp'] ??
-                                              '';
-                                          _customerAddressController.text =
-                                              customer['address'] ??
-                                              customer['alamat'] ??
-                                              '';
-                                          _selectedCustomer = customer;
-                                          final dn =
-                                              customer['name'] ??
-                                              customer['nama'] ??
-                                              '';
-                                          final nameStr = dn.toString();
-                                          _customerController.text = nameStr;
-                                          _customerAutocompleteController
-                                                  ?.text =
-                                              nameStr;
-                                        });
-                                      },
-                                      fieldViewBuilder:
-                                          (
-                                            context,
-                                            controller,
-                                            focusNode,
-                                            onFieldSubmitted,
-                                          ) {
-                                            _customerAutocompleteController =
-                                                controller;
-                                            return Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
-                                                  children: [
-                                                    Expanded(
-                                                      child: TextFormField(
-                                                        controller: controller,
-                                                        focusNode: focusNode,
-                                                        decoration: const InputDecoration(
-                                                          border:
-                                                              OutlineInputBorder(),
-                                                          contentPadding:
-                                                              EdgeInsets.symmetric(
-                                                                vertical: 12,
-                                                                horizontal: 12,
-                                                              ),
-                                                        ),
-                                                        onChanged: (_) {
-                                                          _customerController
-                                                                  .text =
-                                                              controller.text;
-                                                          setState(() {});
-                                                        },
-                                                        onFieldSubmitted:
-                                                            (value) =>
-                                                                onFieldSubmitted(),
-                                                        validator: (value) {
-                                                          if (value == null ||
-                                                              value.isEmpty) {
-                                                            return 'Nama customer wajib diisi';
-                                                          }
-                                                          return null;
-                                                        },
-                                                      ),
-                                                    ),
-                                                    Builder(
-                                                      builder: (context) {
-                                                        final input = controller
-                                                            .text
-                                                            .trim()
-                                                            .toLowerCase();
-                                                        final exists = ref
-                                                            .read(
-                                                              customersProvider,
-                                                            )
-                                                            .customers
-                                                            .any((c) {
-                                                              final name =
-                                                                  (c['name'] ??
-                                                                          c['nama'] ??
-                                                                          '')
-                                                                      .toString()
-                                                                      .toLowerCase();
-                                                              return name ==
-                                                                      input &&
-                                                                  input
-                                                                      .isNotEmpty;
-                                                            });
-                                                        if (!exists &&
-                                                            input.isNotEmpty) {
-                                                          return Row(
-                                                            mainAxisSize:
-                                                                MainAxisSize
-                                                                    .min,
-                                                            children: [
-                                                              IconButton(
-                                                                icon: const Icon(
-                                                                  Icons
-                                                                      .person_add,
-                                                                ),
-                                                                tooltip:
-                                                                    'Tambah Customer',
-                                                                onPressed: () =>
-                                                                    _showAddCustomerDialog(
-                                                                      controller
-                                                                          .text,
-                                                                    ),
-                                                              ),
-                                                              IconButton(
-                                                                icon: const Icon(
-                                                                  Icons
-                                                                      .qr_code_scanner,
-                                                                ),
-                                                                tooltip:
-                                                                    'Scan QR Customer',
-                                                                onPressed: () =>
-                                                                    _scanAndFill(
-                                                                      controller,
-                                                                    ),
-                                                              ),
-                                                            ],
-                                                          );
-                                                        } else {
-                                                          return IconButton(
-                                                            icon: const Icon(
-                                                              Icons
-                                                                  .qr_code_scanner,
-                                                            ),
-                                                            tooltip:
-                                                                'Scan QR Customer',
-                                                            onPressed: () =>
-                                                                _scanAndFill(
-                                                                  controller,
-                                                                ),
-                                                          );
-                                                        }
-                                                      },
-                                                    ),
-                                                  ],
-                                                ),
-                                                if (_selectedCustomer !=
-                                                    null) ...[
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                                    style: const TextStyle(
-                                                      fontSize: 12,
-                                                      color: Colors.grey,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ],
-                                            );
-                                          },
-                                    ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-              // Nota Lama
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Nota Lama'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: StatefulBuilder(
-                      builder: (context, setFieldState) {
-                        return Autocomplete<String>(
-                          optionsBuilder: (textEditingValue) {
-                            // Untuk sementara, return empty list
-                            // Nanti bisa diisi dengan order numbers dari API
-                            return const Iterable<String>.empty();
-                          },
-                          onSelected: (String selection) {
-                            _notaLamaController.text = selection;
-                          },
-                          fieldViewBuilder:
-                              (
-                                context,
-                                controller,
-                                focusNode,
-                                onFieldSubmitted,
-                              ) {
-                                return Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextFormField(
-                                        controller: controller,
-                                        focusNode: focusNode,
-                                        decoration: const InputDecoration(
-                                          border: OutlineInputBorder(),
-                                          hintText:
-                                              'Masukkan nomor nota lama...',
-                                          contentPadding: EdgeInsets.symmetric(
-                                            vertical: 12,
-                                            horizontal: 12,
-                                          ),
-                                        ),
-                                        onChanged: (_) => setState(() {}),
-                                        onFieldSubmitted: (value) =>
-                                            onFieldSubmitted(),
-                                      ),
-                                    ),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.search),
-                                          onPressed: () =>
-                                              _lookupNotaLamaForService(
-                                                controller,
-                                              ),
-                                          tooltip: 'Cari berdasarkan nota lama',
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.qr_code_scanner,
-                                          ),
-                                          onPressed: () =>
-                                              _scanAndLookupNotaLama(
-                                                controller,
-                                              ),
-                                          tooltip: 'Scan QR nota lama',
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                );
-                              },
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Jenis'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8.0,
-                      runSpacing: 8.0,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('KALUNG'),
-                          selected: _jenisBarang == 'KALUNG',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisBarang = 'KALUNG';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('GELANG'),
-                          selected: _jenisBarang == 'GELANG',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisBarang = 'GELANG';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('ANTING'),
-                          selected: _jenisBarang == 'ANTING',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisBarang = 'ANTING';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('CINCIN'),
-                          selected: _jenisBarang == 'CINCIN',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisBarang = 'CINCIN';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('LIONTIN'),
-                          selected: _jenisBarang == 'LIONTIN',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisBarang = 'LIONTIN';
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Bagian 3: Detail Item
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Nama Barang'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _namaItemController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: Gelang Emas',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Nama barang wajib diisi';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+              ServiceCustomerField(
+                customerController: _customerController,
+                selectedCustomer: _selectedCustomer,
+                onCustomerSelected: (customer) {
+                  setState(() {
+                    _customerPhoneController.text =
+                        customer['phone'] ?? customer['no_hp'] ?? '';
+                    _customerAddressController.text =
+                        customer['address'] ?? customer['alamat'] ?? '';
+                    _selectedCustomer = customer;
+                    final nameStr = (customer['name'] ?? customer['nama'] ?? '')
+                        .toString();
+                    _customerController.text = nameStr;
+                    _customerAutocompleteController?.text = nameStr;
+                  });
+                },
+                onFieldChanged: () => setState(() {}),
+                onAutocompleteControllerReady: (controller) {
+                  _customerAutocompleteController = controller;
+                },
+                onAddCustomer: _addCustomer,
+                onScanQr: _scanAndFill,
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Berat (gram)'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _beratController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                ],
+              ServiceNotaLookupField(
+                notaLamaController: _notaLamaController,
+                onLookup: _lookupNotaLamaForService,
+                onScanAndLookup: _scanAndLookupNotaLama,
+                onChanged: () => setState(() {}),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Material'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _materialController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: Emas, Perak, Tembaga',
-                      ),
-                    ),
-                  ),
-                ],
+              ServiceItemPricingSection(
+                jenisBarang: _jenisBarang,
+                onJenisBarangChanged: (jenis) =>
+                    setState(() => _jenisBarang = jenis),
+                namaItemController: _namaItemController,
+                beratController: _beratController,
+                materialController: _materialController,
+                kadarController: _kadarController,
+                totalBiayaController: _totalBiayaController,
+                uangMukaController: _uangMukaController,
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Kadar Kemurnian'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _kadarController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: 70%, 22K',
-                      ),
-                    ),
-                  ),
-                ],
+              ServiceDetailSection(
+                jenisService: _jenisService,
+                onJenisServiceChanged: (jenis) =>
+                    setState(() => _jenisService = jenis),
+                kelengkapan: _kelengkapan,
+                onKelengkapanChanged: (key, value) {
+                  setState(() => _kelengkapan[key] = value);
+                },
+                keteranganController: _keteranganServiceController,
+                estimasiSelesaiController: _estimasiSelesaiController,
+                onEstimasiSelesaiChanged: (formatted) {
+                  setState(() => _estimasiSelesaiController.text = formatted);
+                },
+                fotoXFile: _fotoXFile,
+                fotoBytes: _fotoBytes,
+                onPickFotoCamera: _pickFoto,
+                onPickFotoGallery: _pickFotoFromGallery,
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Estimasi Biaya'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _totalBiayaController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        prefixText: 'Rp ',
-                        hintText: 'Contoh: 150000',
-                      ),
-                      validator: (value) {
-                        final raw = (value ?? '').trim();
-                        if (raw.isEmpty) return 'Estimasi biaya wajib diisi';
-                        final v = _parseMoney(raw);
-                        if (v < 0) return 'Estimasi biaya tidak valid';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Uang Muka'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _uangMukaController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        prefixText: 'Rp ',
-                        hintText: 'Opsional (boleh 0)',
-                      ),
-                      validator: (value) {
-                        final dp = _parseMoney(value ?? '');
-                        final total = _parseMoney(_totalBiayaController.text);
-                        if (dp < 0) return 'Uang muka tidak valid';
-                        if (dp > total) return 'Uang muka melebihi total biaya';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'KETERANGAN',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Jenis Service'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8.0,
-                      runSpacing: 8.0,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Patri'),
-                          selected: _jenisService == 'Patri',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Patri';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Cuci'),
-                          selected: _jenisService == 'Cuci',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Cuci';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Sambung'),
-                          selected: _jenisService == 'Sambung',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Sambung';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Ubah Ukuran'),
-                          selected: _jenisService == 'Ubah Ukuran',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Ubah Ukuran';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Ganti Batu'),
-                          selected: _jenisService == 'Ganti Batu',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Ganti Batu';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('Lainnya'),
-                          selected: _jenisService == 'Lainnya',
-                          onSelected: (selected) {
-                            setState(() {
-                              _jenisService = 'Lainnya';
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Kelengkapan'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CheckboxListTile(
-                          title: const Text('Barang'),
-                          value: _kelengkapan['Barang'] ?? false,
-                          onChanged: (bool? value) {
-                            setState(() {
-                              _kelengkapan['Barang'] = value ?? false;
-                            });
-                          },
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                        CheckboxListTile(
-                          title: const Text('Surat'),
-                          value: _kelengkapan['Surat'] ?? false,
-                          onChanged: (bool? value) {
-                            setState(() {
-                              _kelengkapan['Surat'] = value ?? false;
-                            });
-                          },
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                        CheckboxListTile(
-                          title: const Text('Identitas'),
-                          value: _kelengkapan['Identitas'] ?? false,
-                          onChanged: (bool? value) {
-                            setState(() {
-                              _kelengkapan['Identitas'] = value ?? false;
-                            });
-                          },
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Bagian 4: Catatan service (opsional)
-              const Text(
-                'Catatan (opsional)',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _keteranganServiceController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Keluhan / Keterangan Perbaikan',
-                  border: OutlineInputBorder(),
-                  hintText:
-                      'Contoh: Rusak, Bengkok, Gemuk, dll (boleh dikosongkan)',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 120,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Estimasi Selesai'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _estimasiSelesaiController,
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Tanggal estimasi selesai',
-                      ),
-                      onTap: () async {
-                        final DateTime? picked = await showAppDatePicker(
-                          context: context,
-                          initialDate: DateTime.now().add(
-                            const Duration(days: 4),
-                          ),
-                          firstDate: DateTime.now(),
-                          lastDate: DateTime.now().add(
-                            const Duration(days: 365),
-                          ),
-                        );
-                        if (picked != null) {
-                          setState(() {
-                            _estimasiSelesaiController.text =
-                                '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${(picked.year % 100).toString().padLeft(2, '0')}';
-                          });
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              CsOrderPhotoField(
-                hasPhoto: _fotoXFile != null || _fotoBytes != null,
-                imageBytes: _fotoBytes,
-                imageFile:
-                    _fotoXFile != null ? File(_fotoXFile!.path) : null,
-                onCamera: _pickFoto,
-                onGallery: _pickFotoFromGallery,
-                requiredMessage: (_fotoXFile == null && _fotoBytes == null)
-                    ? 'Foto barang WAJIB untuk service'
-                    : null,
-              ),
-              const SizedBox(height: 24),
 
               // Tombol Submit
               ElevatedButton(

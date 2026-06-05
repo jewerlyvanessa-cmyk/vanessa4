@@ -418,14 +418,12 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
 
   Future<void> _pickFile() async {
     try {
-      final result = await FilePicker.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: ['csv', 'xlsx', 'xls'],
-        allowMultiple: false,
       );
 
-      if (result != null && result.files.isNotEmpty) {
-        final file = result.files.first;
+      if (file != null) {
         setState(() {
           _selectedFile = {
             'name': file.name,

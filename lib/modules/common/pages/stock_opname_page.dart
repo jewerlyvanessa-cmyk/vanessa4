@@ -16,10 +16,11 @@ import 'package:vanessa3/utils/stock_inventory_search.dart'
     hide stockItemQuantity;
 import 'package:vanessa3/services/offline_write_service.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
+import 'package:vanessa3/modules/common/logic/stock_opname_item_utils.dart';
+import 'package:vanessa3/modules/common/logic/stock_opname_submit_lines.dart';
+import 'package:vanessa3/modules/common/logic/stock_opname_types.dart';
+import 'package:vanessa3/modules/common/widgets/stock_opname_widgets.dart';
 
-enum _OpnameListView { pending, verified, missing, all }
-
-enum _PostSaveAction { print, viewMissing, newSession, close }
 
 /// Stok opname per kode unik: scan / ketik kode untuk verifikasi fisik.
 class StockOpnamePage extends ConsumerStatefulWidget {
@@ -68,7 +69,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
   String _error = '';
   String _listSearch = '';
   String _selectedStatus = 'ready';
-  _OpnameListView _listView = _OpnameListView.pending;
+  StockOpnameListView _listView = StockOpnameListView.pending;
 
   @override
   void initState() {
@@ -84,39 +85,16 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     super.dispose();
   }
 
-  static bool _branchIsActive(Map<String, dynamic> b) {
-    final s = (b['status'] ?? 'active').toString().trim().toLowerCase();
-    return s.isEmpty || s == 'active';
-  }
-
-  static String _normalizeScanCode(String raw) {
-    final candidate = raw
-        .trim()
-        .split('\n')
-        .first
-        .trim()
-        .split(RegExp(r'\s*[-–]\s*'))
-        .first
-        .trim();
-    return normalizeStockSearchQuery(candidate).toLowerCase();
-  }
-
-  static String _itemCode(Map<String, dynamic> m) =>
-      (m['item_code'] ?? m['kode_produk'] ?? '').toString().trim();
-
-  static String _itemIdStr(Map<String, dynamic> m) =>
-      (m['item_id'] ?? '').toString();
-
   void _rebuildIndexes() {
     _itemsById = {};
     _codeToItemId = {};
     for (final raw in _items) {
       if (raw is! Map) continue;
       final m = Map<String, dynamic>.from(raw);
-      final id = _itemIdStr(m);
+      final id = StockOpnameItemUtils.itemIdStr(m);
       if (id.isEmpty) continue;
       _itemsById[id] = m;
-      final code = _normalizeScanCode(_itemCode(m));
+      final code = StockOpnameItemUtils.normalizeScanCode(StockOpnameItemUtils.itemCode(m));
       if (code.isNotEmpty && !_codeToItemId.containsKey(code)) {
         _codeToItemId[code] = id;
       }
@@ -152,7 +130,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         for (final e in decoded) {
           if (e is! Map) continue;
           final m = Map<String, dynamic>.from(e);
-          if (!_branchIsActive(m)) continue;
+          if (!StockOpnameItemUtils.branchIsActive(m)) continue;
           final bt = m['branch_type']?.toString();
           if (widget.branchPickerWorkshopOnly) {
             if (!branchTypeIsWorkshop(bt)) continue;
@@ -286,16 +264,16 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
   List<Map<String, dynamic>> get _visibleListItems {
     Iterable<Map<String, dynamic>> list = _scopeItems;
     switch (_listView) {
-      case _OpnameListView.pending:
+      case StockOpnameListView.pending:
         list = list.where((m) {
-          final id = _itemIdStr(m);
+          final id = StockOpnameItemUtils.itemIdStr(m);
           return !_verifiedIds.contains(id) && !_missingIds.contains(id);
         });
-      case _OpnameListView.verified:
-        list = list.where((m) => _verifiedIds.contains(_itemIdStr(m)));
-      case _OpnameListView.missing:
-        list = list.where((m) => _missingIds.contains(_itemIdStr(m)));
-      case _OpnameListView.all:
+      case StockOpnameListView.verified:
+        list = list.where((m) => _verifiedIds.contains(StockOpnameItemUtils.itemIdStr(m)));
+      case StockOpnameListView.missing:
+        list = list.where((m) => _missingIds.contains(StockOpnameItemUtils.itemIdStr(m)));
+      case StockOpnameListView.all:
         break;
     }
     if (_listSearch.trim().isNotEmpty) {
@@ -303,17 +281,17 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     }
     return list.toList()
       ..sort((a, b) {
-        final ka = _itemCode(a).toLowerCase();
-        final kb = _itemCode(b).toLowerCase();
+        final ka = StockOpnameItemUtils.itemCode(a).toLowerCase();
+        final kb = StockOpnameItemUtils.itemCode(b).toLowerCase();
         return ka.compareTo(kb);
       });
   }
 
   int get _scopeVerifiedCount =>
-      _scopeItems.where((m) => _verifiedIds.contains(_itemIdStr(m))).length;
+      _scopeItems.where((m) => _verifiedIds.contains(StockOpnameItemUtils.itemIdStr(m))).length;
 
   int get _scopeMissingCount =>
-      _scopeItems.where((m) => _missingIds.contains(_itemIdStr(m))).length;
+      _scopeItems.where((m) => _missingIds.contains(StockOpnameItemUtils.itemIdStr(m))).length;
 
   int get _scopePendingCount => _scopeItems.length -
       _scopeVerifiedCount -
@@ -333,7 +311,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
       if (showAlready && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${_itemCode(m)} sudah terverifikasi'),
+            content: Text('${StockOpnameItemUtils.itemCode(m)} sudah terverifikasi'),
             duration: const Duration(seconds: 1),
           ),
         );
@@ -344,7 +322,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     setState(() {
       _missingIds.remove(itemId);
       _verifiedIds.add(itemId);
-      _recentVerified.removeWhere((e) => _itemIdStr(e) == itemId);
+      _recentVerified.removeWhere((e) => StockOpnameItemUtils.itemIdStr(e) == itemId);
       _recentVerified.insert(0, m);
       if (_recentVerified.length > 8) {
         _recentVerified.removeRange(8, _recentVerified.length);
@@ -357,7 +335,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     if (!_verifiedIds.contains(itemId)) return;
     setState(() {
       _verifiedIds.remove(itemId);
-      _recentVerified.removeWhere((e) => _itemIdStr(e) == itemId);
+      _recentVerified.removeWhere((e) => StockOpnameItemUtils.itemIdStr(e) == itemId);
     });
   }
 
@@ -366,14 +344,14 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     if (m == null) return;
     setState(() {
       _verifiedIds.remove(itemId);
-      _recentVerified.removeWhere((e) => _itemIdStr(e) == itemId);
+      _recentVerified.removeWhere((e) => StockOpnameItemUtils.itemIdStr(e) == itemId);
       _missingIds.add(itemId);
-      _listView = _OpnameListView.missing;
+      _listView = StockOpnameListView.missing;
     });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${_itemCode(m)} ditandai hilang'),
+        content: Text('${StockOpnameItemUtils.itemCode(m)} ditandai hilang'),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -386,10 +364,10 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
   Future<void> _markAllPendingAsMissing() async {
     final pendingIds = _scopeItems
         .where((m) {
-          final id = _itemIdStr(m);
+          final id = StockOpnameItemUtils.itemIdStr(m);
           return !_verifiedIds.contains(id) && !_missingIds.contains(id);
         })
-        .map(_itemIdStr)
+        .map(StockOpnameItemUtils.itemIdStr)
         .toList();
     if (pendingIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -425,8 +403,8 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     setState(() {
       _missingIds.addAll(pendingIds);
       _verifiedIds.removeWhere((id) => pendingIds.contains(id));
-      _recentVerified.removeWhere((m) => pendingIds.contains(_itemIdStr(m)));
-      _listView = _OpnameListView.missing;
+      _recentVerified.removeWhere((m) => pendingIds.contains(StockOpnameItemUtils.itemIdStr(m)));
+      _listView = StockOpnameListView.missing;
     });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -438,7 +416,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
 
   /// `quiet`: tanpa snackbar per kode (untuk batch dari kamera).
   bool _processScan(String raw, {bool fromScanner = false, bool quiet = false}) {
-    final normalized = _normalizeScanCode(raw);
+    final normalized = StockOpnameItemUtils.normalizeScanCode(raw);
     if (normalized.isEmpty) return false;
 
     final itemId = _codeToItemId[normalized];
@@ -462,7 +440,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${_itemCode(m)} ada di sistem tapi di luar filter status saat ini',
+              '${StockOpnameItemUtils.itemCode(m)} ada di sistem tapi di luar filter status saat ini',
             ),
           ),
         );
@@ -477,7 +455,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('✓ ${_itemCode(m)} · ${m['name'] ?? ''}'),
+              content: Text('✓ ${StockOpnameItemUtils.itemCode(m)} · ${m['name'] ?? ''}'),
               duration: const Duration(milliseconds: 900),
               backgroundColor: Colors.green.shade700,
             ),
@@ -502,7 +480,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     var notFound = 0;
     var skipped = 0;
     for (final raw in codes) {
-      final normalized = _normalizeScanCode(raw);
+      final normalized = StockOpnameItemUtils.normalizeScanCode(raw);
       if (normalized.isEmpty) continue;
       if (_codeToItemId[normalized] == null) {
         notFound++;
@@ -543,49 +521,24 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     _processBatchScans(codes);
   }
 
-  List<Map<String, dynamic>> _pendingChanges() {
-    final out = <Map<String, dynamic>>[];
-    for (final m in _scopeItems) {
-      final id = _itemIdStr(m);
-      if (!_missingIds.contains(id)) continue;
+  List<Map<String, dynamic>> _pendingChanges() =>
+      StockOpnameSubmitLines.missingChanges(
+        scopeItems: _scopeItems,
+        missingIds: _missingIds,
+      );
 
-      final sys = stockItemQuantity(m);
-      if (sys <= 0) continue;
+  List<Map<String, dynamic>> _verifiedSubmitLines() =>
+      StockOpnameSubmitLines.verifiedLines(
+        scopeItems: _scopeItems,
+        verifiedIds: _verifiedIds,
+      );
 
-      out.add({
-        'item_id': int.tryParse(id) ?? m['item_id'],
-        'counted_quantity': 0,
-        'name': (m['name'] ?? '-').toString(),
-        'kode': _itemCode(m),
-        'system_quantity': sys,
-        'delta': -sys,
-        'kind': 'missing',
-      });
-    }
-    return out;
-  }
-
-  List<Map<String, dynamic>> _verifiedSubmitLines() {
-    final out = <Map<String, dynamic>>[];
-    for (final m in _scopeItems) {
-      final id = _itemIdStr(m);
-      if (!_verifiedIds.contains(id)) continue;
-      final sys = stockItemQuantity(m);
-      out.add({
-        'item_id': int.tryParse(id) ?? m['item_id'],
-        'counted_quantity': sys,
-        'verified': true,
-        'name': (m['name'] ?? '-').toString(),
-        'kode': _itemCode(m),
-        'kind': 'verified',
-      });
-    }
-    return out;
-  }
-
-  List<Map<String, dynamic>> _submitLines() {
-    return [..._pendingChanges(), ..._verifiedSubmitLines()];
-  }
+  List<Map<String, dynamic>> _submitLines() =>
+      StockOpnameSubmitLines.allSubmitLines(
+        scopeItems: _scopeItems,
+        verifiedIds: _verifiedIds,
+        missingIds: _missingIds,
+      );
 
   bool get _canSaveOpname =>
       _scopeVerifiedCount > 0 || _pendingChanges().isNotEmpty;
@@ -622,7 +575,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
       _verifiedIds.clear();
       _missingIds.clear();
       _recentVerified.clear();
-      _listView = _OpnameListView.pending;
+      _listView = StockOpnameListView.pending;
       if (clearNotes) _sessionNotesCtrl.clear();
     });
   }
@@ -646,13 +599,13 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     );
   }
 
-  Future<_PostSaveAction?> _showPostSaveDialog(
+  Future<StockOpnamePostSaveAction?> _showPostSaveDialog(
     StockOpnameSessionSnapshot snapshot,
   ) {
     final canViewMissing = widget.missingStockRouteName != null &&
         snapshot.savedMissingCount > 0;
 
-    return showDialog<_PostSaveAction>(
+    return showDialog<StockOpnamePostSaveAction>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -694,19 +647,19 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         actions: [
           if (canViewMissing)
             TextButton(
-              onPressed: () => Navigator.pop(ctx, _PostSaveAction.viewMissing),
+              onPressed: () => Navigator.pop(ctx, StockOpnamePostSaveAction.viewMissing),
               child: const Text('Lihat hilang'),
             ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, _PostSaveAction.print),
+            onPressed: () => Navigator.pop(ctx, StockOpnamePostSaveAction.print),
             child: const Text('Cetak laporan'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, _PostSaveAction.newSession),
+            onPressed: () => Navigator.pop(ctx, StockOpnamePostSaveAction.newSession),
             child: const Text('Opname baru'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, _PostSaveAction.close),
+            onPressed: () => Navigator.pop(ctx, StockOpnamePostSaveAction.close),
             child: const Text('Selesai'),
           ),
         ],
@@ -715,22 +668,22 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
   }
 
   Future<void> _handlePostSaveAction(
-    _PostSaveAction? action,
+    StockOpnamePostSaveAction? action,
     StockOpnameSessionSnapshot snapshot,
   ) async {
     if (!mounted) return;
 
     switch (action) {
-      case _PostSaveAction.print:
+      case StockOpnamePostSaveAction.print:
         await printStockOpnameReportFromSnapshot(context, snapshot);
         break;
-      case _PostSaveAction.viewMissing:
+      case StockOpnamePostSaveAction.viewMissing:
         _openMissingStockList(snapshot.branchId);
         break;
-      case _PostSaveAction.newSession:
+      case StockOpnamePostSaveAction.newSession:
         _resetOpnameSession();
         break;
-      case _PostSaveAction.close:
+      case StockOpnamePostSaveAction.close:
       case null:
         break;
     }
@@ -973,316 +926,6 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
     }
   }
 
-  Widget _branchPicker() {
-    if (!widget.allowBranchPicker || _branches.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: DropdownButtonFormField<String>(
-        initialValue: _selectedBranchId,
-        decoration: const InputDecoration(
-          labelText: 'Cabang',
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          for (final b in _branches)
-            DropdownMenuItem(
-              value: (b['branch_id'] ?? '').toString(),
-              child: Text(
-                '${(b['alias'] ?? b['name'] ?? b['branch_id'] ?? '').toString()} · ${branchTypeLabel(b['branch_type']?.toString())}',
-              ),
-            ),
-        ],
-        onChanged: (v) async {
-          setState(() => _selectedBranchId = v);
-          await _loadItems();
-        },
-      ),
-    );
-  }
-
-  Widget _progressCard() {
-    final total = _scopeItems.length;
-    final verified = _scopeVerifiedCount;
-    final pending = _scopePendingCount;
-    final progress = total > 0 ? verified / total : 0.0;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Progress opname',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  Text(
-                    '$verified / $total',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 8,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  _statChip(
-                    label: 'Terverifikasi',
-                    count: verified,
-                    color: Colors.green,
-                  ),
-                  _statChip(
-                    label: 'Belum scan',
-                    count: pending,
-                    color: Colors.orange,
-                  ),
-                  if (_scopeMissingCount > 0)
-                    _statChip(
-                      label: 'Hilang',
-                      count: _scopeMissingCount,
-                      color: Colors.red,
-                    ),
-                  if (_pendingChanges().isNotEmpty)
-                    _statChip(
-                      label: 'Akan dikoreksi',
-                      count: _pendingChanges().length,
-                      color: Colors.red,
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _statChip({
-    required String label,
-    required int count,
-    required MaterialColor color,
-  }) {
-    return Chip(
-      avatar: CircleAvatar(
-        backgroundColor: color.shade100,
-        child: Text(
-          '$count',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: color.shade800,
-          ),
-        ),
-      ),
-      label: Text(label, style: const TextStyle(fontSize: 12)),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
-  Widget _scanBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _scanCtrl,
-              focusNode: _scanFocus,
-              autofocus: true,
-              textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
-                labelText: 'Scan / ketik kode barang',
-                hintText: 'KB001, scan QR…',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.qr_code_2),
-                isDense: true,
-              ),
-              onSubmitted: _processScan,
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filled(
-            tooltip: 'Scan batch — beberapa QR tanpa tutup kamera',
-            onPressed: _openScanner,
-            icon: const Icon(Icons.qr_code_scanner),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _recentScans() {
-    if (_recentVerified.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Baru discan',
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final m in _recentVerified.take(6))
-                InputChip(
-                  avatar: const Icon(Icons.check, size: 16, color: Colors.green),
-                  label: Text(
-                    _itemCode(m),
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onDeleted: () => _unverifyItem(_itemIdStr(m)),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _listToggle() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SegmentedButton<_OpnameListView>(
-          segments: [
-            ButtonSegment(
-              value: _OpnameListView.pending,
-              label: Text('Belum ($_scopePendingCount)'),
-              icon: const Icon(Icons.pending_actions, size: 18),
-            ),
-            ButtonSegment(
-              value: _OpnameListView.verified,
-              label: Text('Sudah ($_scopeVerifiedCount)'),
-              icon: const Icon(Icons.check_circle_outline, size: 18),
-            ),
-            ButtonSegment(
-              value: _OpnameListView.missing,
-              label: Text('Hilang ($_scopeMissingCount)'),
-              icon: const Icon(Icons.not_interested, size: 18),
-            ),
-            ButtonSegment(
-              value: _OpnameListView.all,
-              label: Text('Semua (${_scopeItems.length})'),
-              icon: const Icon(Icons.list, size: 18),
-            ),
-          ],
-          selected: {_listView},
-          onSelectionChanged: (s) => setState(() => _listView = s.first),
-        ),
-      ),
-    );
-  }
-
-  Widget _itemTile(Map<String, dynamic> m) {
-    final id = _itemIdStr(m);
-    final verified = _verifiedIds.contains(id);
-    final missing = _missingIds.contains(id);
-    final opnameStatus = _opnameStatusLabel(id);
-    final code = _itemCode(m);
-    final name = (m['name'] ?? '-').toString();
-    final status = (m['status'] ?? '').toString();
-
-    Color avatarBg;
-    IconData avatarIcon;
-    Color avatarColor;
-    if (missing) {
-      avatarBg = Colors.red.shade50;
-      avatarIcon = Icons.close;
-      avatarColor = Colors.red.shade700;
-    } else if (verified) {
-      avatarBg = Colors.green.shade50;
-      avatarIcon = Icons.check;
-      avatarColor = Colors.green.shade700;
-    } else {
-      avatarBg = Colors.grey.shade100;
-      avatarIcon = Icons.inventory_2_outlined;
-      avatarColor = Colors.grey.shade600;
-    }
-
-    return ListTile(
-      dense: true,
-      leading: CircleAvatar(
-        radius: 18,
-        backgroundColor: avatarBg,
-        child: Icon(avatarIcon, size: 20, color: avatarColor),
-      ),
-      title: Text(code.isEmpty ? name : code, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        missing
-            ? '$name · Opname: Hilang'
-            : verified
-                ? '$name · Opname: Terverifikasi'
-                : '$name · Opname: $opnameStatus · ${stockItemStatusLabel(status)}',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (!verified && !missing)
-            IconButton(
-              tooltip: 'Tandai hilang',
-              icon: Icon(Icons.not_interested, size: 20, color: Colors.red.shade700),
-              onPressed: () => _markMissing(id),
-            ),
-          if (missing)
-            IconButton(
-              tooltip: 'Batalkan tanda hilang',
-              icon: const Icon(Icons.undo, size: 20),
-              onPressed: () => _unmarkMissing(id),
-            )
-          else if (verified)
-            IconButton(
-              tooltip: 'Batalkan verifikasi',
-              icon: const Icon(Icons.undo, size: 20),
-              onPressed: () => _unverifyItem(id),
-            )
-          else
-            IconButton.filledTonal(
-              tooltip: 'Tandai ditemukan',
-              icon: const Icon(Icons.check, size: 20),
-              onPressed: () => _verifyItem(id, showAlready: false),
-            ),
-        ],
-      ),
-      onTap: () {
-        if (missing) {
-          _unmarkMissing(id);
-        } else if (verified) {
-          _unverifyItem(id);
-        } else {
-          _verifyItem(id, showAlready: false);
-        }
-      },
-    );
-  }
-
   Future<void> _printOpnameReport() async {
     final branchId = _selectedBranchId?.trim() ?? '';
     if (branchId.isEmpty || _scopeItems.isEmpty) {
@@ -1366,7 +1009,15 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _branchPicker(),
+                    if (widget.allowBranchPicker)
+                      StockOpnameBranchPicker(
+                        branches: _branches,
+                        selectedBranchId: _selectedBranchId,
+                        onChanged: (v) async {
+                          setState(() => _selectedBranchId = v);
+                          await _loadItems();
+                        },
+                      ),
                     if (branchId.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1376,16 +1027,37 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
-                    _scanBar(),
-                    _progressCard(),
-                    _recentScans(),
+                    StockOpnameScanBar(
+                      controller: _scanCtrl,
+                      focusNode: _scanFocus,
+                      onSubmitted: _processScan,
+                      onOpenScanner: _openScanner,
+                    ),
+                    StockOpnameProgressCard(
+                      total: _scopeItems.length,
+                      verified: _scopeVerifiedCount,
+                      pending: _scopePendingCount,
+                      missingCount: _scopeMissingCount,
+                      pendingCorrectionCount: _pendingChanges().length,
+                    ),
+                    StockOpnameRecentScans(
+                      recentVerified: _recentVerified,
+                      onUnverify: _unverifyItem,
+                    ),
                     StockStatusFilterSummaryHeader(
                       selectedStatus: _selectedStatus,
                       onStatusChanged: (v) => setState(() => _selectedStatus = v),
                       summaryItems: _scopeItems,
                       filterLabel: 'Scope opname (status)',
                     ),
-                    _listToggle(),
+                    StockOpnameListToggle(
+                      listView: _listView,
+                      pendingCount: _scopePendingCount,
+                      verifiedCount: _scopeVerifiedCount,
+                      missingCount: _scopeMissingCount,
+                      totalCount: _scopeItems.length,
+                      onChanged: (v) => setState(() => _listView = v),
+                    ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: TextField(
@@ -1450,9 +1122,9 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
                                   ),
                                   Center(
                                     child: Text(
-                                      _listView == _OpnameListView.pending
+                                      _listView == StockOpnameListView.pending
                                           ? 'Semua barang sudah discan atau ditandai hilang ✓'
-                                          : _listView == _OpnameListView.missing
+                                          : _listView == StockOpnameListView.missing
                                               ? 'Belum ada barang ditandai hilang'
                                               : 'Tidak ada barang di daftar ini',
                                     ),
@@ -1468,7 +1140,32 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
                                 itemCount: visible.length,
                                 separatorBuilder: (_, _) =>
                                     const Divider(height: 1),
-                                itemBuilder: (_, i) => _itemTile(visible[i]),
+                                itemBuilder: (_, i) {
+                                  final m = visible[i];
+                                  final id = StockOpnameItemUtils.itemIdStr(m);
+                                  final verified = _verifiedIds.contains(id);
+                                  final missing = _missingIds.contains(id);
+                                  return StockOpnameItemTile(
+                                    item: m,
+                                    verified: verified,
+                                    missing: missing,
+                                    opnameStatus: _opnameStatusLabel(id),
+                                    onMarkMissing: () => _markMissing(id),
+                                    onUnmarkMissing: () => _unmarkMissing(id),
+                                    onUnverify: () => _unverifyItem(id),
+                                    onVerify: () =>
+                                        _verifyItem(id, showAlready: false),
+                                    onTap: () {
+                                      if (missing) {
+                                        _unmarkMissing(id);
+                                      } else if (verified) {
+                                        _unverifyItem(id);
+                                      } else {
+                                        _verifyItem(id, showAlready: false);
+                                      }
+                                    },
+                                  );
+                                },
                               ),
                       ),
                     ),

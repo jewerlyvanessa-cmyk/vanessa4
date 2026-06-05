@@ -1,35 +1,35 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'dart:math' as math;
-import 'package:vanessa3/core/network/api_client.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
-import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
 import '../../../utils/pembulatan.dart';
-import 'customers_page.dart';
+import 'package:vanessa3/providers/customers_provider.dart';
 import '../../../providers/order_today_provider.dart';
 import 'package:vanessa3/services/cs_order_submit_service.dart';
 import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
+import 'package:vanessa3/modules/cs/logic/buyback_item_form.dart';
+import 'package:vanessa3/modules/cs/logic/cs_order_item_selection_dialog.dart';
+import 'package:vanessa3/modules/cs/logic/buyback_order_lookup.dart';
+import 'package:vanessa3/modules/cs/logic/buyback_order_payload.dart';
+import 'package:vanessa3/modules/cs/logic/jual_add_customer.dart';
+import 'package:vanessa3/modules/cs/widgets/buyback_customer_field.dart';
+import 'package:vanessa3/modules/cs/widgets/buyback_header_section.dart';
+import 'package:vanessa3/modules/cs/widgets/buyback_item_details_section.dart';
+import 'package:vanessa3/modules/cs/widgets/buyback_nota_lookup_section.dart';
+import 'package:vanessa3/modules/cs/widgets/buyback_price_condition_section.dart';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
-import 'package:vanessa3/core/theme/app_typography.dart';
-import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 class BuybackPage extends ConsumerStatefulWidget {
-  const BuybackPage({super.key, this.client});
-
-  final http.Client? client;
+  const BuybackPage({super.key});
 
   @override
   ConsumerState<BuybackPage> createState() => _BuybackPageState();
@@ -98,33 +98,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   String _kondisiFisik = 'BAIK';
   String _notaJual = 'ADA';
   String? _selectedTipeBarang;
-
-  final List<String> _materialSuggestions = [
-    'Emas',
-    'Perak',
-    'Berlian',
-    'Platinum',
-    'Ruby',
-    'Safir',
-    'Zamrud',
-    'Mutiara',
-  ];
-
-  final List<String> _kadarSuggestions = [
-    '24K',
-    '22K',
-    '21K',
-    '18K',
-    '14K',
-    '10K',
-    '70%',
-    '75%',
-    '80%',
-    '85%',
-    '90%',
-    '95%',
-    '99%',
-  ];
 
   @override
   void dispose() {
@@ -344,36 +317,8 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final headers = NetworkConfig.defaultHeaders;
-
-      Future<http.Response> getOrders(Map<String, String> qp) async {
-        final c = widget.client;
-        if (c != null) {
-          final uri =
-              Uri.parse('$baseUrl/orders').replace(queryParameters: qp);
-          return c.get(uri, headers: headers);
-        }
-        return ApiClient.get('/orders', query: qp);
-      }
-
-      Map<String, dynamic>? decodeOrderMap(http.Response response) {
-        if (response.statusCode != 200) return null;
-        final decoded = jsonDecode(response.body);
-        if (decoded == null) return null;
-        if (decoded is Map<String, dynamic>) return decoded;
-        if (decoded is Map) return Map<String, dynamic>.from(decoded);
-        return null;
-      }
-
-      Map<String, dynamic>? orderData = decodeOrderMap(
-        await getOrders({'order_number': notaLama}),
-      );
-
-      // QR faktur: jika nomor nota kosong saat cetak, QR berisi order_id (angka) — GET /orders?order_id=
-      if (orderData == null && RegExp(r'^\d+$').hasMatch(notaLama)) {
-        orderData = decodeOrderMap(await getOrders({'order_id': notaLama}));
-      }
+      final orderData =
+          await BuybackOrderLookup.fetchByNotaOrOrderId(notaLama);
 
       Logger.logInfo('Order data received: $orderData');
 
@@ -393,9 +338,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
       final Map<String, dynamic> resolved = orderData;
 
-      // Check if order is eligible for buyback (must be completed sale)
-      if (resolved['order_type'] != 'jual' ||
-          resolved['status'] != 'completed') {
+      if (!BuybackOrderLookup.isEligibleForBuyback(resolved)) {
         scaffoldMessenger.showSnackBar(
           const SnackBar(
             content: Text(
@@ -460,80 +403,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
   }
 
   Future<void> _showItemSelectionDialog(List<dynamic> items) async {
-    final selectedItem = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (dialogContext) {
-        final cs = Theme.of(dialogContext).colorScheme;
-        final dataRows = <DataRow>[];
-        for (var i = 0; i < items.length; i++) {
-          final item = items[i] as Map<String, dynamic>;
-          final picked = Map<String, dynamic>.from(item);
-          dataRows.add(
-            DataRow(
-              color: WidgetStateProperty.resolveWith((s) {
-                if (s.contains(WidgetState.hovered)) {
-                  return cs.primary.withValues(alpha: 0.06);
-                }
-                return i.isOdd
-                    ? cs.surfaceContainerHighest.withValues(alpha: 0.45)
-                    : null;
-              }),
-              onSelectChanged: (_) => Navigator.of(dialogContext).pop(picked),
-              cells: [
-                DataCell(Text('${item['name'] ?? 'Unknown Item'}')),
-                DataCell(Text('${item['kode_produk'] ?? '—'}')),
-              ],
-            ),
-          );
-        }
-        return AlertDialog(
-          title: const Text('Pilih Item'),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: math.min(
-              360.0,
-              MediaQuery.sizeOf(dialogContext).height * 0.5,
-            ),
-            child: Material(
-              elevation: 0,
-              color: cs.surfaceContainerLow.withValues(alpha: 0.65),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: cs.outlineVariant.withValues(alpha: 0.45),
-                ),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Scrollbar(
-                child: SingleChildScrollView(
-                  child: DataTable(
-                    headingRowColor: WidgetStateProperty.all(
-                      cs.surfaceContainerHigh,
-                    ),
-                    dataRowMinHeight: 40,
-                    columnSpacing: 12,
-                    horizontalMargin: 12,
-                    showCheckboxColumn: false,
-                    columns: [
-                      DataColumn(label: dataTableColumnLabel('Item')),
-                      DataColumn(label: dataTableColumnLabel('Kode')),
-                    ],
-                    rows: dataRows,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Batal'),
-            ),
-          ],
-        );
-      },
-    );
-
+    final selectedItem = await CsOrderItemSelectionDialog.show(context, items);
     if (selectedItem != null) {
       await _selectItem(selectedItem);
     }
@@ -541,172 +411,61 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
   Future<void> _selectItem(Map<String, dynamic> item) async {
     Logger.logInfo('Selecting item: $item');
-    Logger.logInfo('Item material: ${item['material']}');
-    Logger.logInfo('Item purity: ${item['purity']}');
 
-    // Auto-fill form fields dari item yang dipilih
-    final namaItem =
-        item['nama_item'] ?? item['item_name'] ?? item['name'] ?? '';
-    final berat = (item['weight'] ?? item['item_weight'] ?? 0).toString();
-    // Prefer order_items snapshot; fallback to items if legacy orders didn't store it.
-    final material =
-        ((item['material'] ?? '').toString().trim().isNotEmpty
-                ? item['material']
-                : item['item_material'] ?? '')
-            .toString();
-    final kadar =
-        ((item['purity'] ?? '').toString().trim().isNotEmpty
-                ? item['purity']
-                : item['item_purity'] ?? '')
-            .toString();
-    final kategori = item['kategori'] ?? item['item_kategori'] ?? '';
-    final jenis = item['jenis'] ?? item['item_jenis'] ?? '';
-    final tipe = item['tipe'] ?? item['item_tipe'] ?? '';
-    final selectedTipeBarang = item['tipe'] ?? item['item_tipe'];
-    final quantity = (item['qty'] ?? item['quantity'] ?? 1).toString();
-    final hargaBeli =
-        (item['total'] ?? item['harga_per_gram'] ?? item['harga_beli'] ?? 0)
-            .toString();
-    final hargaPerGram = (item['harga_per_gram'] ?? 0).toString();
-    final kodeProduk = item['kode_produk'] ?? item['item_kode'] ?? '';
+    final snapshot = BuybackItemFormSnapshot.fromOrderItem(
+      item,
+      nomorNota: _nomorNotaController.text,
+    );
 
     setState(() {
-      _selectedItem = item;
-      _notaJual = _nomorNotaController.text.isNotEmpty ? 'ADA' : 'TIDAK_ADA';
-      _isDataFromOrderItems = true; // material/kadar sourced from order_items
+      _selectedItem = snapshot.selectedItem;
+      _notaJual = snapshot.notaJual;
+      _isDataFromOrderItems = true;
       _isManualEntry = false;
-
-      // Fill all controllers
-      _namaItemController.text = namaItem;
-      _beratController.text = berat;
-      _materialController.text = material;
-      _kadarController.text = kadar;
-      _kategoriController.text = kategori;
-      _jenisController.text = jenis;
-      _tipeController.text = tipe;
-      _selectedTipeBarang = selectedTipeBarang;
-      _quantityController.text = quantity;
-      _hargaBeliController.text = hargaBeli;
-      _hargaPerGramController.text = hargaPerGram;
-      _kodeProdukController.text = kodeProduk.toString();
+      _namaItemController.text = snapshot.namaItem;
+      _beratController.text = snapshot.berat;
+      _materialController.text = snapshot.material;
+      _kadarController.text = snapshot.kadar;
+      _kategoriController.text = snapshot.kategori;
+      _jenisController.text = snapshot.jenis;
+      _tipeController.text = snapshot.tipe;
+      _selectedTipeBarang = snapshot.selectedTipeBarang;
+      _quantityController.text = snapshot.quantity;
+      _hargaBeliController.text = snapshot.hargaBeli;
+      _hargaPerGramController.text = snapshot.hargaPerGram;
+      _kodeProdukController.text = snapshot.kodeProduk;
     });
-
-    Logger.logInfo('Form fields updated:');
-    Logger.logInfo('nama_item: ${_namaItemController.text}');
-    Logger.logInfo('berat: ${_beratController.text}');
-    Logger.logInfo('material: ${_materialController.text}');
-    Logger.logInfo('kadar: ${_kadarController.text}');
-    Logger.logInfo('kategori: ${_kategoriController.text}');
-    Logger.logInfo('jenis: ${_jenisController.text}');
-    Logger.logInfo('tipe: ${_tipeController.text}');
-    Logger.logInfo('quantity: ${_quantityController.text}');
-    Logger.logInfo('harga: ${_hargaBeliController.text}');
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Item "${item['nama_item'] ?? item['item_name'] ?? item['name']}" berhasil dipilih dan field terisi otomatis',
+            'Item "${snapshot.namaItem}" berhasil dipilih dan field terisi otomatis',
           ),
         ),
       );
     }
   }
 
-  Future<void> _showAddCustomerDialog(
+  Future<void> _addCustomer(
     String initialName,
     TextEditingController controller,
   ) async {
-    final nameController = TextEditingController(text: initialName);
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final addressController = TextEditingController();
-
-    final result = await showDialog<bool>(
+    final customer = await JualAddCustomer.showDialogAndCreate(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Tambah Customer Baru'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Nama'),
-            ),
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email (opsional)',
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'No. Telepon (opsional)',
-              ),
-            ),
-            TextField(
-              controller: addressController,
-              decoration: const InputDecoration(labelText: 'Alamat'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Simpan'),
-          ),
-        ],
-      ),
+      ref: ref,
+      initialName: initialName,
+      syncController: controller,
     );
-
-    if (result == true) {
-      try {
-        final response = await ApiClient.post(
-          '/api/customers',
-          body: jsonEncode({
-            'name': nameController.text,
-            'email': emailController.text.trim().isEmpty
-                ? null
-                : emailController.text.trim(),
-            'phone': phoneController.text.trim().isEmpty
-                ? null
-                : phoneController.text.trim(),
-            'address': addressController.text.trim().isEmpty
-                ? null
-                : addressController.text.trim(),
-          }),
-        );
-
-        if (response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          setState(() {
-            _selectedCustomer = data;
-            controller.text = data['name'] ?? data['nama'] ?? '';
-            _customerPhoneController.text =
-                data['phone'] ?? data['no_hp'] ?? '';
-            _customerAddressController.text =
-                data['address'] ?? data['alamat'] ?? '';
-          });
-          ref.invalidate(customersProvider);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Customer berhasil ditambahkan')),
-            );
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Error: $e')));
-        }
-      }
+    if (customer != null && mounted) {
+      setState(() {
+        _selectedCustomer = customer;
+        _customerPhoneController.text =
+            customer['phone'] ?? customer['no_hp'] ?? '';
+        _customerAddressController.text =
+            customer['address'] ?? customer['alamat'] ?? '';
+        _isCustomerLockedFromLookup = false;
+      });
     }
   }
 
@@ -782,70 +541,41 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
       final hargaBeli = double.tryParse(_hargaBeliController.text.trim()) ?? 0;
 
-      final orderData = <String, dynamic>{
-        'order_type': 'buyback',
-        'order_number': _notaOrderController.text.isNotEmpty
-            ? _notaOrderController.text
-            : null,
-        'nota_lama': _notaLamaController.text.trim().isEmpty
-            ? null
-            : _notaLamaController.text.trim(),
-        'reference_order_number': _nomorNotaController.text.trim().isEmpty
-            ? (_notaLamaController.text.trim().isEmpty
-                  ? null
-                  : _notaLamaController.text.trim())
-            : _nomorNotaController.text.trim(),
-        'customer_id': _selectedCustomer!['customer_id'],
-        'branch_id': int.parse(
-          userState.branch.isNotEmpty ? userState.branch : '1',
+      final orderData = BuybackOrderPayloadBuilder.build(
+        BuybackOrderFormInput(
+          orderNumber: _notaOrderController.text,
+          notaLama: _notaLamaController.text.trim(),
+          nomorNota: _nomorNotaController.text.trim(),
+          customerId: _selectedCustomer!['customer_id'],
+          branchId: int.parse(
+            userState.branch.isNotEmpty ? userState.branch : '1',
+          ),
+          userId: userState.userId ?? 1,
+          selectedItemId: _selectedItem?['item_id'],
+          namaItem: _namaItemController.text.trim(),
+          berat: _beratController.text.trim(),
+          material: _materialController.text.trim(),
+          kadar: _kadarController.text.trim(),
+          hargaPerGram: _hargaPerGramController.text.trim(),
+          kategori: _kategoriController.text.trim(),
+          jenis: _jenisController.text.trim(),
+          notaJual: _notaJual,
+          selectedTipeBarang: _selectedTipeBarang,
+          tipe: _tipeController.text.trim(),
+          kodeProduk: _kodeProdukController.text.trim(),
+          qty: qty,
+          hargaBeli: hargaBeli,
+          fotoUrl: fotoUrl,
+          kondisiFisik: _kondisiFisik,
+          penyesuaianBerat: _penyesuaianBeratController.text.trim(),
+          nilaiUntungRugi: _nilaiUntungRugiController.text.trim(),
+          notaJualStatus: _notaJual,
+          potonganKondisi: _potonganKondisiController.text.trim(),
+          nilaiResale: _nilaiResaleController.text.trim(),
+          untungRugi: _untungRugi,
+          catatanKondisi: _catatanKondisiController.text.trim(),
         ),
-        'user_id': userState.userId ?? 1,
-        'mode': 'TOKO',
-        'diskon': 0,
-        'order_items': [
-          {
-            'item_id': _selectedItem?['item_id'],
-            'nama_item': _namaItemController.text.trim(),
-            'weight': double.tryParse(_beratController.text.trim()) ?? 0,
-            'material': _materialController.text.trim(),
-            'purity': _kadarController.text.trim(),
-            'harga_per_gram':
-                double.tryParse(_hargaPerGramController.text.trim()) ?? 0,
-            'kategori': _kategoriController.text.trim(),
-            'jenis': _jenisController.text.trim(),
-            'tipe': _notaJual == 'TIDAK_ADA'
-                ? (_selectedTipeBarang ?? '')
-                : _tipeController.text.trim(),
-            'kode_produk': _kodeProdukController.text.trim(),
-            'qty': qty,
-            'subtotal': hargaBeli * qty,
-            'total': hargaBeli * qty,
-            'diskon': 0,
-            'photo_produk': fotoUrl,
-            'kondisi_barang': {
-              'kondisi_fisik': _kondisiFisik,
-              'berat_akhir': double.tryParse(_beratController.text.trim()),
-              'penyesuaian_berat':
-                  double.tryParse(_penyesuaianBeratController.text.trim()) ??
-                      0,
-              'harga_per_gram':
-                  double.tryParse(_hargaPerGramController.text.trim()) ?? 0,
-              'nilai_untung_rugi': _nilaiUntungRugiController.text.trim(),
-              'nota_jual': _nomorNotaController.text.trim().isEmpty
-                  ? _notaLamaController.text.trim()
-                  : _nomorNotaController.text.trim(),
-              'nota_jual_status': _notaJual,
-              'potongan_kondisi':
-                  double.tryParse(_potonganKondisiController.text.trim()) ?? 0,
-              'nilai_resale':
-                  double.tryParse(_nilaiResaleController.text.trim()) ?? 0,
-              'harga_beli': hargaBeli,
-              'untung_rugi': _untungRugi,
-              'catatan_kondisi': _catatanKondisiController.text.trim(),
-            },
-          },
-        ],
-      };
+      );
 
       final fakturOverlay = <String, dynamic>{
         'customer_name': _customerController.text,
@@ -892,7 +622,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
   @override
   Widget build(BuildContext context) {
-    final customerList = ref.watch(customersProvider);
     final userState = ref.watch(userStateProvider);
 
     // Listen to user state changes to regenerate order number when branch changes
@@ -918,1072 +647,96 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         context: context,
         formKey: _formKey,
         children: [
-              // ==================== HEADER SECTION ====================
-              // 1. Mode (TOKO/ONLINE)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 100,
-                    alignment: Alignment.centerLeft,
-                    child: const Text('Mode'),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8.0,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('TOKO'),
-                          selected: _modeToko == 'TOKO',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'TOKO';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('ONLINE'),
-                          selected: _modeToko == 'ONLINE',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'ONLINE';
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              BuybackHeaderSection(
+                modeToko: _modeToko,
+                notaOrderController: _notaOrderController,
+                onModeChanged: (mode) => setState(() => _modeToko = mode),
+              ),
+
+              BuybackNotaLookupSection(
+                notaLamaController: _notaLamaController,
+                nomorNotaController: _nomorNotaController,
+                isManualEntry: _isManualEntry,
+                isLookingUpItem: _isLookingUpItem,
+                onLookup: _lookupItem,
+                onScanNotaLama: () => _scanAndFill(
+                  _notaLamaController,
+                  onScanned: (_) => _lookupItem(),
+                ),
+                onNotaLamaChanged: () => setState(() {}),
               ),
               const SizedBox(height: 16),
 
-              // Order Number
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Order Number'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _notaOrderController,
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: 'Nomor nota otomatis',
-                        filled: true,
-                        fillColor: Colors.grey[100],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // ==================== ITEM LOOKUP SECTION ====================
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  // Nota Lama Lookup
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            children: [
-                              Text('Nota Lama'),
-                              Tooltip(
-                                message:
-                                    'Masukkan nomor nota lama untuk mencari item dari penjualan sebelumnya',
-                                child: Icon(
-                                  Icons.info_outline,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Autocomplete<String>(
-                          optionsBuilder: (textEditingValue) {
-                            // Untuk sementara, return empty list
-                            // Nanti bisa diisi dengan order numbers dari API
-                            return const Iterable<String>.empty();
-                          },
-                          fieldViewBuilder:
-                              (
-                                context,
-                                controller,
-                                focusNode,
-                                onFieldSubmitted,
-                              ) {
-                                return TextFormField(
-                                  controller: _notaLamaController,
-                                  focusNode: focusNode,
-                                  decoration: InputDecoration(
-                                    hintText: 'Masukkan nomor nota lama...',
-                                    suffixIcon: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.search),
-                                          onPressed: _isLookingUpItem
-                                              ? null
-                                              : _lookupItem,
-                                          tooltip: 'Cari berdasarkan nota lama',
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.qr_code_scanner,
-                                          ),
-                                          onPressed: _isLookingUpItem
-                                              ? null
-                                              : () => _scanAndFill(
-                                                  _notaLamaController,
-                                                  onScanned: (_) =>
-                                                      _lookupItem(),
-                                                ),
-                                          tooltip: 'Scan QR nota lama',
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  onChanged: (_) => setState(() {}),
-                                  onFieldSubmitted: (value) =>
-                                      onFieldSubmitted(),
-                                );
-                              },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              BuybackCustomerField(
+                customerController: _customerController,
+                phoneController: _customerPhoneController,
+                addressController: _customerAddressController,
+                selectedCustomer: _selectedCustomer,
+                isLockedFromLookup: _isCustomerLockedFromLookup,
+                onCustomerSelected: (customer) {
+                  setState(() {
+                    _customerPhoneController.text =
+                        customer['phone'] ?? customer['no_hp'] ?? '';
+                    _customerAddressController.text =
+                        customer['address'] ?? customer['alamat'] ?? '';
+                    _selectedCustomer = customer;
+                    _isCustomerLockedFromLookup = false;
+                  });
+                },
+                onFieldChanged: () => setState(() {}),
+                onAddCustomer: _addCustomer,
+                onScanQr: (controller) => _scanAndFill(controller),
               ),
               const SizedBox(height: 16),
 
-              // Nota Jual
-              Row(
-                children: [
-                  const SizedBox(width: 100, child: Text('Nota Jual')),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _nomorNotaController,
-                      readOnly: !_isManualEntry,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: 'Nomor nota jual akan muncul setelah lookup',
-                        filled: !_isManualEntry,
-                        fillColor: !_isManualEntry ? Colors.grey[100] : null,
-                      ),
-                    ),
-                  ),
-                ],
+              BuybackItemDetailsSection(
+                kodeProdukController: _kodeProdukController,
+                kategoriController: _kategoriController,
+                jenisController: _jenisController,
+                notaJual: _notaJual,
+                selectedTipeBarang: _selectedTipeBarang,
+                tipeController: _tipeController,
+                namaItemController: _namaItemController,
+                materialController: _materialController,
+                kadarController: _kadarController,
+                beratController: _beratController,
+                quantityController: _quantityController,
+                isDataFromOrderItems: _isDataFromOrderItems,
+                onKategoriChanged: (value) {
+                  setState(() {
+                    _kategoriController.text = value ?? '';
+                    _jenisController.clear();
+                  });
+                },
+                onTipeBarangChanged: (value) {
+                  setState(() => _selectedTipeBarang = value);
+                },
               ),
               const SizedBox(height: 16),
 
-              // ==================== CUSTOMER SECTION ====================
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  // Customer Search
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            children: [
-                              Text('Customer'),
-                              Tooltip(
-                                message:
-                                    'Cari berdasarkan nama atau nomor telepon (minimal 2 karakter)',
-                                child: Icon(
-                                  Icons.info_outline,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child:
-                            _isCustomerLockedFromLookup &&
-                                _selectedCustomer != null
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  TextFormField(
-                                    controller: _customerController,
-                                    readOnly: true,
-                                    decoration: InputDecoration(
-                                      hintText: 'Customer dari order jual',
-                                      border: const OutlineInputBorder(),
-                                      filled: true,
-                                      fillColor: Colors.grey[100],
-                                      suffixIcon: const Tooltip(
-                                        message:
-                                            'Customer otomatis dari nota lama',
-                                        child: Icon(Icons.lock_outline),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : StatefulBuilder(
-                                builder: (context, setFieldState) {
-                                  return Row(
-                                    children: [
-                                      Expanded(
-                                        child: customerList.isLoading
-                                            ? const TextField(
-                                                decoration: InputDecoration(
-                                                  labelText:
-                                                      'Loading customers...',
-                                                ),
-                                                enabled: false,
-                                              )
-                                            : Autocomplete<
-                                                Map<String, dynamic>
-                                              >(
-                                                initialValue:
-                                                    _selectedCustomer != null
-                                                    ? TextEditingValue(
-                                                        text:
-                                                            _selectedCustomer!['name'] ??
-                                                            _selectedCustomer!['nama'] ??
-                                                            '',
-                                                      )
-                                                    : null,
-                                                optionsBuilder:
-                                                    (
-                                                      TextEditingValue
-                                                      textEditingValue,
-                                                    ) {
-                                                      if (textEditingValue
-                                                              .text ==
-                                                          '') {
-                                                        return const Iterable<
-                                                          Map<String, dynamic>
-                                                        >.empty();
-                                                      }
-                                                      final input =
-                                                          textEditingValue.text
-                                                              .toLowerCase();
-                                                      final suggestions = customerList
-                                                          .customers
-                                                          .where((c) {
-                                                            final name =
-                                                                (c['name'] ??
-                                                                        c['nama'] ??
-                                                                        '')
-                                                                    .toString()
-                                                                    .toLowerCase();
-                                                            return name
-                                                                .contains(
-                                                                  input,
-                                                                );
-                                                          })
-                                                          .toList();
-                                                      return suggestions;
-                                                    },
-                                                displayStringForOption:
-                                                    (option) =>
-                                                        option['name'] ??
-                                                        option['nama'] ??
-                                                        '',
-                                                onSelected: (customer) {
-                                                  setState(() {
-                                                    _customerPhoneController
-                                                            .text =
-                                                        customer['phone'] ??
-                                                        customer['no_hp'] ??
-                                                        '';
-                                                    _customerAddressController
-                                                            .text =
-                                                        customer['address'] ??
-                                                        customer['alamat'] ??
-                                                        '';
-                                                    _selectedCustomer =
-                                                        customer;
-                                                    _isCustomerLockedFromLookup =
-                                                        false;
-                                                  });
-                                                },
-                                                fieldViewBuilder:
-                                                    (
-                                                      context,
-                                                      controller,
-                                                      focusNode,
-                                                      onFieldSubmitted,
-                                                    ) {
-                                                      return Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Row(
-                                                            children: [
-                                                              Expanded(
-                                                                child: TextFormField(
-                                                                  controller:
-                                                                      controller,
-                                                                  focusNode:
-                                                                      focusNode,
-                                                                  decoration: const InputDecoration(
-                                                                    hintText:
-                                                                        'Cari customer...',
-                                                                    border:
-                                                                        OutlineInputBorder(),
-                                                                    contentPadding: EdgeInsets.symmetric(
-                                                                      vertical:
-                                                                          12,
-                                                                      horizontal:
-                                                                          12,
-                                                                    ),
-                                                                  ),
-                                                                  onChanged: (_) =>
-                                                                      setState(
-                                                                        () {},
-                                                                      ),
-                                                                  onFieldSubmitted:
-                                                                      (value) =>
-                                                                          onFieldSubmitted(),
-                                                                  validator: (value) {
-                                                                    if (value ==
-                                                                            null ||
-                                                                        value
-                                                                            .isEmpty) {
-                                                                      return 'Customer wajib dipilih';
-                                                                    }
-                                                                    return null;
-                                                                  },
-                                                                ),
-                                                              ),
-                                                              Builder(
-                                                                builder: (context) {
-                                                                  final input =
-                                                                      controller
-                                                                          .text
-                                                                          .trim()
-                                                                          .toLowerCase();
-                                                                  final exists = ref
-                                                                      .read(
-                                                                        customersProvider,
-                                                                      )
-                                                                      .customers
-                                                                      .any((c) {
-                                                                        final name =
-                                                                            (c['name'] ??
-                                                                                    c['nama'] ??
-                                                                                    '')
-                                                                                .toString()
-                                                                                .toLowerCase();
-                                                                        return name ==
-                                                                                input &&
-                                                                            input.isNotEmpty;
-                                                                      });
-                                                                  if (!exists &&
-                                                                      input
-                                                                          .isNotEmpty) {
-                                                                    return Row(
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        IconButton(
-                                                                          icon: const Icon(
-                                                                            Icons.person_add,
-                                                                            size:
-                                                                                20,
-                                                                          ),
-                                                                          tooltip:
-                                                                              'Tambah Customer',
-                                                                          onPressed: () => _showAddCustomerDialog(
-                                                                            controller.text,
-                                                                            controller,
-                                                                          ),
-                                                                          padding:
-                                                                              EdgeInsets.zero,
-                                                                          constraints:
-                                                                              const BoxConstraints(),
-                                                                        ),
-                                                                        IconButton(
-                                                                          icon: const Icon(
-                                                                            Icons.qr_code_scanner,
-                                                                            size:
-                                                                                20,
-                                                                          ),
-                                                                          tooltip:
-                                                                              'Scan QR Customer',
-                                                                          onPressed: () => _scanAndFill(
-                                                                            controller,
-                                                                          ),
-                                                                          padding:
-                                                                              EdgeInsets.zero,
-                                                                          constraints:
-                                                                              const BoxConstraints(),
-                                                                        ),
-                                                                      ],
-                                                                    );
-                                                                  } else {
-                                                                    return Row(
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        IconButton(
-                                                                          icon: const Icon(
-                                                                            Icons.person_add,
-                                                                            size:
-                                                                                20,
-                                                                          ),
-                                                                          tooltip:
-                                                                              'Tambah Customer',
-                                                                          onPressed: () => _showAddCustomerDialog(
-                                                                            controller.text,
-                                                                            controller,
-                                                                          ),
-                                                                          padding:
-                                                                              EdgeInsets.zero,
-                                                                          constraints:
-                                                                              const BoxConstraints(),
-                                                                        ),
-                                                                        IconButton(
-                                                                          icon: const Icon(
-                                                                            Icons.qr_code_scanner,
-                                                                            size:
-                                                                                20,
-                                                                          ),
-                                                                          tooltip:
-                                                                              'Scan QR Customer',
-                                                                          onPressed: () => _scanAndFill(
-                                                                            controller,
-                                                                          ),
-                                                                          padding:
-                                                                              EdgeInsets.zero,
-                                                                          constraints:
-                                                                              const BoxConstraints(),
-                                                                        ),
-                                                                      ],
-                                                                    );
-                                                                  }
-                                                                },
-                                                              ),
-                                                            ],
-                                                          ),
-                                                          if (_selectedCustomer !=
-                                                              null) ...[
-                                                            const SizedBox(
-                                                              height: 4,
-                                                            ),
-                                                            Text(
-                                                              'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                                              style:
-                                                                  const TextStyle(
-                                                                    fontSize:
-                                                                        12,
-                                                                    color: Colors
-                                                                        .grey,
-                                                                  ),
-                                                            ),
-                                                          ],
-                                                        ],
-                                                      );
-                                                    },
-                                              ),
-                                      ),
-                                    ],
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // ==================== ITEM DETAILS SECTION ====================
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  // Kode Produk (boleh manual / terisi dari lookup)
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Kode Produk')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _kodeProdukController,
-                          decoration: const InputDecoration(
-                            hintText: 'Kode produk (opsional)',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Kategori
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Kategori')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: _kategoriController.text.isNotEmpty
-                              ? _kategoriController.text
-                              : null,
-                          decoration: const InputDecoration(
-                            hintText: 'Kategori',
-                          ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'PERHIASAN',
-                              child: Text('PERHIASAN'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'AKSESORIES',
-                              child: Text('AKSESORIES'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'LOGAM MULIA',
-                              child: Text('LOGAM MULIA'),
-                            ),
-                          ],
-                          onChanged: (value) {
-                            setState(() {
-                              _kategoriController.text = value ?? '';
-                              _jenisController.clear();
-                            });
-                          },
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Kategori wajib dipilih';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Jenis
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Jenis')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: _jenisController.text.isNotEmpty
-                              ? _jenisController.text
-                              : null,
-                          decoration: const InputDecoration(hintText: 'Jenis'),
-                          items:
-                              orderItemJenisOptionsForKategori(
-                                    _kategoriController.text,
-                                  )
-                                  .map(
-                                    (jenis) => DropdownMenuItem(
-                                      value: jenis,
-                                      child: Text(jenis),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged: (value) {
-                            _jenisController.text = value ?? '';
-                          },
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Jenis wajib dipilih';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Tipe Barang
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Tipe Barang')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _notaJual == 'TIDAK_ADA'
-                            ? DropdownButtonFormField<String>(
-                                initialValue: _selectedTipeBarang,
-                                decoration: const InputDecoration(
-                                  hintText: 'Pilih Tipe Barang',
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'BIASA',
-                                    child: Text('BIASA'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'GRESS',
-                                    child: Text('GRESS'),
-                                  ),
-                                ],
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedTipeBarang = value;
-                                  });
-                                },
-                              )
-                            : TextFormField(
-                                controller: _tipeController,
-                                decoration: const InputDecoration(
-                                  hintText: 'Tipe Barang',
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Nama Item
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Nama Item')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _namaItemController,
-                          decoration: const InputDecoration(
-                            hintText: 'Nama item',
-                          ),
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Nama item wajib diisi';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Material
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Material')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Autocomplete<String>(
-                          optionsBuilder: (textEditingValue) {
-                            return _materialSuggestions.where(
-                              (material) => material.toLowerCase().contains(
-                                textEditingValue.text.toLowerCase(),
-                              ),
-                            );
-                          },
-                          onSelected: (String selection) {
-                            _materialController.text = selection;
-                          },
-                          fieldViewBuilder:
-                              (
-                                context,
-                                controller,
-                                focusNode,
-                                onFieldSubmitted,
-                              ) {
-                                return TextFormField(
-                                  controller: _materialController,
-                                  focusNode: focusNode,
-                                  readOnly: _isDataFromOrderItems,
-                                  decoration: InputDecoration(
-                                    hintText: 'Material',
-                                    filled: _isDataFromOrderItems,
-                                    fillColor: _isDataFromOrderItems
-                                        ? const Color(0xFFF5F5F5)
-                                        : null,
-                                  ),
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return 'Material wajib diisi';
-                                    }
-                                    return null;
-                                  },
-                                );
-                              },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Kadar
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Kadar')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Autocomplete<String>(
-                          optionsBuilder: (textEditingValue) {
-                            return _kadarSuggestions.where(
-                              (kadar) => kadar.toLowerCase().contains(
-                                textEditingValue.text.toLowerCase(),
-                              ),
-                            );
-                          },
-                          onSelected: (String selection) {
-                            _kadarController.text = selection;
-                          },
-                          fieldViewBuilder:
-                              (
-                                context,
-                                controller,
-                                focusNode,
-                                onFieldSubmitted,
-                              ) {
-                                return TextFormField(
-                                  controller: _kadarController,
-                                  focusNode: focusNode,
-                                  readOnly: _isDataFromOrderItems,
-                                  decoration: InputDecoration(
-                                    hintText: 'Kadar',
-                                    filled: _isDataFromOrderItems,
-                                    fillColor: _isDataFromOrderItems
-                                        ? const Color(0xFFF5F5F5)
-                                        : null,
-                                  ),
-                                  validator: (value) {
-                                    if (value == null || value.isEmpty) {
-                                      return 'Kadar wajib diisi';
-                                    }
-                                    return null;
-                                  },
-                                );
-                              },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Berat
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Berat')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _beratController,
-                          decoration: const InputDecoration(
-                            hintText: 'Berat (gram)',
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Berat wajib diisi';
-                            }
-                            if (double.tryParse(value) == null) {
-                              return 'Berat harus berupa angka';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Quantity
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Quantity')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _quantityController,
-                          decoration: const InputDecoration(
-                            hintText: 'Quantity',
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Quantity wajib diisi';
-                            }
-                            if (int.tryParse(value) == null) {
-                              return 'Quantity harus berupa angka';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // ==================== PRICE ASSESSMENT SECTION ====================
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  // Harga Awal
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Harga Awal')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _hargaBeliController,
-                          decoration: const InputDecoration(
-                            hintText: 'Harga Awal (Rp)',
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Harga awal wajib diisi';
-                            }
-                            if (double.tryParse(value) == null) {
-                              return 'Harga awal harus berupa angka';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Untung/Rugi
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Untung/Rugi')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Wrap(
-                          spacing: 8.0,
-                          children: [
-                            ChoiceChip(
-                              label: const Text('UNTUNG'),
-                              selected: _untungRugi == 'UNTUNG',
-                              onSelected: (selected) {
-                                setState(() {
-                                  _untungRugi = 'UNTUNG';
-                                  _calculateNilaiUntungRugi();
-                                });
-                              },
-                            ),
-                            ChoiceChip(
-                              label: const Text('RUGI'),
-                              selected: _untungRugi == 'RUGI',
-                              onSelected: (selected) {
-                                setState(() {
-                                  _untungRugi = 'RUGI';
-                                  _calculateNilaiUntungRugi();
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // ==================== CONDITION ASSESSMENT SECTION ====================
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 16),
-                  // Kondisi Fisik
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Kondisi Fisik')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Wrap(
-                          spacing: 8.0,
-                          children: [
-                            ChoiceChip(
-                              label: const Text('BAIK'),
-                              selected: _kondisiFisik == 'BAIK',
-                              onSelected: (selected) {
-                                if (selected) {
-                                  setState(() {
-                                    _kondisiFisik = 'BAIK';
-                                  });
-                                }
-                              },
-                            ),
-                            ChoiceChip(
-                              label: const Text('RUSAK'),
-                              selected: _kondisiFisik == 'RUSAK',
-                              onSelected: (selected) {
-                                if (selected) {
-                                  setState(() {
-                                    _kondisiFisik = 'RUSAK';
-                                  });
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Catatan Kondisi
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text('Catatan Kondisi'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _catatanKondisiController,
-                          decoration: const InputDecoration(
-                            hintText: 'Catatan Kondisi',
-                          ),
-                          maxLines: 1,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Penyesuaian Berat
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text('Penyesuaian Berat'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _penyesuaianBeratController,
-                          decoration: const InputDecoration(
-                            hintText: 'Penyesuaian Berat',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Harga Per Gram
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Harga Per Gram')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _hargaPerGramController,
-                          decoration: const InputDecoration(
-                            hintText: 'Harga Per Gram (Rp)',
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Potongan Kondisi
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text('Potongan Kondisi'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _potonganKondisiController,
-                          decoration: const InputDecoration(
-                            hintText: 'Potongan Kondisi (Rp)',
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Nilai Untung/Rugi
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 100,
-                        child: Text('Nilai Untung/Rugi'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _nilaiUntungRugiController,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            hintText: 'Nilai untung/rugi (otomatis)',
-                            filled: true,
-                            fillColor: Color(0xFFF5F5F5),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Nilai Resale
-                  Row(
-                    children: [
-                      const SizedBox(width: 100, child: Text('Nilai Resale')),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _nilaiResaleController,
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            hintText: 'Nilai Resale (otomatis)',
-                            filled: true,
-                            fillColor: Color(0xFFF5F5F5),
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  CsOrderPhotoField(
-                    label: 'Foto Kondisi',
-                    hasPhoto: _fotoXFile != null || _fotoBytes != null,
-                    imageBytes: _fotoBytes,
-                    imageFile:
-                        _fotoXFile != null ? File(_fotoXFile!.path) : null,
-                    onCamera: _pickFoto,
-                    onGallery: _pickFotoFromGallery,
-                    requiredMessage:
-                        (_fotoXFile == null && _fotoBytes == null)
-                            ? 'Foto barang wajib diupload'
-                            : null,
-                  ),
-                ],
+              BuybackPriceConditionSection(
+                hargaBeliController: _hargaBeliController,
+                untungRugi: _untungRugi,
+                onUntungRugiChanged: (value) {
+                  setState(() {
+                    _untungRugi = value;
+                    _calculateNilaiUntungRugi();
+                  });
+                },
+                kondisiFisik: _kondisiFisik,
+                onKondisiFisikChanged: (value) {
+                  setState(() => _kondisiFisik = value);
+                },
+                catatanKondisiController: _catatanKondisiController,
+                penyesuaianBeratController: _penyesuaianBeratController,
+                hargaPerGramController: _hargaPerGramController,
+                potonganKondisiController: _potonganKondisiController,
+                nilaiUntungRugiController: _nilaiUntungRugiController,
+                nilaiResaleController: _nilaiResaleController,
+                fotoXFile: _fotoXFile,
+                fotoBytes: _fotoBytes,
+                onPickFotoCamera: _pickFoto,
+                onPickFotoGallery: _pickFotoFromGallery,
               ),
               const SizedBox(height: 24),
 

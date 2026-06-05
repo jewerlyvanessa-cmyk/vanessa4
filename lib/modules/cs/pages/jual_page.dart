@@ -1,19 +1,15 @@
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
-import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
-import 'package:intl/intl.dart';
-import 'customers_page.dart';
-import '../../../providers/order_today_provider.dart'; // Import todayOrdersProvider
+import 'package:vanessa3/providers/customers_provider.dart';
+import '../../../providers/order_today_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
-import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
@@ -22,13 +18,17 @@ import 'package:vanessa3/services/cs_stock_cache_service.dart';
 import 'package:vanessa3/modules/cs/logic/jual_add_customer.dart';
 import 'package:vanessa3/modules/cs/logic/jual_form_utils.dart';
 import 'package:vanessa3/modules/cs/logic/jual_order_payload.dart';
+import 'package:vanessa3/modules/cs/logic/jual_stock_item.dart';
 import 'package:vanessa3/modules/cs/widgets/jual_customer_field.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_header_section.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_item_code_field.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_item_form_section.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_pricing_section.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_stock_type_section.dart';
 import 'package:vanessa3/providers/network_provider.dart';
 
 class JualPage extends ConsumerStatefulWidget {
-  const JualPage({super.key, this.client});
-
-  final http.Client? client;
+  const JualPage({super.key});
 
   @override
   ConsumerState<JualPage> createState() => _JualPageState();
@@ -89,9 +89,6 @@ class _JualPageState extends ConsumerState<JualPage> {
   double _roundToNearest5000(double amount) =>
       JualFormUtils.roundToNearest5000(amount);
 
-  String _formatNumberWithSeparators(String value) =>
-      JualFormUtils.formatNumberWithSeparators(value);
-
   double _parseNumberWithSeparators(String value) =>
       JualFormUtils.parseNumberWithSeparators(value);
 
@@ -107,14 +104,9 @@ class _JualPageState extends ConsumerState<JualPage> {
     final diskonAmount = subtotal * diskonPersen / 100;
     final jumlah = subtotal - diskonAmount;
     final roundedJumlah = _roundToNearest5000(jumlah);
-
-    // Format with thousand separators and Rp prefix, no decimals
-    final formatter = NumberFormat.currency(
-      locale: 'id_ID',
-      symbol: 'Rp ',
-      decimalDigits: 0,
+    _jumlahController.text = JualFormUtils.formatNumberWithSeparators(
+      roundedJumlah.round().toString(),
     );
-    _jumlahController.text = formatter.format(roundedJumlah);
   }
 
   @override
@@ -301,11 +293,9 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
   }
 
-  bool _isSellableStockStatus(String? raw) =>
-      JualFormUtils.isSellableStockStatus(raw);
-
   void _applySelectedStockItem(Map<String, dynamic> item) {
-    if (!_isSellableStockStatus(item['status']?.toString())) {
+    final snapshot = JualStockItemSnapshot.fromStockItem(item);
+    if (snapshot == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -320,19 +310,64 @@ class _JualPageState extends ConsumerState<JualPage> {
     }
     setState(() {
       _saleType = 'from_stock';
-      _selectedItem = item;
-      _itemCodeController.text = item['kode_produk'] ?? item['item_code'] ?? '';
-      _namaItemController.text = item['name'] ?? '';
-      _beratController.text = item['weight']?.toString() ?? '';
-      _materialController.text = (item['material'] ?? '').toString();
-      _kadarController.text = (item['purity'] ?? '').toString();
-      _kategoriController.text = item['kategori'] ?? '';
-      _jenisController.text = item['jenis'] ?? '';
-      _tipeController.text = item['tipe'] ?? '';
+      _selectedItem = snapshot.item;
+      _itemCodeController.text = snapshot.itemCode;
+      _namaItemController.text = snapshot.namaItem;
+      _beratController.text = snapshot.berat;
+      _materialController.text = snapshot.material;
+      _kadarController.text = snapshot.kadar;
+      _kategoriController.text = snapshot.kategori;
+      _jenisController.text = snapshot.jenis;
+      _tipeController.text = snapshot.tipe;
       _qtyController.text = '1';
     });
-
     _calculateJumlah();
+  }
+
+  void _onSaleTypeChanged(String type) {
+    setState(() {
+      _saleType = type;
+      _selectedItem = null;
+      if (type == 'from_stock') {
+        _namaItemController.clear();
+        _beratController.clear();
+        _materialController.clear();
+        _materialChoice = 'EMAS';
+        _kadarController.clear();
+        _itemCodeController.clear();
+        _itemAutocompleteFieldController?.clear();
+        _kategoriController.clear();
+        _jenisController.clear();
+        _tipeController.clear();
+        _qtyController.text = '1';
+      } else {
+        if (_kategoriController.text.isEmpty) {
+          _kategoriController.text = 'PERHIASAN';
+        }
+        _jenisController.clear();
+        if (_tipeController.text.isEmpty) {
+          _tipeController.text = 'PERHIASAN';
+        }
+        _materialChoice = 'EMAS';
+        _materialController.text = _materialChoice;
+        _qtyController.text = '1';
+      }
+    });
+  }
+
+  Future<void> _scanItemCode() async {
+    final controller =
+        _itemAutocompleteFieldController ?? _itemCodeController;
+    await _scanAndFill(
+      controller,
+      onFilled: () async {
+        final code = controller.text;
+        _itemCodeController.text = code;
+        _updateItemSuggestions(code);
+        await _tryAutoSelectItemByCode(code);
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   Future<void> _showAddCustomerDialog(
@@ -669,73 +704,13 @@ class _JualPageState extends ConsumerState<JualPage> {
         context: context,
         formKey: _formKey,
         children: [
-              // 1. Mode (TOKO/ONLINE)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 100,
-                    alignment: Alignment.centerLeft,
-                    child: const Text('Mode'),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8.0,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('TOKO'),
-                          selected: _modeToko == 'TOKO',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'TOKO';
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: const Text('ONLINE'),
-                          selected: _modeToko == 'ONLINE',
-                          onSelected: (selected) {
-                            setState(() {
-                              _modeToko = 'ONLINE';
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              JualHeaderSection(
+                modeToko: _modeToko,
+                notaOrderController: _notaOrderController,
+                onModeChanged: (mode) => setState(() => _modeToko = mode),
               ),
-              const SizedBox(height: 12.0),
 
-              // Order Number
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Order Number'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _notaOrderController,
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: 'Nomor nota otomatis',
-                        filled: true,
-                        fillColor: Colors.grey[100],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              JualCustomerField(
+                            JualCustomerField(
                 autocompleteKey: _autocompleteKey,
                 customerController: _customerController,
                 phoneController: _customerPhoneController,
@@ -758,846 +733,92 @@ class _JualPageState extends ConsumerState<JualPage> {
               ),
               const SizedBox(height: 12.0),
 
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Tipe Stok'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8.0,
-                    runSpacing: 8.0,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('STOK'),
-                        selected: _saleType == 'from_stock',
-                        onSelected: (selected) {
-                          setState(() {
-                            _saleType = 'from_stock';
-                            _selectedItem = null;
-                            _namaItemController.clear();
-                            _beratController.clear();
-                            _materialController.clear();
-                            _materialChoice = 'EMAS';
-                            _kadarController.clear();
-                            _itemCodeController.clear();
-                            _itemAutocompleteFieldController?.clear();
-                            _kategoriController.clear();
-                            _jenisController.clear();
-                            _tipeController.clear();
-                            _qtyController.text = '1'; // Keep qty as 1
-                          });
-                        },
-                      ),
-                      ChoiceChip(
-                        label: const Text('UNREGISTERED'),
-                        selected: _saleType == 'unregistered',
-                        onSelected: (selected) {
-                          setState(() {
-                            _saleType = 'unregistered';
-                            _selectedItem = null;
-                            if (_kategoriController.text.isEmpty) {
-                              _kategoriController.text = 'PERHIASAN';
-                            }
-                            // Clear jenis so user must select from appropriate buttons
-                            _jenisController.clear();
-                            if (_tipeController.text.isEmpty) {
-                              _tipeController.text = 'PERHIASAN';
-                            }
-                            // Default material selection for unregistered
-                            _materialChoice = 'EMAS';
-                            _materialController.text = _materialChoice;
-                            _qtyController.text = '1'; // Keep qty as 1
-                          });
-                        },
-                      ),
-                      ChoiceChip(
-                        label: const Text('QSR (Cepat)'),
-                        selected: _saleType == 'qsr',
-                        onSelected: (selected) {
-                          setState(() {
-                            _saleType = 'qsr';
-                            _selectedItem = null;
-                            if (_kategoriController.text.isEmpty) {
-                              _kategoriController.text = 'PERHIASAN';
-                            }
-                            // Clear jenis so user must select from appropriate buttons
-                            _jenisController.clear();
-                            if (_tipeController.text.isEmpty) {
-                              _tipeController.text = 'PERHIASAN';
-                            }
-                            // Default material selection for QSR
-                            _materialChoice = 'EMAS';
-                            _materialController.text = _materialChoice;
-                            _qtyController.text = '1'; // Keep qty as 1
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ],
+              JualStockTypeSection(
+                saleType: _saleType,
+                onSaleTypeChanged: _onSaleTypeChanged,
               ),
-              const SizedBox(height: 8.0),
-              if (_saleType == 'qsr') ...[
-                Container(
-                  padding: const EdgeInsets.all(8.0),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8.0),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Text(
-                    'QSR (Quick Stock Registration): Daftarkan barang baru ke stok dan jual langsung. Foto wajib diisi.',
-                    style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12.0),
 
-              // 5. Item Information Section
+                            // 5. Item Information Section
 
-              // Kode Produk
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Kode Produk'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Autocomplete<Map<String, dynamic>>(
-                            initialValue: _selectedItem != null
-                                ? TextEditingValue(
-                                    text:
-                                        _selectedItem!['kode_produk'] ??
-                                        _selectedItem!['item_code'] ??
-                                        '',
-                                  )
-                                : null,
-                            optionsBuilder:
-                                (TextEditingValue textEditingValue) {
-                                  // Always trigger search when text changes
-                                  _updateItemSuggestions(textEditingValue.text);
-                                  return _itemSuggestions;
-                                },
-                            displayStringForOption: (option) {
-                              final code =
-                                  option['kode_produk'] ??
-                                  option['item_code'] ??
-                                  '';
-                              final name = option['name'] ?? '';
-                              return '$code - $name';
-                            },
-                            onSelected: (item) {
-                              setState(() {
-                                _saleType =
-                                    'from_stock'; // Auto-switch to stock mode
-                                _selectedItem = item;
-                                _itemCodeController.text =
-                                    item['kode_produk'] ??
-                                    item['item_code'] ??
-                                    '';
-                                _namaItemController.text = item['name'] ?? '';
-                                _beratController.text =
-                                    item['weight']?.toString() ?? '';
-                                _materialController.text =
-                                    (item['material'] ?? '').toString();
-                                _kadarController.text = (item['purity'] ?? '')
-                                    .toString();
-                                _kategoriController.text =
-                                    item['kategori'] ?? '';
-                                _jenisController.text = item['jenis'] ?? '';
-                                _tipeController.text = item['tipe'] ?? '';
-                                _qtyController.text =
-                                    '1'; // Default qty for stock items
-                              });
-
-                              // Calculate jumlah after item selection
-                              _calculateJumlah();
-
-                              if (mounted) {
-                                WidgetsBinding.instance.addPostFrameCallback((
-                                  _,
-                                ) {
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Item "${item['name']}" dipilih. Mode diubah ke STOK',
-                                        ),
-                                        backgroundColor: Colors.green,
-                                      ),
-                                    );
-                                  }
-                                });
-                              }
-                            },
-                            fieldViewBuilder:
-                                (
-                                  context,
-                                  controller,
-                                  focusNode,
-                                  onFieldSubmitted,
-                                ) {
-                                  _itemAutocompleteFieldController = controller;
-                                  return TextFormField(
-                                    controller: controller,
-                                    focusNode: focusNode,
-                                    decoration: InputDecoration(
-                                      border: const OutlineInputBorder(),
-                                      hintText: 'Kode produk item',
-                                      suffixIcon: _isLoadingSuggestions
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : null,
-                                    ),
-                                    onChanged: (value) {
-                                      // Update controller when text changes
-                                      _itemCodeController.text = value;
-                                      // Trigger search
-                                      _updateItemSuggestions(value);
-                                    },
-                                    onFieldSubmitted: (value) async {
-                                      onFieldSubmitted();
-                                      await _tryAutoSelectItemByCode(value);
-                                    },
-                                    onEditingComplete: () async {
-                                      final code = controller.text;
-                                      await _tryAutoSelectItemByCode(code);
-                                    },
-                                  );
-                                },
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.qr_code_scanner),
-                          tooltip: 'Scan QR Kode Produk',
-                          onPressed: () => _scanAndFill(
-                            _itemAutocompleteFieldController ??
-                                _itemCodeController,
-                            onFilled: () async {
-                              final code =
-                                  (_itemAutocompleteFieldController ??
-                                          _itemCodeController)
-                                      .text;
-                              _itemCodeController.text = code;
-                              _updateItemSuggestions(code);
-                              await _tryAutoSelectItemByCode(code);
-                              if (mounted) setState(() {});
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Kategori (untuk from_stock, tampilkan di atas jenis)
-              if (_saleType == 'from_stock')
-                Row(
-                  children: [
-                    const SizedBox(
-                      width: 100,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text('Kategori'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _kategoriController,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          hintText: 'Otomatis dari item',
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              if (_saleType == 'from_stock') const SizedBox(height: 12.0),
-
-              // Field kategori, jenis, tipe - read-only untuk from_stock, wajib untuk item baru
-              // Kategori (hanya tampilkan untuk non-from_stock)
-              if (_saleType != 'from_stock')
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_saleType == 'from_stock' ? 'Kategori' : 'Kategori *'),
-                    const SizedBox(height: 8),
-                    if (_saleType == 'from_stock')
-                      TextFormField(
-                        controller: _kategoriController,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          hintText: 'Otomatis dari item',
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                        ),
-                      )
-                    else if (_saleType == 'unregistered' || _saleType == 'qsr')
-                      Wrap(
-                        spacing: 8.0,
-                        runSpacing: 8.0,
-                        children: [
-                          ChoiceChip(
-                            label: const Text('PERHIASAN'),
-                            selected: _kategoriController.text == 'PERHIASAN',
-                            onSelected: (selected) {
-                              if (selected) {
-                                setState(() {
-                                  _kategoriController.text = 'PERHIASAN';
-                                  _jenisController
-                                      .clear(); // Clear jenis when kategori changes
-                                });
-                              }
-                            },
-                          ),
-                          ChoiceChip(
-                            label: const Text('AKSESORIES'),
-                            selected: _kategoriController.text == 'AKSESORIES',
-                            onSelected: (selected) {
-                              if (selected) {
-                                setState(() {
-                                  _kategoriController.text = 'AKSESORIES';
-                                  _jenisController
-                                      .clear(); // Clear jenis when kategori changes
-                                });
-                              }
-                            },
-                          ),
-                          ChoiceChip(
-                            label: const Text('LOGAM MULIA'),
-                            selected: _kategoriController.text == 'LOGAM MULIA',
-                            onSelected: (selected) {
-                              if (selected) {
-                                setState(() {
-                                  _kategoriController.text = 'LOGAM MULIA';
-                                  _jenisController
-                                      .clear(); // Clear jenis when kategori changes
-                                });
-                              }
-                            },
-                          ),
-                        ],
-                      )
-                    else
-                      TextFormField(
-                        controller: _kategoriController,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          hintText: 'Kategori item',
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Kategori wajib diisi';
-                          }
-                          return null;
-                        },
-                      ),
-                  ],
-                ),
-              if (_saleType != 'from_stock') const SizedBox(height: 12.0),
-
-              // Jenis
-              _saleType == 'from_stock'
-                  ? Row(
-                      children: [
-                        SizedBox(
-                          width: 100,
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text('Jenis'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _jenisController,
-                            readOnly: true,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              hintText: 'Otomatis dari item',
-                              filled: true,
-                              fillColor: Colors.grey[100],
+              JualItemCodeField(
+                selectedItem: _selectedItem,
+                itemSuggestions: _itemSuggestions,
+                isLoadingSuggestions: _isLoadingSuggestions,
+                itemCodeController: _itemCodeController,
+                onSearch: _updateItemSuggestions,
+                onItemSelected: (item) {
+                  _applySelectedStockItem(item);
+                  if (mounted) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Item "${item['name']}" dipilih. Mode diubah ke STOK',
                             ),
+                            backgroundColor: Colors.green,
                           ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Jenis *'),
-                        const SizedBox(height: 8),
-                        (_saleType == 'unregistered' || _saleType == 'qsr')
-                            ? Wrap(
-                                spacing: 8.0,
-                                runSpacing: 8.0,
-                                children:
-                                    orderItemJenisOptionsForKategori(
-                                          _kategoriController.text,
-                                        )
-                                        .map(
-                                          (jenis) => ChoiceChip(
-                                            label: Text(jenis),
-                                            selected:
-                                                _jenisController.text == jenis,
-                                            onSelected: (selected) {
-                                              if (selected) {
-                                                setState(() {
-                                                  _jenisController.text = jenis;
-                                                });
-                                              }
-                                            },
-                                          ),
-                                        )
-                                        .toList(),
-                              )
-                            : TextFormField(
-                                controller: _jenisController,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  hintText: 'Jenis item',
-                                ),
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Jenis wajib diisi';
-                                  }
-                                  return null;
-                                },
-                              ),
-                      ],
-                    ),
-              const SizedBox(height: 12.0),
-
-              // Tipe
-              Row(
-                children: [
-                  SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _saleType == 'from_stock'
-                            ? 'Tipe Barang'
-                            : 'Tipe Barang *',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _saleType == 'from_stock'
-                        ? TextFormField(
-                            controller: _tipeController,
-                            readOnly: true,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              hintText: 'Otomatis dari item',
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                            ),
-                          )
-                        : Wrap(
-                            spacing: 8.0,
-                            runSpacing: 8.0,
-                            children: [
-                              ChoiceChip(
-                                label: const Text('BIASA'),
-                                selected: _tipeController.text == 'BIASA',
-                                onSelected: (selected) {
-                                  if (selected) {
-                                    setState(() {
-                                      _tipeController.text = 'BIASA';
-                                    });
-                                  }
-                                },
-                              ),
-                              ChoiceChip(
-                                label: const Text('GRESS'),
-                                selected: _tipeController.text == 'GRESS',
-                                onSelected: (selected) {
-                                  if (selected) {
-                                    setState(() {
-                                      _tipeController.text = 'GRESS';
-                                    });
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Nama Item
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Nama Item'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _namaItemController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: Gelang Emas',
-                      ),
-                      readOnly: _saleType == 'from_stock',
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Nama item wajib diisi';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Material (opsional)
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Material'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _saleType == 'from_stock'
-                        ? TextFormField(
-                            controller: _materialController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              hintText: 'Otomatis dari item (opsional)',
-                            ),
-                            readOnly: true,
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  ChoiceChip(
-                                    label: const Text('EMAS'),
-                                    selected: _materialChoice == 'EMAS',
-                                    onSelected: (selected) {
-                                      if (!selected) return;
-                                      setState(() {
-                                        _materialChoice = 'EMAS';
-                                        _materialController.text = 'EMAS';
-                                      });
-                                    },
-                                  ),
-                                  ChoiceChip(
-                                    label: const Text('PERAK'),
-                                    selected: _materialChoice == 'PERAK',
-                                    onSelected: (selected) {
-                                      if (!selected) return;
-                                      setState(() {
-                                        _materialChoice = 'PERAK';
-                                        _materialController.text = 'PERAK';
-                                      });
-                                    },
-                                  ),
-                                  ChoiceChip(
-                                    label: const Text('Lainnya'),
-                                    selected: _materialChoice == 'LAINNYA',
-                                    onSelected: (selected) {
-                                      if (!selected) return;
-                                      setState(() {
-                                        _materialChoice = 'LAINNYA';
-                                        _materialController.clear();
-                                      });
-                                    },
-                                  ),
-                                ],
-                              ),
-                              if (_materialChoice == 'LAINNYA') ...[
-                                const SizedBox(height: 8),
-                                TextFormField(
-                                  controller: _materialController,
-                                  decoration: const InputDecoration(
-                                    border: OutlineInputBorder(),
-                                    hintText:
-                                        'Tulis material (contoh: PLATINA)',
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Kadar (opsional)
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Kadar'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _kadarController,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Contoh: 70%, 22K (opsional)',
-                      ),
-                      readOnly: _saleType == 'from_stock',
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Berat
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Berat'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _beratController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'gram',
-                      ),
-                      readOnly: _saleType == 'from_stock',
-                      onChanged: _saleType != 'from_stock'
-                          ? (value) {
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                _calculateJumlah();
-                              });
-                            }
-                          : null,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Berat wajib diisi';
-                        }
-                        final weight = double.tryParse(value);
-                        if (weight == null || weight <= 0) {
-                          return 'Berat harus angka positif';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Quantity
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Qty'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _qtyController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Jumlah item',
-                      ),
-                      onChanged: (value) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _calculateJumlah();
-                        });
-                      },
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Qty wajib diisi';
-                        }
-                        final qty = int.tryParse(value);
-                        if (qty == null || qty <= 0) {
-                          return 'Qty harus angka positif';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12.0),
-
-              // Detail Penjualan (Order Items)
-
-              // Harga Per Gram
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Harga/gram'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _hargaPerGramController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Rp per gram',
-                      ),
-                      onChanged: (value) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _calculateJumlah();
-                        });
-                      },
-                      onEditingComplete: () {
-                        // Format with thousand separators when user finishes editing
-                        final formatted = _formatNumberWithSeparators(
-                          _hargaPerGramController.text,
                         );
-                        _hargaPerGramController.text = formatted;
-                      },
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Harga per gram wajib diisi';
-                        }
-                        final price = _parseNumberWithSeparators(value);
-                        if (price <= 0) {
-                          return 'Harga per gram harus lebih dari 0';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+                      }
+                    });
+                  }
+                },
+                onAutocompleteControllerReady: (c) {
+                  _itemAutocompleteFieldController = c;
+                },
+                onTryAutoSelect: _tryAutoSelectItemByCode,
+                onScanQr: (_) => _scanItemCode(),
               ),
               const SizedBox(height: 12.0),
 
-              // Diskon
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Diskon (%)'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _diskonController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        hintText: 'Diskon dalam persen',
-                      ),
-                      onChanged: (value) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _calculateJumlah();
-                        });
-                      },
-                      validator: (value) {
-                        if (value != null && value.isNotEmpty) {
-                          final discount = double.tryParse(value);
-                          if (discount == null ||
-                              discount < 0 ||
-                              discount > 100) {
-                            return 'Diskon harus antara 0-100';
-                          }
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+              JualItemFormSection(
+                saleType: _saleType,
+                kategoriController: _kategoriController,
+                jenisController: _jenisController,
+                tipeController: _tipeController,
+                namaItemController: _namaItemController,
+                materialController: _materialController,
+                kadarController: _kadarController,
+                beratController: _beratController,
+                qtyController: _qtyController,
+                materialChoice: _materialChoice,
+                onKategoriChanged: (kategori) {
+                  setState(() {
+                    _kategoriController.text = kategori;
+                    _jenisController.clear();
+                  });
+                },
+                onJenisChanged: (jenis) {
+                  setState(() => _jenisController.text = jenis);
+                },
+                onTipeChanged: (tipe) {
+                  setState(() => _tipeController.text = tipe);
+                },
+                onMaterialChoiceChanged: (choice, {required clearMaterialText}) {
+                  setState(() {
+                    _materialChoice = choice;
+                    if (clearMaterialText) {
+                      _materialController.clear();
+                    } else {
+                      _materialController.text = choice;
+                    }
+                  });
+                },
+                onRecalculate: _calculateJumlah,
               ),
-              const SizedBox(height: 12.0),
 
-              // Jumlah (Total Amount after discount)
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Jumlah'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _jumlahController,
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: 'Total otomatis',
-                        filled: true,
-                        fillColor: Colors.grey[100],
-                      ),
-                    ),
-                  ),
-                ],
+                            JualPricingSection(
+                saleType: _saleType,
+                hasFoto: _hasFoto,
+                fotoBytes: _fotoBytes,
+                fotoFile: _fotoFile,
+                hargaPerGramController: _hargaPerGramController,
+                diskonController: _diskonController,
+                jumlahController: _jumlahController,
+                onRecalculate: _calculateJumlah,
+                onPickFotoCamera: _pickFoto,
+                onPickFotoGallery: _pickFotoFromGallery,
               ),
-              const SizedBox(height: 12.0),
-
-              CsOrderPhotoField(
-                hasPhoto: _hasFoto,
-                imageBytes: _fotoBytes,
-                imageFile: _fotoFile,
-                onCamera: _pickFoto,
-                onGallery: _pickFotoFromGallery,
-                requiredMessage: _saleType == 'qsr' && !_hasFoto
-                    ? 'Foto WAJIB untuk QSR'
-                    : null,
-              ),
-              const SizedBox(height: 24.0),
-
-              // Informasi Order Tambahan
-              const SizedBox(height: 24.0),
 
               // Submit Button
               Center(

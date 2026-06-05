@@ -25,6 +25,7 @@ const {
   replayIdempotentIfExists,
   storeIdempotentResponse,
 } = require('../lib/idempotency_helpers');
+const { writeAuditLog } = require('../lib/audit_log');
 function registerOrdersCreateRoutes(app, deps) {
   const { db, upload } = deps;
 
@@ -897,6 +898,20 @@ function registerOrdersCreateRoutes(app, deps) {
   
       // Commit the transaction before sending response
       await client.query('COMMIT');
+
+      await writeAuditLog(db, req, {
+        action: 'order.create',
+        entityType: 'order',
+        entityId: order.order_id,
+        branchId: branch_id,
+        payload: {
+          order_type: order_type,
+          order_number: nota_order,
+          customer_id,
+          item_count: order_items.length,
+          total: orderTotal,
+        },
+      });
   
       // Get order items for response (using new client since transaction committed)
       const itemsClient = await db.getClient();

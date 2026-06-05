@@ -46,15 +46,10 @@ abstract final class CsOrderPhotoPicker {
   }
 
   static Future<CsOrderPhotoPickResult?> pickFromFilePicker() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-      withData: true,
-    );
-    final f = picked?.files.single;
+    final f = await FilePicker.pickFile(type: FileType.image);
     if (f == null) return null;
-    final bytes = f.bytes;
-    if (bytes == null || bytes.isEmpty) return null;
+    final bytes = await f.readAsBytes();
+    if (bytes.isEmpty) return null;
     return CsOrderPhotoPickResult(
       bytes: bytes,
       fileName: f.name.isNotEmpty ? f.name : 'foto.jpg',

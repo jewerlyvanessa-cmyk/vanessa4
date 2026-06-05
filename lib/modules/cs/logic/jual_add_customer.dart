@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vanessa3/core/network/api_client.dart';
-import 'package:vanessa3/modules/cs/pages/customers_page.dart';
+import 'package:vanessa3/providers/customers_provider.dart';
 
 /// Dialog tambah customer dari form Jual CS.
 abstract final class JualAddCustomer {
