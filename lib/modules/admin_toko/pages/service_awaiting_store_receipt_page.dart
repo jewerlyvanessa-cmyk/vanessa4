@@ -3,11 +3,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/store_workshop_receipt_count_provider.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 /// Order service/custom `ready_for_pickup` dari workshop — admin toko konfirmasi terima fisik
@@ -55,12 +54,9 @@ class _ServiceAwaitingStoreReceiptPageState
         });
         return;
       }
-      final baseUrl = NetworkConfig.baseUrl;
-      final res = await http.get(
-        Uri.parse(
-          '$baseUrl/api/orders/service-awaiting-store-receipt?branch_id=${Uri.encodeQueryComponent(branch)}',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final res = await ApiClient.get(
+        '/api/orders/service-awaiting-store-receipt',
+        query: {'branch_id': branch},
       );
       if (res.statusCode != 200) {
         setState(() {

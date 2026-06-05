@@ -1,4 +1,7 @@
 {
+    "terminal.integrated.env.osx": {
+        "CHROME_EXECUTABLE": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+    },
     "editor.aiStats.enabled": true,
     "files.autoSave": "afterDelay",
     "files.autoSaveWorkspaceFilesOnly": true,

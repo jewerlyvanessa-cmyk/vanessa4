@@ -2,9 +2,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class CompletedOrdersTodayPage extends StatefulWidget {
@@ -50,10 +49,9 @@ class _CompletedOrdersTodayPageState extends State<CompletedOrdersTodayPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final resp = await http.get(
-        Uri.parse('$baseUrl/reports/orders-completed-today?limit=300'),
-        headers: NetworkConfig.defaultHeaders,
+      final resp = await ApiClient.get(
+        '/reports/orders-completed-today',
+        query: const {'limit': '300'},
       );
 
       if (!mounted) return;

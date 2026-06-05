@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'customers_page.dart';
@@ -12,10 +11,10 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/services/cs_order_submit_service.dart';
@@ -81,52 +80,13 @@ class _CustomPageState extends ConsumerState<CustomPage> {
     });
   }
 
-  MediaType _detectImageMediaType(String filePath) {
-    final lower = filePath.toLowerCase();
-    if (lower.endsWith('.png')) return MediaType('image', 'png');
-    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
-    return MediaType('image', 'jpeg');
-  }
-
   Future<String?> _uploadFoto() async {
     if (!_hasFoto) return null;
-    final storageUrl = NetworkConfig.storageUrl;
-    final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri);
-    if (kIsWeb) {
-      final bytes = _fotoBytes;
-      if (bytes == null || bytes.isEmpty) return null;
-      final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
-          ? _fotoName!.trim()
-          : 'foto.jpg';
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: name,
-          contentType: _detectImageMediaType(name),
-        ),
-      );
-    } else {
-      final foto = _fotoFile;
-      if (foto == null) return null;
-      request.files.add(await http.MultipartFile.fromPath('file', foto.path));
-    }
-    final token = NetworkConfig.authToken;
-    if (token != null && token.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $token';
-    }
-    final response = await request.send();
-    if (response.statusCode == 200) {
-      final respStr = await response.stream.bytesToString();
-      final data = jsonDecode(respStr);
-      final url = data['url'] ?? data['fileUrl'] ?? data['path'];
-      if (url is String && url.startsWith('/')) {
-        return '$storageUrl$url';
-      }
-      return url?.toString();
-    }
-    return null;
+    return CsOrderPhotoUpload.upload(
+      file: _fotoFile,
+      bytes: _fotoBytes,
+      fileName: _fotoName,
+    );
   }
 
   double _parseMoney(String raw) {
@@ -252,10 +212,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
 
     if (result == true) {
       try {
-        final baseUrl = NetworkConfig.baseUrl;
-        final response = await http.post(
-          Uri.parse('$baseUrl/api/customers'),
-          headers: NetworkConfig.defaultHeaders,
+        final response = await ApiClient.post(
+          '/api/customers',
           body: jsonEncode({
             'name': nameController.text,
             'email': emailController.text.trim().isEmpty
@@ -477,9 +435,8 @@ class _CustomPageState extends ConsumerState<CustomPage> {
         } else {
           if (uangMukaVal > 0 && createdOrderId != null) {
             try {
-              await http.post(
-                Uri.parse('${NetworkConfig.baseUrl}/payments'),
-                headers: NetworkConfig.defaultHeaders,
+              await ApiClient.post(
+                '/payments',
                 body: jsonEncode({
                   'order_id': createdOrderId,
                   'amount': uangMukaVal,

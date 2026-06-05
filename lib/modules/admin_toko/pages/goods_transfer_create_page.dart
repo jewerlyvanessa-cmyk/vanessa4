@@ -2,12 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Form kirim barang antar cabang (dulu dialog di [GoodsTransferPage]).
@@ -89,10 +88,15 @@ class _GoodsTransferCreatePageState
 
     try {
       final status = _selectedSourceType == 'buyback' ? 'buyback' : 'ready';
-      final uri = Uri.parse(
-        '${NetworkConfig.baseUrl}/items?branch_id=${widget.fromBranchId}&status=$status&in_stock_only=1&limit=200',
+      final resp = await ApiClient.get(
+        '/items',
+        query: {
+          'branch_id': widget.fromBranchId.toString(),
+          'status': status,
+          'in_stock_only': '1',
+          'limit': '200',
+        },
       );
-      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
         setState(() {
           _itemsError = 'Gagal memuat item ($status): ${resp.statusCode}';
@@ -161,9 +165,8 @@ class _GoodsTransferCreatePageState
     required String notes,
   }) async {
     final userState = ref.read(userStateProvider);
-    final resp = await http.post(
-      Uri.parse('${NetworkConfig.baseUrl}/transfers'),
-      headers: NetworkConfig.defaultHeaders,
+    final resp = await ApiClient.post(
+      '/transfers',
       body: jsonEncode({
         'from_branch_id': widget.fromBranchId,
         'to_branch_id': toBranchId,

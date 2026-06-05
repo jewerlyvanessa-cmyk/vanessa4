@@ -5,10 +5,9 @@ import 'package:excel/excel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 class ExportDataPage extends ConsumerStatefulWidget {
@@ -412,24 +411,17 @@ class _ExportDataPageState extends ConsumerState<ExportDataPage> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchExportRows(String type) async {
-    final base = NetworkConfig.baseUrl;
-    final uri = switch (type) {
-      'customers' => Uri.parse('$base/api/customers'),
-      'branches' => Uri.parse('$base/branches'),
-      'items' => Uri.parse('$base/items'),
-      'users' => Uri.parse('$base/users'),
-      'orders' => Uri.parse('$base/orders'),
-      'payments' => Uri.parse('$base/payments'),
+    final path = switch (type) {
+      'customers' => '/api/customers',
+      'branches' => '/branches',
+      'items' => '/items',
+      'users' => '/users',
+      'orders' => '/orders',
+      'payments' => '/payments',
       _ => throw ArgumentError('Jenis data tidak dikenal: $type'),
     };
 
-    final response = await http.get(
-      uri,
-      headers: const {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    );
+    final response = await ApiClient.get(path);
 
     if (response.statusCode != 200) {
       throw Exception('Server ${response.statusCode}: ${response.body}');

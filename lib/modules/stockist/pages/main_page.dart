@@ -9,8 +9,7 @@ import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:intl/intl.dart';
 
 import 'stock_bulk_input_page.dart';
@@ -48,8 +47,9 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
     final start = DateTime(now.year, now.month, now.day);
     final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
 
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/items').replace(
-      queryParameters: <String, String>{
+    final res = await ApiClient.get(
+      '/items',
+      query: <String, String>{
         'branch_id': branchId,
         'mine': '1',
         'start_date': _isoDate(start),
@@ -57,8 +57,6 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
         'limit': '50',
       },
     );
-
-    final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
     if (res.statusCode != 200) {
       String msg = 'Gagal memuat input stok hari ini (${res.statusCode})';
       try {

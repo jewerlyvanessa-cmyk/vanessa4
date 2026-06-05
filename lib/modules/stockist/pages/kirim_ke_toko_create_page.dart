@@ -2,10 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/surat_jalan_print.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
@@ -68,14 +67,9 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
 
   Future<List<Map<String, dynamic>>> _loadWarehouseItems() async {
     final warehouseId = ref.read(userStateProvider).branch.toString();
-    final baseUrl = NetworkConfig.baseUrl;
-    const stockQ = 'in_stock_only=1&limit=200';
 
-    Future<List<Map<String, dynamic>>> fetch(String url) async {
-      final resp = await http.get(
-        Uri.parse(url),
-        headers: NetworkConfig.defaultHeaders,
-      );
+    Future<List<Map<String, dynamic>>> fetch(Map<String, String> query) async {
+      final resp = await ApiClient.get('/items', query: query);
       if (resp.statusCode != 200) {
         throw Exception(
           'Gagal memuat stok (branch $warehouseId) (${resp.statusCode})',
@@ -91,7 +85,11 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
       );
     }
 
-    return fetch('$baseUrl/items?branch_id=$warehouseId&$stockQ');
+    return fetch(<String, String>{
+      'branch_id': warehouseId,
+      'in_stock_only': '1',
+      'limit': '200',
+    });
   }
 
   static String _itemLabel(Map<String, dynamic> it) {
@@ -109,11 +107,9 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
     String notes = '',
   }) async {
     final userState = ref.read(userStateProvider);
-    final baseUrl = NetworkConfig.baseUrl;
 
-    final resp = await http.post(
-      Uri.parse('$baseUrl/transfers'),
-      headers: NetworkConfig.defaultHeaders,
+    final resp = await ApiClient.post(
+      '/transfers',
       body: jsonEncode({
         'from_branch_id': userState.branch,
         'to_branch_id': toBranchId,

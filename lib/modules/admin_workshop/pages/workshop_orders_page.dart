@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
@@ -72,7 +71,6 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
         });
         return;
       }
-      final baseUrl = NetworkConfig.baseUrl;
       final branch = userState.branch.trim();
       if (branch.isEmpty) {
         setState(() {
@@ -84,24 +82,19 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
 
       final isQueueMode =
           widget.viewMode != WorkshopOrdersViewMode.inProgress;
-      final qStatus = _selectedStatus == 'all'
-          ? ''
-          : '&status=${Uri.encodeQueryComponent(_selectedStatus)}';
-      // Antrian pekerjaan: queue_mode=antrian → visibilitas cabang workshop + belum assign (backend).
-      final qScope = isQueueMode
-          ? '&scope=all'
-          : '&scope=${Uri.encodeQueryComponent(_scope)}';
-      final qQueue = isQueueMode ? '&queue_mode=antrian' : '';
-      final qUnassigned = isQueueMode &&
-              (_selectedStatus == 'all' || _selectedStatus == 'pending')
-          ? '&unassigned_only=1'
-          : '';
-      final response = await http.get(
-        Uri.parse(
-          '$baseUrl/workshop-orders?branch_id=${Uri.encodeQueryComponent(branch)}$qScope$qStatus$qQueue$qUnassigned',
-        ),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final query = <String, String>{'branch_id': branch};
+      if (_selectedStatus != 'all') {
+        query['status'] = _selectedStatus;
+      }
+      query['scope'] = isQueueMode ? 'all' : _scope;
+      if (isQueueMode) {
+        query['queue_mode'] = 'antrian';
+      }
+      if (isQueueMode &&
+          (_selectedStatus == 'all' || _selectedStatus == 'pending')) {
+        query['unassigned_only'] = '1';
+      }
+      final response = await ApiClient.get('/workshop-orders', query: query);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -166,12 +159,10 @@ class _WorkshopOrdersPageState extends ConsumerState<WorkshopOrdersPage> {
   ) async {
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
       final oid = order['order_id']?.toString();
       if (oid == null || oid.isEmpty) return;
-      final response = await http.put(
-        Uri.parse('$baseUrl/workshop-orders/$oid/status'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.put(
+        '/workshop-orders/$oid/status',
         body: jsonEncode({
           'status': nextStatus,
           'branch_id': userState.branch,

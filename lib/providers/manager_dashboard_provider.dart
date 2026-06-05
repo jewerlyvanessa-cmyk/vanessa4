@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 
 // Model untuk Manager Dashboard Data
 class ManagerDashboardData {
@@ -78,7 +77,6 @@ class ManagerDashboardNotifier extends StateNotifier<AsyncValue<ManagerDashboard
     state = const AsyncValue.loading();
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
       final branchId = int.tryParse(userState.branch) ?? 1;
@@ -88,11 +86,9 @@ class ManagerDashboardNotifier extends StateNotifier<AsyncValue<ManagerDashboard
         'user_id': userId.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/api/manager/dashboard').replace(queryParameters: queryParams);
-
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/api/manager/dashboard',
+        query: queryParams,
       );
 
       if (response.statusCode == 200) {
@@ -105,38 +101,13 @@ class ManagerDashboardNotifier extends StateNotifier<AsyncValue<ManagerDashboard
           StackTrace.current,
         );
       } else {
-        // Fallback to mock data if API not available
-        final mockData = ManagerDashboardData(
-          monthlyRevenue: 15000000.0,
-          monthlyTarget: 20000000.0,
-          monthlyOrders: 120,
-          performancePercentage: 75.0,
-          branchPerformance: [
-            {'branch': 'Toko Brangkal', 'revenue': 8000000, 'orders': 60},
-            {'branch': 'Workshop Kendalsari', 'revenue': 5000000, 'orders': 40},
-            {'branch': 'Toko Pohjejer', 'revenue': 2000000, 'orders': 20},
-          ],
-          topProducts: [
-            {'name': 'Cincin Emas', 'sales': 25},
-            {'name': 'Kalung Emas', 'sales': 18},
-            {'name': 'Anting Emas', 'sales': 15},
-          ],
-          lastUpdated: DateTime.now(),
+        state = AsyncValue.error(
+          'Gagal memuat dashboard manajer (HTTP ${response.statusCode}).',
+          StackTrace.current,
         );
-        state = AsyncValue.data(mockData);
       }
-    } catch (error) {
-      // Fallback to mock data on error
-      final mockData = ManagerDashboardData(
-        monthlyRevenue: 0.0,
-        monthlyTarget: 0.0,
-        monthlyOrders: 0,
-        performancePercentage: 0.0,
-        branchPerformance: [],
-        topProducts: [],
-        lastUpdated: DateTime.now(),
-      );
-      state = AsyncValue.data(mockData);
+    } catch (error, stackTrace) {
+      state = AsyncValue.error(error, stackTrace);
     }
   }
 

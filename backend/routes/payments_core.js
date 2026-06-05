@@ -26,6 +26,7 @@ const {
   replayIdempotentIfExists,
   storeIdempotentResponse,
 } = require('../lib/idempotency_helpers');
+const { writeAuditLog } = require('../lib/audit_log');
 const {
   resolvePaymentActorUserId,
   resolvePaymentsUserFilterMode,
@@ -331,6 +332,20 @@ app.post('/payments', async (req, res) => {
 
     const payload = { message: 'Pembayaran berhasil dicatat', payment };
     await storeIdempotentResponse(db, req, '/payments', 201, payload);
+
+    await writeAuditLog(db, req, {
+      action: paymentStatus === 'cancelled' ? 'payment.cancel' : 'payment.create',
+      entityType: 'payment',
+      entityId: payment?.payment_id ?? payment?.id,
+      branchId: orderBranchId,
+      payload: {
+        order_id: parsedOrderId,
+        amount: payment?.amount,
+        method: payment?.method,
+        status: paymentStatus,
+      },
+    });
+
     res.status(201).json(payload);
   } catch (error) {
     try {

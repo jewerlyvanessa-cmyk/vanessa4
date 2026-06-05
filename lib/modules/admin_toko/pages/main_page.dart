@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
@@ -13,7 +12,6 @@ import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
@@ -354,11 +352,12 @@ class _AdminTokoPendingTransfersCardState
     try {
       final user = ref.read(userStateProvider);
       final branchId = user.branch.toString();
-      final baseUrl = NetworkConfig.baseUrl;
 
       // Keep compatibility: endpoint already used elsewhere without status param.
-      final uri = Uri.parse('$baseUrl/transfers?branch_id=$branchId');
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final res = await ApiClient.get(
+        '/transfers',
+        query: {'branch_id': branchId},
+      );
       if (res.statusCode != 200) {
         if (!mounted) return;
         setState(() {

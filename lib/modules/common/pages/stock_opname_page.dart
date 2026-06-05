@@ -3,18 +3,18 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/stock_list_route_args.dart';
 import 'package:vanessa3/utils/stock_opname_report_print.dart';
 import 'package:vanessa3/utils/stock_opname_session_snapshot.dart';
 import 'package:vanessa3/utils/stock_inventory_search.dart'
     hide stockItemQuantity;
+import 'package:vanessa3/services/offline_write_service.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 
 enum _OpnameListView { pending, verified, missing, all }
@@ -142,10 +142,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
       _error = '';
     });
     try {
-      final resp = await http.get(
-        Uri.parse('${NetworkConfig.baseUrl}/branches'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final resp = await ApiClient.get('/branches');
       if (resp.statusCode != 200) {
         throw Exception('Gagal memuat cabang (${resp.statusCode})');
       }
@@ -235,11 +232,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         query['stock_type'] = st;
       }
 
-      final response = await http.get(
-        Uri.parse('${NetworkConfig.baseUrl}/items')
-            .replace(queryParameters: query),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.get('/items', query: query);
 
       if (!mounted) return;
 
@@ -907,14 +900,36 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
         body['notes'] = sessionNote;
       }
 
-      final resp = await http.post(
-        Uri.parse('${NetworkConfig.baseUrl}/items/stock-opname'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(body),
+      final outcome = await OfflineWriteService.postJson(
+        path: '/items/stock-opname',
+        body: body,
+        queueType: 'stock_opname',
       );
 
       if (!mounted) return;
 
+      if (outcome.queuedOffline) {
+        final snapshot = _captureSessionSnapshot(
+          branchId: branchId,
+          savedVerifiedCount: verifiedLines.length,
+          savedMissingCount: missingChanges.length,
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Opname disimpan offline (${lines.length} baris). '
+              'Akan dikirim saat koneksi kembali.',
+            ),
+            backgroundColor: Colors.orange.shade800,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        final postAction = await _showPostSaveDialog(snapshot);
+        await _handlePostSaveAction(postAction, snapshot);
+        return;
+      }
+
+      final resp = outcome.response!;
       if (resp.statusCode == 200) {
         final decoded = jsonDecode(resp.body);
         var verifiedCount = verifiedLines.length;
@@ -1461,8 +1476,12 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
                 ),
       floatingActionButton: _isLoading || _error.isNotEmpty
           ? null
-          : FloatingActionButton.extended(
-              onPressed: _isSaving || !canSave ? null : _submitOpname,
+          : Semantics(
+              button: true,
+              label: 'Simpan hasil stock opname',
+              enabled: canSave && !_isSaving,
+              child: FloatingActionButton.extended(
+                onPressed: _isSaving || !canSave ? null : _submitOpname,
               icon: _isSaving
                   ? const SizedBox(
                       width: 20,
@@ -1480,6 +1499,7 @@ class _StockOpnamePageState extends ConsumerState<StockOpnamePage> {
                             : 'Simpan Opname',
               ),
             ),
+          ),
     );
   }
 }

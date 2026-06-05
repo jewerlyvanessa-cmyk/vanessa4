@@ -2,11 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/common/widgets/supplier_form_dialog.dart';
-import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/suppliers_api.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Pengelolaan master data supplier (admin warehouse & manajer).
@@ -56,9 +54,10 @@ class _SuppliersManagementPageState
       final q = _searchCtrl.text.trim();
       if (q.isNotEmpty) params['q'] = q;
 
-      final uri = Uri.parse(suppliersApiBaseUrl())
-          .replace(queryParameters: params.isEmpty ? null : params);
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final res = await ApiClient.get(
+        '/api/suppliers',
+        query: params.isEmpty ? null : params,
+      );
       if (res.statusCode != 200) {
         var hint = '';
         if (res.statusCode == 404) {
@@ -134,10 +133,7 @@ class _SuppliersManagementPageState
     );
     if (ok != true) return;
 
-    final res = await http.delete(
-      Uri.parse('${suppliersApiBaseUrl()}/$id'),
-      headers: NetworkConfig.defaultHeaders,
-    );
+    final res = await ApiClient.delete('/api/suppliers/$id');
     if (!mounted) return;
     if (res.statusCode == 200) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -1,8 +1,7 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/data/api_service.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 class WorkshopOrderBatchResult {
   WorkshopOrderBatchResult({
@@ -24,13 +23,10 @@ Future<WorkshopOrderBatchResult> putWorkshopOrderStatuses({
 }) async {
   final okIds = <int>[];
   final failed = <({int id, String message})>[];
-  final baseUrl = NetworkConfig.baseUrl;
-
   for (final id in orderIds) {
     try {
-      final resp = await http.put(
-        Uri.parse('$baseUrl/workshop-orders/$id/status'),
-        headers: NetworkConfig.defaultHeaders,
+      final resp = await ApiClient.put(
+        '/workshop-orders/$id/status',
         body: jsonEncode({'status': status, 'branch_id': branchId}),
       );
       if (resp.statusCode == 200) {

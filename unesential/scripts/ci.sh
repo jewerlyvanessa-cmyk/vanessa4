@@ -24,11 +24,21 @@ for f in \
   backend/routes/workshop.js \
   backend/routes/transfers.js \
   backend/routes/payments_core.js \
+  backend/routes/orders_pickup.js \
+  backend/routes/orders_store_operational.js \
+  backend/routes/orders_read.js \
+  backend/routes/orders_create.js \
+  backend/routes/items.js \
+  backend/lib/audit_log.js \
+  backend/middleware/request_logger.js \
   backend/lib/orders_workshop_helpers.js \
   backend/lib/payments_schema_helpers.js \
   backend/lib/transfer_helpers.js \
   backend/app.js \
   backend/middleware/auth.js \
+  backend/middleware/uploads_auth.js \
+  backend/lib/query_limits.js \
+  backend/lib/sql_migrations.js \
   backend/websocket/emit.js \
   backend/websocket/presence_registry.js \
   backend/websocket/attach.js \

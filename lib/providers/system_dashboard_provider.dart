@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
 
@@ -85,7 +84,6 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
     state = const AsyncValue.loading();
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
 
@@ -104,11 +102,9 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
         'user_id': userId.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/api/system/dashboard').replace(queryParameters: queryParams);
-
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/api/system/dashboard',
+        query: queryParams,
       );
 
       if (response.statusCode == 200) {
@@ -126,24 +122,18 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
           StackTrace.current,
         );
       } else {
-        // Fallback to mock data if API not available
-        final mockData = SystemDashboardData(
-          totalUsers: 25,
-          activeUsers: 20,
-          totalBranches: 4,
-          activeBranches: 4,
-          totalOrders: 150,
-          totalRevenue: 50000000.0,
-          recentActivities: [
-            {'id': 1, 'type': 'user_login', 'description': 'User logged in', 'timestamp': DateTime.now().toIso8601String()},
-            {'id': 2, 'type': 'order_created', 'description': 'New order created', 'timestamp': DateTime.now().toIso8601String()},
-          ],
-          lastUpdated: DateTime.now(),
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(SystemDashboardData.fromJson(cached.value));
+          return;
+        }
+        state = AsyncValue.error(
+          'Gagal memuat dashboard sistem (HTTP ${response.statusCode}).',
+          StackTrace.current,
         );
-        state = AsyncValue.data(mockData);
       }
-    } catch (error) {
-      // Fallback to cache if available, otherwise minimal empty data.
+    } catch (error, stackTrace) {
       try {
         final userState = _ref.read(userStateProvider);
         final userId = userState.userId;
@@ -157,18 +147,7 @@ class SystemDashboardNotifier extends StateNotifier<AsyncValue<SystemDashboardDa
       } catch (_) {
         // ignore cache errors
       }
-      state = AsyncValue.data(
-        SystemDashboardData(
-          totalUsers: 0,
-          activeUsers: 0,
-          totalBranches: 0,
-          activeBranches: 0,
-          totalOrders: 0,
-          totalRevenue: 0.0,
-          recentActivities: const [],
-          lastUpdated: DateTime.now(),
-        ),
-      );
+      state = AsyncValue.error(error, stackTrace);
     }
   }
 

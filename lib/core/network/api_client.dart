@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../utils/network_config.dart';
+import '../../utils/app_error_reporter.dart';
 import 'api_exceptions.dart';
 
 /// Thin wrapper around `package:http` with:
@@ -93,8 +94,35 @@ class ApiClient {
     );
   }
 
+  /// Multipart POST — auth + timeout + 401/403 sama seperti request JSON.
+  static Future<http.Response> postMultipart(
+    String pathOrUrl, {
+    Map<String, String>? query,
+    Map<String, String>? headers,
+    Map<String, String>? fields,
+    required List<http.MultipartFile> files,
+  }) async {
+    return _send(() async {
+      final request = http.MultipartRequest('POST', _uri(pathOrUrl, query));
+      if (fields != null) {
+        request.fields.addAll(fields);
+      }
+      request.files.addAll(files);
+      request.headers.addAll(_multipartHeaders(headers));
+      final streamed = await request.send().timeout(_timeout);
+      return http.Response.fromStream(streamed);
+    });
+  }
+
   static Map<String, String> _headers(Map<String, String>? extra) {
     return <String, String>{...NetworkConfig.defaultHeaders, ...?extra};
+  }
+
+  /// Jangan set Content-Type manual — boundary multipart di-set oleh package:http.
+  static Map<String, String> _multipartHeaders(Map<String, String>? extra) {
+    final merged = _headers(extra);
+    merged.remove('Content-Type');
+    return merged;
   }
 
   static String _errorMessageFromResponse(http.Response response) {
@@ -121,7 +149,13 @@ class ApiClient {
   }
 
   static Future<http.Response> _send(Future<http.Response> Function() request) async {
-    final response = await request().timeout(_timeout);
+    http.Response response;
+    try {
+      response = await request().timeout(_timeout);
+    } catch (e, st) {
+      AppErrorReporter.report(e, stackTrace: st, context: 'ApiClient.network');
+      rethrow;
+    }
     if (response.statusCode == 401) {
       NetworkConfig.setAuthToken(null);
       NetworkConfig.notifyUnauthorized();

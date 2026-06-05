@@ -67,6 +67,8 @@ class OfflineQueue {
 
   static final OfflineQueue instance = OfflineQueue._();
   static const String _key = 'offline_queue/v1';
+  static const int maxItems = 100;
+  static const Duration maxItemAge = Duration(days: 7);
 
   String newIdempotencyKey() {
     final r = Random.secure();
@@ -81,10 +83,19 @@ class OfflineQueue {
     if (raw == null || raw.isEmpty) return [];
     final decoded = jsonDecode(raw);
     if (decoded is! List) return [];
-    return decoded
+    final now = DateTime.now();
+    final items = decoded
         .whereType<Map>()
         .map((m) => OfflineQueueItem.fromJson(Map<String, dynamic>.from(m)))
+        .where(
+          (e) => now.difference(e.createdAt) <= maxItemAge,
+        )
         .toList();
+    if (items.length > maxItems) {
+      items.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return items.sublist(items.length - maxItems);
+    }
+    return items;
   }
 
   Future<void> _save(List<OfflineQueueItem> items) async {
@@ -94,6 +105,11 @@ class OfflineQueue {
 
   Future<void> enqueue(OfflineQueueItem item) async {
     final items = await list();
+    if (items.length >= maxItems) {
+      throw StateError(
+        'Antrian offline penuh ($maxItems item). Sync atau kosongkan antrian.',
+      );
+    }
     await _save([...items, item]);
   }
 

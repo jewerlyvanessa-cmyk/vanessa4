@@ -526,6 +526,7 @@ dataRowMinHeight: 40,
                 width: s,
                 height: s,
                 fit: BoxFit.cover,
+                headers: NetworkConfig.imageHeaders,
                 errorBuilder: (_, _, _) =>
                     ColoredBox(color: const Color(0xFFE0E0E0), child: Icon(Icons.store, size: s * 0.5)),
               )

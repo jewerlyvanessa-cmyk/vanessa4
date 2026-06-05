@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
@@ -55,11 +55,8 @@ class _RequestStockWarehousePageState
     super.dispose();
   }
 
-  Future<http.Response> _fetchBranchesList(String baseUrl) async {
-    return http.get(
-      Uri.parse('$baseUrl/branches'),
-      headers: NetworkConfig.defaultHeaders,
-    );
+  Future<http.Response> _fetchBranchesList() async {
+    return ApiClient.get('/branches');
   }
 
   Future<void> _loadBranches() async {
@@ -69,8 +66,7 @@ class _RequestStockWarehousePageState
     });
     try {
       final user = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
-      final res = await _fetchBranchesList(baseUrl);
+      final res = await _fetchBranchesList();
       if (res.statusCode != 200) {
         setState(() {
           _error = 'Gagal memuat cabang (${res.statusCode})';
@@ -158,7 +154,6 @@ class _RequestStockWarehousePageState
     }
 
     setState(() => _submitting = true);
-    final baseUrl = NetworkConfig.baseUrl;
     final userNotes = _notesController.text.trim();
     var ok = 0;
     String? lastErr;
@@ -174,9 +169,8 @@ class _RequestStockWarehousePageState
           jenis: e.j,
           userNotes: userNotes.isEmpty ? null : userNotes,
         );
-        final resp = await http.post(
-          Uri.parse('$baseUrl/transfers'),
-          headers: NetworkConfig.defaultHeaders,
+        final resp = await ApiClient.post(
+          '/transfers',
           body: jsonEncode({
             'from_branch_id': warehouseId,
             'to_branch_id': storeBranchId,

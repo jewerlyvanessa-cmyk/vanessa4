@@ -2,13 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
 import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
@@ -680,7 +679,6 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
       final branchId = userState.branch.toString().trim();
       if (branchId.isEmpty) {
@@ -692,10 +690,10 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
         return;
       }
 
-      final uri = Uri.parse(
-        '$baseUrl/items?branch_id=$branchId&limit=200',
+      final resp = await ApiClient.get(
+        '/items',
+        query: {'branch_id': branchId, 'limit': '200'},
       );
-      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
         var msg = 'Gagal memuat stok (${resp.statusCode})';
         if (resp.statusCode == 403) {

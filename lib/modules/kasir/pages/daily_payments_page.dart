@@ -234,6 +234,7 @@ class _DailyPaymentsPageState extends ConsumerState<DailyPaymentsPage> {
                       height: 220,
                       width: 220,
                       fit: BoxFit.cover,
+                      headers: NetworkConfig.imageHeaders,
                       errorBuilder: (context, error, stackTrace) {
                         return Container(
                           height: 220,

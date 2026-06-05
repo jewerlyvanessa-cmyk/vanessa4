@@ -3,12 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/workshop_dashboard_provider.dart';
 import 'package:vanessa3/providers/workshop_service_incoming_provider.dart';
 import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 /// Service/custom dari toko: menunggu persetujuan admin workshop → antrian pekerjaan (`sent-to-workshop`).
@@ -45,10 +44,10 @@ class _ServiceIncomingPageState extends ConsumerState<ServiceIncomingPage> {
     });
     try {
       final branch = ref.read(userStateProvider).branch;
-      final uri = Uri.parse(
-        '${NetworkConfig.baseUrl}/api/workshop/service-incoming?branch_id=$branch',
+      final res = await ApiClient.get(
+        '/api/workshop/service-incoming',
+        query: {'branch_id': branch},
       );
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200) {
         setState(() {
           _error = 'Gagal memuat (${res.statusCode})';

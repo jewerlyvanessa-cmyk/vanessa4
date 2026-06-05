@@ -8,6 +8,7 @@ const {
   fetchOwnerStockTotals,
   fetchOwnerPaymentSummary,
 } = require('../lib/owner_dashboard_helpers');
+const { parseQueryLimit } = require('../lib/query_limits');
 
 function registerReportsRoutes(app, deps) {
   const { db } = deps;
@@ -180,10 +181,12 @@ function registerReportsRoutes(app, deps) {
       `;
 
       const params = [];
-      if (limit) {
-        query += ` LIMIT $1`;
-        params.push(parseInt(limit, 10));
-      }
+      const effectiveLimit = parseQueryLimit(limit, {
+        defaultLimit: 200,
+        maxLimit: 1000,
+      });
+      query += ` LIMIT $1`;
+      params.push(effectiveLimit);
 
       const result = await db.query(query, params);
       const processed = result.rows.map((r) => ({

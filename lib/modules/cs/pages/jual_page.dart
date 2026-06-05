@@ -1,15 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
 import 'package:intl/intl.dart';
-import '../../../utils/network_config.dart';
-import '../../../utils/logger.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart'; // Import todayOrdersProvider
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
@@ -20,8 +15,15 @@ import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/services/cs_order_submit_service.dart';
+import 'package:vanessa3/services/cs_stock_cache_service.dart';
+import 'package:vanessa3/modules/cs/logic/jual_add_customer.dart';
+import 'package:vanessa3/modules/cs/logic/jual_form_utils.dart';
+import 'package:vanessa3/modules/cs/logic/jual_order_payload.dart';
+import 'package:vanessa3/modules/cs/widgets/jual_customer_field.dart';
+import 'package:vanessa3/providers/network_provider.dart';
 
 class JualPage extends ConsumerStatefulWidget {
   const JualPage({super.key, this.client});
@@ -84,53 +86,14 @@ class _JualPageState extends ConsumerState<JualPage> {
   // (berbeda dengan _itemCodeController yang menyimpan nilai untuk payload).
   TextEditingController? _itemAutocompleteFieldController;
 
-  double _roundToNearest5000(double amount) {
-    final modulo10000 = amount % 10000;
+  double _roundToNearest5000(double amount) =>
+      JualFormUtils.roundToNearest5000(amount);
 
-    if (modulo10000 == 5000) {
-      // Exactly 5000, keep as is
-      return amount;
-    } else if (modulo10000 < 5000) {
-      // Below 5000, round up to 5000
-      return amount - modulo10000 + 5000;
-    } else {
-      // Above 5000, round up to next 10000
-      return amount - modulo10000 + 10000;
-    }
-  }
+  String _formatNumberWithSeparators(String value) =>
+      JualFormUtils.formatNumberWithSeparators(value);
 
-  String _formatNumberWithSeparators(String value) {
-    if (value.isEmpty) return value;
-
-    // Remove existing separators and Rp prefix
-    final cleanValue = value
-        .replaceAll(',', '')
-        .replaceAll('Rp ', '')
-        .replaceAll('Rp', '');
-    final number = int.tryParse(cleanValue) ?? double.tryParse(cleanValue);
-    if (number == null) return value;
-
-    // Format with thousand separators and Rp prefix, no decimals
-    final formatter = NumberFormat.currency(
-      locale: 'id_ID',
-      symbol: 'Rp ',
-      decimalDigits: 0,
-    );
-    return formatter.format(number);
-  }
-
-  double _parseNumberWithSeparators(String value) {
-    if (value.isEmpty) return 0.0;
-
-    // Remove separators and Rp prefix
-    final cleanValue = value
-        .replaceAll(',', '')
-        .replaceAll('Rp ', '')
-        .replaceAll('Rp', '');
-    return int.tryParse(cleanValue)?.toDouble() ??
-        double.tryParse(cleanValue) ??
-        0.0;
-  }
+  double _parseNumberWithSeparators(String value) =>
+      JualFormUtils.parseNumberWithSeparators(value);
 
   void _calculateJumlah() {
     final qty = int.tryParse(_qtyController.text) ?? 0;
@@ -160,6 +123,10 @@ class _JualPageState extends ConsumerState<JualPage> {
     // Fetch customers when page loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(customersProvider.notifier).fetchCustomers();
+      final branchId = ref.read(userStateProvider).branch;
+      if (branchId.trim().isNotEmpty) {
+        CsStockCacheService.prefetchSellable(branchId);
+      }
     });
 
     // Default material for new/unregistered sales
@@ -206,79 +173,18 @@ class _JualPageState extends ConsumerState<JualPage> {
     });
   }
 
-  MediaType _detectImageMediaType(String filePath) {
-    final lower = filePath.toLowerCase();
-    if (lower.endsWith('.png')) return MediaType('image', 'png');
-    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
-    // default to jpeg for .jpg/.jpeg or unknown (we compress to jpg)
-    return MediaType('image', 'jpeg');
-  }
-
   Future<String?> _uploadProductPhoto() async {
     if (!_hasFoto) return null;
-
     try {
-      final baseUrl = NetworkConfig.storageUrl;
-      debugPrint('Uploading foto to: $baseUrl/upload');
-
-      final uri = Uri.parse('$baseUrl/upload');
-      final request = http.MultipartRequest('POST', uri);
-      if (kIsWeb) {
-        final bytes = _fotoBytes;
-        if (bytes == null || bytes.isEmpty) return null;
-        final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
-            ? _fotoName!.trim()
-            : 'foto.jpg';
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'file',
-            bytes,
-            filename: name,
-            contentType: _detectImageMediaType(name),
-          ),
-        );
-      } else {
-        final foto = _fotoFile;
-        if (foto == null) return null;
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'file',
-            foto.path,
-            contentType: _detectImageMediaType(foto.path),
-          ),
-        );
-      }
-
-      final response = await request.send();
-      debugPrint('Upload response status: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final respStr = await response.stream.bytesToString();
-        debugPrint('Upload response: $respStr');
-
-        final data = jsonDecode(respStr);
-        // Handle both full URL and relative path responses
-        final url = data['url'] ?? data['fileUrl'] ?? data['path'];
-        if (url != null) {
-          // If URL is relative path, prepend with storage base URL
-          if (url.startsWith('/')) {
-            final fullUrl = '$baseUrl$url';
-            debugPrint('Final photo URL: $fullUrl');
-            return fullUrl;
-          }
-          debugPrint('Final photo URL: $url');
-          return url;
-        }
-      } else {
-        debugPrint('Upload failed with status: ${response.statusCode}');
-        final errorBody = await response.stream.bytesToString();
-        debugPrint('Error response: $errorBody');
-      }
+      return await CsOrderPhotoUpload.upload(
+        file: _fotoFile,
+        bytes: _fotoBytes,
+        fileName: _fotoName,
+      );
     } catch (e) {
       debugPrint('Error uploading foto: $e');
+      return null;
     }
-
-    return null;
   }
 
   void _applyPhotoPick(CsOrderPhotoPickResult? result) {
@@ -353,53 +259,19 @@ class _JualPageState extends ConsumerState<JualPage> {
     if (query.isEmpty) return;
 
     try {
-      // Try to resolve an item from stock by code.
-      // If found, we switch to from_stock and auto-fill fields.
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = ref.read(userStateProvider);
       final branchId = userState.branch;
+      final online = ref.read(networkStatusProvider).isBackendReachable;
 
-      Future<List<Map<String, dynamic>>> fetchExact({String? status}) async {
-        final uri = Uri.parse(
-          '$baseUrl/items?item_code=$query&limit=5'
-          '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
-          '${status != null ? '&status=$status' : ''}',
-        );
-        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-        if (resp.statusCode != 200) return [];
-        final List<dynamic> data = jsonDecode(resp.body);
-        return data.map((e) => e as Map<String, dynamic>).toList();
-      }
-
-      Future<List<Map<String, dynamic>>> fetchSellableOnly() async {
-        final uri = Uri.parse(
-          '$baseUrl/items?item_code=$query&sellable_only=true&limit=5'
-          '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}',
-        );
-        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
-        if (resp.statusCode != 200) return [];
-        final List<dynamic> data = jsonDecode(resp.body);
-        return data.map((e) => e as Map<String, dynamic>).toList();
-      }
-
-      List<Map<String, dynamic>> suggestions = [];
-      // Hanya stok layak jual (bukan buyback / servis / custom).
-      suggestions = await fetchExact(status: 'ready');
-      if (suggestions.isEmpty) {
-        suggestions = await fetchExact(status: 'available');
-      }
-      if (suggestions.isEmpty) {
-        suggestions = await fetchSellableOnly();
-      }
-      // If still empty, fallback to search (hanya stok layak jual).
-      if (suggestions.isEmpty) {
-        suggestions = await _fetchItemSuggestions(query);
-      }
+      final suggestions = await CsStockCacheService.lookupByCode(
+        branchId: branchId,
+        code: query,
+        online: online,
+      );
       if (!mounted) return;
 
       final normalized = query.toLowerCase();
       Map<String, dynamic>? exact;
-
       for (final item in suggestions) {
         final itemCode = (item['kode_produk'] ?? item['item_code'] ?? '')
             .toString()
@@ -411,19 +283,26 @@ class _JualPageState extends ConsumerState<JualPage> {
         }
       }
 
-      if (exact == null) return;
-      final Map<String, dynamic> selected = exact;
-
-      _applySelectedStockItem(selected);
+      if (exact == null) {
+        if (!online && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Offline: kode tidak ada di cache stok. Buka Jual saat online untuk refresh.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      _applySelectedStockItem(exact);
     } catch (_) {
       // best-effort: jangan ganggu flow user kalau gagal
     }
   }
 
-  bool _isSellableStockStatus(String? raw) {
-    final s = (raw ?? '').toString().trim().toLowerCase();
-    return s == 'ready' || s == 'available' || s == 'reserved';
-  }
+  bool _isSellableStockStatus(String? raw) =>
+      JualFormUtils.isSellableStockStatus(raw);
 
   void _applySelectedStockItem(Map<String, dynamic> item) {
     if (!_isSellableStockStatus(item['status']?.toString())) {
@@ -460,110 +339,25 @@ class _JualPageState extends ConsumerState<JualPage> {
     String initialName,
     TextEditingController controller,
   ) async {
-    final nameController = TextEditingController(text: initialName);
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final addressController = TextEditingController();
-
-    final result = await showDialog<bool>(
+    final customer = await JualAddCustomer.showDialogAndCreate(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Tambah Customer Baru'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Nama'),
-            ),
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email (opsional)',
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'No. Telepon (opsional)',
-              ),
-            ),
-            TextField(
-              controller: addressController,
-              decoration: const InputDecoration(labelText: 'Alamat'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Simpan'),
-          ),
-        ],
-      ),
+      ref: ref,
+      initialName: initialName,
+      syncController: controller,
     );
-
-    if (result == true) {
-      try {
-        final baseUrl = NetworkConfig.baseUrl;
-        final response = await http.post(
-          Uri.parse('$baseUrl/api/customers'),
-          headers: NetworkConfig.defaultHeaders,
-          body: jsonEncode({
-            'name': nameController.text,
-            'email': emailController.text.trim().isEmpty
-                ? null
-                : emailController.text.trim(),
-            'phone': phoneController.text.trim().isEmpty
-                ? null
-                : phoneController.text.trim(),
-            'address': addressController.text.trim().isEmpty
-                ? null
-                : addressController.text.trim(),
-          }),
-        );
-
-        if (response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          if (mounted) {
-            setState(() {
-              _selectedCustomer = data['data'];
-              _customerController.text =
-                  data['data']['name'] ?? data['data']['nama'] ?? '';
-              _customerPhoneController.text =
-                  data['data']['phone'] ?? data['data']['no_hp'] ?? '';
-              _customerAddressController.text =
-                  data['data']['address'] ?? data['data']['alamat'] ?? '';
-              _autocompleteKey++; // Force rebuild Autocomplete
-            });
-          }
-          // Force another rebuild to ensure UI updates
-          if (mounted) {
-            setState(() {});
-          }
-          // Refresh customers list
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            ref.read(customersProvider.notifier).fetchCustomers();
-          });
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Customer berhasil ditambahkan')),
-            );
-          }
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Error: $e')));
-        }
-      }
-    }
+    if (!mounted || customer == null) return;
+    setState(() {
+      _selectedCustomer = customer;
+      _customerController.text =
+          customer['name']?.toString() ?? customer['nama']?.toString() ?? '';
+      _customerPhoneController.text =
+          customer['phone']?.toString() ?? customer['no_hp']?.toString() ?? '';
+      _customerAddressController.text =
+          customer['address']?.toString() ??
+          customer['alamat']?.toString() ??
+          '';
+      _autocompleteKey++;
+    });
   }
 
   Future<void> _submitOrder() async {
@@ -680,22 +474,7 @@ class _JualPageState extends ConsumerState<JualPage> {
       }
     }
 
-    // Prepare order data according to new schema (tabel2.txt)
-    Map<String, dynamic> orderData = {
-      'order_type': 'jual',
-      'order_number': _notaOrderController.text.isNotEmpty
-          ? _notaOrderController.text
-          : null,
-      'branch_id': branchId,
-      'user_id': userId,
-      'mode': _modeToko,
-      'customer_id': _selectedCustomer!['customer_id'],
-      'diskon': double.tryParse(_diskonController.text) ?? 0.0,
-    };
-
-    // Handle different sale types according to perubahan.txt
     if (_saleType == 'from_stock') {
-      // Ambil dari stok: ready → reserved → sold, inventory, is_quick_registered=false
       if (_selectedItem == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -704,111 +483,34 @@ class _JualPageState extends ConsumerState<JualPage> {
             ),
           );
         }
+        setState(() => _isSubmitting = false);
         return;
       }
-      orderData['item_id'] = _selectedItem!['item_id'];
-    } else {
-      // For unregistered or QSR - create new item
-      Map<String, dynamic> itemData = {
-        'name': _namaItemController.text,
-        'weight': double.tryParse(_beratController.text),
-        'kategori': _kategoriController.text,
-        'jenis': _jenisController.text,
-        'tipe': _tipeController.text,
-        'photo_url': fotoUrl,
-        'branch_id': branchId,
-        'source': 'manual',
-      };
-
-      final material = _materialController.text.trim();
-      final kadar = _kadarController.text.trim();
-      if (material.isNotEmpty) itemData['material'] = material;
-      if (kadar.isNotEmpty) itemData['purity'] = kadar;
-
-      if (_saleType == 'qsr') {
-        // QSR: Daftarkan & jual sekarang
-        // is_quick_registered = true, ownership = toko, stock_type = inventory, status = reserved → sold
-        itemData['is_quick_registered'] = true;
-        itemData['ownership'] = 'toko';
-        itemData['stock_type'] = 'inventory';
-        itemData['status'] = 'reserved'; // Will become sold after order
-      } else {
-        // Barang belum terdaftar: unregistered → sold, non_inventory
-        itemData['ownership'] = 'unknown';
-        itemData['stock_type'] = 'non_inventory';
-        itemData['status'] = 'unregistered'; // Will become sold after order
-      }
-
-      orderData['item_data'] = itemData;
     }
 
-    // Prepare order_items data according to new schema
-    List<Map<String, dynamic>> orderItems = [];
-
-    if (_saleType == 'from_stock' && _selectedItem != null) {
-      // For stock items
-      final existingPhoto =
-          (_selectedItem?['photo_url'] ??
-                  _selectedItem?['photo_produk'] ??
-                  _selectedItem?['photo'] ??
-                  '')
-              .toString()
-              .trim();
-      final photoProduk = (fotoUrl?.toString().trim().isNotEmpty ?? false)
-          ? fotoUrl
-          : (existingPhoto.isNotEmpty ? existingPhoto : null);
-      debugPrint('Order item photo_produk (from_stock): $photoProduk');
-
-      orderItems.add({
-        'item_id': _selectedItem!['item_id'],
-        'nama_item': _selectedItem!['name'] ?? _namaItemController.text,
-        'kode_produk':
-            _selectedItem!['kode_produk'] ?? _selectedItem!['item_code'],
-        'weight':
-            double.tryParse(_beratController.text) ?? _selectedItem!['weight'],
-        'qty': int.tryParse(_qtyController.text) ?? 1,
-        'harga_per_gram': _parseNumberWithSeparators(
-          _hargaPerGramController.text,
-        ),
-        'photo_produk': photoProduk,
-        'kategori': _selectedItem!['kategori'] ?? _kategoriController.text,
-        'jenis': _selectedItem!['jenis'] ?? _jenisController.text,
-        'tipe': _selectedItem!['tipe'] ?? _tipeController.text,
-      });
-
-      final material = _materialController.text.trim();
-      final kadar = _kadarController.text.trim();
-      if (material.isNotEmpty) orderItems.last['material'] = material;
-      if (kadar.isNotEmpty) orderItems.last['purity'] = kadar;
-    } else {
-      // For new/unregistered items
-      debugPrint('Order item photo_produk (new item): $fotoUrl');
-
-      orderItems.add({
-        'nama_item': _namaItemController.text,
-        'kode_produk': _itemCodeController.text.isNotEmpty
-            ? _itemCodeController.text
-            : null,
-        'weight': double.tryParse(_beratController.text),
-        'qty': int.tryParse(_qtyController.text) ?? 1,
-        'harga_per_gram': _parseNumberWithSeparators(
-          _hargaPerGramController.text,
-        ),
-        'photo_produk': fotoUrl,
-        'kategori': _kategoriController.text,
-        'jenis': _jenisController.text,
-        'tipe': _tipeController.text,
-      });
-
-      final material = _materialController.text.trim();
-      final kadar = _kadarController.text.trim();
-      if (material.isNotEmpty) orderItems.last['material'] = material;
-      if (kadar.isNotEmpty) orderItems.last['purity'] = kadar;
-    }
-
-    orderData['order_items'] = orderItems;
-
-    debugPrint('Submitting order payload with ${orderItems.length} item(s)');
+    final orderData = JualOrderPayloadBuilder.build(
+      JualOrderFormInput(
+        saleType: _saleType,
+        modeToko: _modeToko,
+        branchId: branchId,
+        userId: userId,
+        customerId: _selectedCustomer!['customer_id'],
+        orderNumber: _notaOrderController.text,
+        diskonText: _diskonController.text,
+        namaItem: _namaItemController.text,
+        beratText: _beratController.text,
+        material: _materialController.text,
+        kadar: _kadarController.text,
+        kategori: _kategoriController.text,
+        jenis: _jenisController.text,
+        tipe: _tipeController.text,
+        itemCode: _itemCodeController.text,
+        qtyText: _qtyController.text,
+        hargaPerGramText: _hargaPerGramController.text,
+        selectedItem: _selectedItem,
+        fotoUrl: fotoUrl,
+      ),
+    );
 
     try {
       final fakturOverlay = <String, dynamic>{
@@ -868,30 +570,18 @@ class _JualPageState extends ConsumerState<JualPage> {
   Future<List<Map<String, dynamic>>> _fetchItemSuggestions(String query) async {
     if (query.isEmpty) return [];
 
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final userState = ref.read(userStateProvider);
-      final branchId = userState.branch;
-      final isFromStock = _saleType == 'from_stock';
+    final userState = ref.read(userStateProvider);
+    final branchId = userState.branch;
+    final online = ref.read(networkStatusProvider).isBackendReachable;
+    final isFromStock = _saleType == 'from_stock';
 
-      final uri = Uri.parse(
-        '$baseUrl/items?search=$query&limit=10'
-        '${branchId.isNotEmpty ? '&branch_id=$branchId' : ''}'
-        '${isFromStock ? '&sellable_only=true' : ''}',
-      );
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
-      );
-
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data.map((item) => item as Map<String, dynamic>).toList();
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
+    return CsStockCacheService.searchItems(
+      branchId: branchId,
+      query: query,
+      online: online,
+      sellableOnly: isFromStock,
+      limit: 10,
+    );
   }
 
   void _updateItemSuggestions(String query) {
@@ -954,7 +644,6 @@ class _JualPageState extends ConsumerState<JualPage> {
 
   @override
   Widget build(BuildContext context) {
-    final customerList = ref.watch(customersProvider);
     final userState = ref.watch(userStateProvider);
 
     // Listen to user state changes to regenerate order number when branch changes
@@ -1046,286 +735,26 @@ class _JualPageState extends ConsumerState<JualPage> {
               ),
               const SizedBox(height: 12.0),
 
-              // 2. Customer Section
-              Row(
-                children: [
-                  const SizedBox(
-                    width: 100,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Customer'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: StatefulBuilder(
-                      builder: (context, setFieldState) {
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: customerList.isLoading
-                                  ? const TextField(
-                                      decoration: InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Loading customers...',
-                                      ),
-                                      enabled: false,
-                                    )
-                                  : customerList.error != null
-                                  ? TextField(
-                                      decoration: InputDecoration(
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Error loading customers',
-                                        errorText: customerList.error,
-                                      ),
-                                      enabled: false,
-                                    )
-                                  : (() {
-                                      Logger.logInfo(
-                                        'DEBUG: Showing Autocomplete - isLoading: ${customerList.isLoading}, error: ${customerList.error}, customers count: ${customerList.customers.length}',
-                                      );
-                                      return Autocomplete<Map<String, dynamic>>(
-                                        key: ValueKey(_autocompleteKey),
-                                        optionsBuilder: (TextEditingValue textEditingValue) {
-                                          Logger.logInfo(
-                                            'DEBUG: Autocomplete optionsBuilder called with text: "${textEditingValue.text}"',
-                                          );
-                                          Logger.logInfo(
-                                            'DEBUG: customerList.customers length: ${customerList.customers.length}',
-                                          );
-                                          Logger.logInfo(
-                                            'DEBUG: customerList.customers: ${customerList.customers}',
-                                          );
-                                          if (textEditingValue.text == '') {
-                                            return const Iterable<
-                                              Map<String, dynamic>
-                                            >.empty();
-                                          }
-                                          final input = textEditingValue.text
-                                              .toLowerCase();
-                                          final suggestions = customerList
-                                              .customers
-                                              .where((c) {
-                                                final name =
-                                                    (c['name'] ??
-                                                            c['nama'] ??
-                                                            '')
-                                                        .toString()
-                                                        .toLowerCase();
-                                                Logger.logInfo(
-                                                  'DEBUG: Checking customer: $name against input: $input',
-                                                );
-                                                return name.contains(input);
-                                              })
-                                              .toList();
-                                          Logger.logInfo(
-                                            'DEBUG: Found ${suggestions.length} suggestions',
-                                          );
-                                          return suggestions; // Return new list each time
-                                        },
-                                        displayStringForOption: (option) =>
-                                            option['name'] ??
-                                            option['nama'] ??
-                                            '',
-                                        onSelected: (customer) {
-                                          setState(() {
-                                            _customerController.text =
-                                                customer['name'] ??
-                                                customer['nama'] ??
-                                                '';
-                                            _customerPhoneController.text =
-                                                customer['phone'] ??
-                                                customer['no_hp'] ??
-                                                '';
-                                            _customerAddressController.text =
-                                                customer['address'] ??
-                                                customer['alamat'] ??
-                                                '';
-                                            _selectedCustomer = customer;
-                                          });
-                                        },
-                                        fieldViewBuilder:
-                                            (
-                                              context,
-                                              controller,
-                                              focusNode,
-                                              onFieldSubmitted,
-                                            ) {
-                                              // Sync the autocomplete controller with our class-level controller
-                                              if (controller.text !=
-                                                  _customerController.text) {
-                                                controller.text =
-                                                    _customerController.text;
-                                                controller.selection =
-                                                    TextSelection.fromPosition(
-                                                      TextPosition(
-                                                        offset: controller
-                                                            .text
-                                                            .length,
-                                                      ),
-                                                    );
-                                              }
-                                              return Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Row(
-                                                    children: [
-                                                      Expanded(
-                                                        child: TextFormField(
-                                                          controller:
-                                                              controller, // Use the autocomplete controller
-                                                          focusNode: focusNode,
-                                                          decoration: const InputDecoration(
-                                                            border:
-                                                                OutlineInputBorder(),
-                                                            contentPadding:
-                                                                EdgeInsets.symmetric(
-                                                                  vertical: 12,
-                                                                  horizontal:
-                                                                      12,
-                                                                ),
-                                                          ),
-                                                          onChanged: (value) {
-                                                            // Sync back to class-level controller
-                                                            _customerController
-                                                                    .text =
-                                                                value;
-                                                            setState(() {});
-                                                          },
-                                                          onFieldSubmitted:
-                                                              (value) =>
-                                                                  onFieldSubmitted(),
-                                                          validator: (value) {
-                                                            if (value == null ||
-                                                                value.isEmpty) {
-                                                              return 'Nama customer wajib diisi';
-                                                            }
-                                                            return null;
-                                                          },
-                                                        ),
-                                                      ),
-                                                      Builder(
-                                                        builder: (context) {
-                                                          final input =
-                                                              controller.text
-                                                                  .trim()
-                                                                  .toLowerCase();
-                                                          final exists = ref
-                                                              .read(
-                                                                customersProvider,
-                                                              )
-                                                              .customers
-                                                              .any((c) {
-                                                                final name =
-                                                                    (c['name'] ??
-                                                                            c['nama'] ??
-                                                                            '')
-                                                                        .toString()
-                                                                        .toLowerCase();
-                                                                return name ==
-                                                                        input &&
-                                                                    input
-                                                                        .isNotEmpty;
-                                                              });
-                                                          if (!exists &&
-                                                              input
-                                                                  .isNotEmpty) {
-                                                            return Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                IconButton(
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .person_add,
-                                                                  ),
-                                                                  tooltip:
-                                                                      'Tambah Customer',
-                                                                  onPressed: () =>
-                                                                      _showAddCustomerDialog(
-                                                                        controller
-                                                                            .text,
-                                                                        controller,
-                                                                      ),
-                                                                ),
-                                                                IconButton(
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .qr_code_scanner,
-                                                                  ),
-                                                                  tooltip:
-                                                                      'Scan QR Customer',
-                                                                  onPressed: () =>
-                                                                      _scanAndFill(
-                                                                        controller,
-                                                                      ),
-                                                                ),
-                                                              ],
-                                                            );
-                                                          } else {
-                                                            return Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                IconButton(
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .person_add,
-                                                                  ),
-                                                                  tooltip:
-                                                                      'Tambah Customer',
-                                                                  onPressed: () =>
-                                                                      _showAddCustomerDialog(
-                                                                        controller
-                                                                            .text,
-                                                                        controller,
-                                                                      ),
-                                                                ),
-                                                                IconButton(
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .qr_code_scanner,
-                                                                  ),
-                                                                  tooltip:
-                                                                      'Scan QR Customer',
-                                                                  onPressed: () =>
-                                                                      _scanAndFill(
-                                                                        controller,
-                                                                      ),
-                                                                ),
-                                                              ],
-                                                            );
-                                                          }
-                                                        },
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  if (_selectedCustomer !=
-                                                      null) ...[
-                                                    const SizedBox(height: 4),
-                                                    Text(
-                                                      'Phone: ${_selectedCustomer!['phone'] ?? _selectedCustomer!['no_hp'] ?? 'N/A'} | Address: ${_selectedCustomer!['address'] ?? _selectedCustomer!['alamat'] ?? 'N/A'}',
-                                                      style: const TextStyle(
-                                                        fontSize: 12,
-                                                        color: Colors.grey,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ],
-                                              );
-                                            },
-                                      );
-                                    })(),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
+              JualCustomerField(
+                autocompleteKey: _autocompleteKey,
+                customerController: _customerController,
+                phoneController: _customerPhoneController,
+                addressController: _customerAddressController,
+                selectedCustomer: _selectedCustomer,
+                onCustomerSelected: (customer) {
+                  setState(() {
+                    _customerController.text =
+                        customer['name'] ?? customer['nama'] ?? '';
+                    _customerPhoneController.text =
+                        customer['phone'] ?? customer['no_hp'] ?? '';
+                    _customerAddressController.text =
+                        customer['address'] ?? customer['alamat'] ?? '';
+                    _selectedCustomer = customer;
+                  });
+                },
+                onCustomerTextChanged: (_) => setState(() {}),
+                onAddCustomer: _showAddCustomerDialog,
+                onScanQr: _scanAndFill,
               ),
               const SizedBox(height: 12.0),
 
@@ -2172,8 +1601,12 @@ class _JualPageState extends ConsumerState<JualPage> {
 
               // Submit Button
               Center(
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitOrder,
+                child: Semantics(
+                  button: true,
+                  label: 'Simpan order jual',
+                  enabled: !_isSubmitting,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _submitOrder,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       vertical: 12,
@@ -2198,6 +1631,7 @@ class _JualPageState extends ConsumerState<JualPage> {
                           'SUBMIT PENJUALAN',
                           style: TextStyle(fontSize: 16, color: Colors.white),
                         ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),

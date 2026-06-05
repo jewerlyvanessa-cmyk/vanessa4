@@ -3,6 +3,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const { createRequestLogger } = require('./middleware/request_logger');
 
 const port = process.env.PORT || 3000;
 const SECRET_KEY = process.env.JWT_SECRET;
@@ -111,25 +112,17 @@ app.use(cors({
 }));
 
 app.use(bodyParser.json());
+app.use(createRequestLogger());
 
 // Header keamanan dasar (tanpa dependensi tambahan)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  // camera=(self): izinkan getUserMedia di halaman same-origin (Flutter web / QR); tetap blok di iframe lintas origin.
   res.setHeader(
     'Permissions-Policy',
     'camera=(self), microphone=(), geolocation=()'
   );
-  next();
-});
-
-// Request log — nonaktif di production (kurangi noise I/O).
-app.use((req, res, next) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`HTTP ${req.method} ${req.url}`);
-  }
   next();
 });
 

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
@@ -41,11 +40,10 @@ class _TechnicianManagementPageState
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/technicians?branch_id=${userState.branch}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/technicians',
+        query: {'branch_id': userState.branch},
       );
 
       if (response.statusCode == 200) {

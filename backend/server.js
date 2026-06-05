@@ -6,15 +6,14 @@
 
 const { app, port, SECRET_KEY, JWT_EXPIRES_IN } = require('./app');
 const express = require('express');
-const WebSocket = require('ws');
 const multer = require('multer');
 const path = require('path');
 const cron = require('node-cron');
-const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const { ORDER_CALENDAR_TIMEZONE } = require('./lib/business_timezone');
 const { authenticateToken, requireRoles } = require('./middleware/auth');
+const { createUploadsAuthMiddleware } = require('./middleware/uploads_auth');
 const { emitNotification } = require('./websocket/emit');
 const { createWsPresenceRegistry } = require('./websocket/presence_registry');
 const { attachWebSocketServer } = require('./websocket/attach');
@@ -41,6 +40,7 @@ const { registerAdminApiRoutes } = require('./routes/admin_api');
 const { registerItemsRoutes } = require('./routes/items');
 const { registerSuppliersRoutes } = require('./routes/suppliers');
 const { registerImportDataRoutes } = require('./routes/import_data');
+const { purgeExpiredIdempotency } = require('./lib/idempotency_helpers');
 
 
 const authRequired = authenticateToken(SECRET_KEY);
@@ -67,8 +67,12 @@ const writeApiLimiter = rateLimit({
   message: { error: 'Too many requests. Please slow down.' },
 });
 
-// Serve static files from uploads directory
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Uploads: JWT required (Authorization header or ?access_token= for Image.network)
+app.use(
+  '/uploads',
+  createUploadsAuthMiddleware(SECRET_KEY),
+  express.static(path.join(__dirname, 'uploads')),
+);
 
 // Health checks (publik, tanpa JWT)
 app.use(createHealthRouter({ db, getWss: () => wss }));
@@ -225,6 +229,17 @@ wss = attachWebSocketServer(server, wsPresence);
 cron.schedule('0 9 * * *', () => {
   console.log('Mengirim pengingat harian ke semua pengguna pada pukul 09:00');
   sendNotificationToClients('Jangan lupa untuk memeriksa stok dan pesanan hari ini!');
+});
+
+cron.schedule('0 3 * * *', async () => {
+  try {
+    const removed = await purgeExpiredIdempotency(db, 30);
+    if (removed > 0) {
+      console.log(`[idempotency] Purged ${removed} expired row(s)`);
+    }
+  } catch (e) {
+    console.warn('[idempotency] purge failed:', e.message);
+  }
 });
 
 console.log('Cron job untuk pengingat otomatis telah diaktifkan.');

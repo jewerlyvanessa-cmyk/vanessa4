@@ -1,7 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 
 /// Hasil update status beberapa baris transfer (satu dokumen).
 class TransferBatchUpdateResult {
@@ -24,13 +23,10 @@ Future<TransferBatchUpdateResult> updateTransferStatuses({
 }) async {
   final okIds = <int>[];
   final failed = <({int id, String message})>[];
-  final baseUrl = NetworkConfig.baseUrl;
-
   for (final id in transferIds) {
     try {
-      final resp = await http.put(
-        Uri.parse('$baseUrl/transfers/$id'),
-        headers: NetworkConfig.defaultHeaders,
+      final resp = await ApiClient.put(
+        '/transfers/$id',
         body: jsonEncode({
           'status': status,
           'approved_by': approvedBy,

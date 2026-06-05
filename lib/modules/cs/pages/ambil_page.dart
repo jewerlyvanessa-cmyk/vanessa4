@@ -1,30 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:math' as math;
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/faktur_print.dart'
     show printPickupServiceCustomFaktur;
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:intl/intl.dart';
 
 class AmbilPage extends ConsumerStatefulWidget {
-  const AmbilPage({super.key, this.client});
-
-  final http.Client? client;
+  const AmbilPage({super.key});
 
   @override
   ConsumerState<AmbilPage> createState() => _AmbilPageState();
@@ -151,53 +147,13 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     await _loadOrderFromOrderNumberField();
   }
 
-  MediaType _detectImageMediaType(String name) {
-    final lower = name.toLowerCase();
-    if (lower.endsWith('.png')) return MediaType('image', 'png');
-    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
-    return MediaType('image', 'jpeg');
-  }
-
   Future<String?> _uploadFoto() async {
     if (!_hasFoto) return null;
-    final storageUrl = NetworkConfig.storageUrl;
-    final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri);
-    if (kIsWeb) {
-      final bytes = _fotoBytes;
-      if (bytes == null || bytes.isEmpty) return null;
-      final name = (_fotoName != null && _fotoName!.trim().isNotEmpty)
-          ? _fotoName!.trim()
-          : 'foto.jpg';
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: name,
-          contentType: _detectImageMediaType(name),
-        ),
-      );
-    } else {
-      final foto = _fotoFile;
-      if (foto == null) return null;
-      request.files.add(await http.MultipartFile.fromPath('file', foto.path));
-    }
-    final token = NetworkConfig.authToken;
-    if (token != null && token.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $token';
-      request.headers['Accept'] = 'application/json';
-    }
-    final response = await request.send();
-    if (response.statusCode == 200) {
-      final respStr = await response.stream.bytesToString();
-      final data = jsonDecode(respStr);
-      final raw = data['url'] ?? data['fileUrl'] ?? data['path'];
-      if (raw is String && raw.startsWith('/')) {
-        return '$storageUrl$raw';
-      }
-      return raw?.toString();
-    }
-    return null;
+    return CsOrderPhotoUpload.upload(
+      file: _fotoFile,
+      bytes: _fotoBytes,
+      fileName: _fotoName,
+    );
   }
 
   /// GET satu order (service/custom) dari nomor nota — sama sumber dengan cetak faktur ambil.
@@ -205,12 +161,9 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
     final num = raw.trim();
     if (num.isEmpty) return null;
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final r = await (widget.client ?? http.Client()).get(
-        Uri.parse(
-          '$baseUrl/orders?order_number=${Uri.encodeQueryComponent(num)}',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final r = await ApiClient.get(
+        '/orders',
+        query: {'order_number': num},
       );
       if (r.statusCode != 200) return null;
       final body = r.body.trim();
@@ -321,10 +274,9 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
 
   Future<void> _fetchAndApplyPaymentSummary(int orderId) async {
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final resp = await (widget.client ?? http.Client()).get(
-        Uri.parse('$baseUrl/orders/payment-summary?order_id=$orderId'),
-        headers: NetworkConfig.defaultHeaders,
+      final resp = await ApiClient.get(
+        '/orders/payment-summary',
+        query: {'order_id': orderId.toString()},
       );
       if (resp.statusCode != 200) return;
       final decoded = jsonDecode(resp.body);
@@ -380,10 +332,8 @@ class _AmbilPageState extends ConsumerState<AmbilPage> {
         fotoUrl = await _uploadFoto();
       }
 
-      final baseUrl = NetworkConfig.baseUrl;
-      final response = await (widget.client ?? http.Client()).post(
-        Uri.parse('$baseUrl/orders/pickup'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.post(
+        '/orders/pickup',
         body: jsonEncode({
           'branch_id': branchId,
           'order_id': _selectedOrderId,

@@ -44,7 +44,6 @@ function resolvePaymentActorUserId(req) {
 }
 
 function parseValidatedByOnlyQuery(req) {
-  const role = normalizeRole(req);
   const raw = (req.query.validated_by_only ?? '').toString().trim().toLowerCase();
   const off = raw === '0' || raw === 'false' || raw === 'no';
   const on = raw === '1' || raw === 'true' || raw === 'yes';

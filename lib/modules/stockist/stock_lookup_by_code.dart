@@ -1,8 +1,7 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 /// Cari item di cabang [branchId] lewat `item_code` lalu fallback `search`.
 Future<List<Map<String, dynamic>>> fetchStockItemsByCode({
@@ -13,16 +12,15 @@ Future<List<Map<String, dynamic>>> fetchStockItemsByCode({
   final trimmed = code.trim();
   if (trimmed.isEmpty) return const [];
 
-  final baseUrl = NetworkConfig.baseUrl;
-  var uri = Uri.parse('$baseUrl/items').replace(
-    queryParameters: <String, String>{
-      if (branchId.isNotEmpty) 'branch_id': branchId,
-      'item_code': trimmed,
-      'limit': '$limit',
-    },
-  );
+  final baseQuery = <String, String>{
+    if (branchId.isNotEmpty) 'branch_id': branchId,
+    'limit': '$limit',
+  };
 
-  var resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+  var resp = await ApiClient.get(
+    '/items',
+    query: {...baseQuery, 'item_code': trimmed},
+  );
   if (resp.statusCode == 200) {
     final decoded = jsonDecode(resp.body);
     final list = (decoded is List ? decoded : const [])
@@ -32,14 +30,10 @@ Future<List<Map<String, dynamic>>> fetchStockItemsByCode({
     if (list.isNotEmpty) return list;
   }
 
-  uri = Uri.parse('$baseUrl/items').replace(
-    queryParameters: <String, String>{
-      if (branchId.isNotEmpty) 'branch_id': branchId,
-      'search': trimmed,
-      'limit': '$limit',
-    },
+  resp = await ApiClient.get(
+    '/items',
+    query: {...baseQuery, 'search': trimmed},
   );
-  resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
   if (resp.statusCode != 200) {
     throw Exception('HTTP ${resp.statusCode}');
   }
@@ -66,8 +60,9 @@ Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
   final statusTrim = status?.trim() ?? '';
   final startTrim = startDate?.trim() ?? '';
   final endTrim = endDate?.trim() ?? '';
-  final uri = Uri.parse('${NetworkConfig.baseUrl}/items').replace(
-    queryParameters: <String, String>{
+  final resp = await ApiClient.get(
+    '/items',
+    query: <String, String>{
       'branch_id': bid,
       'limit': '$limit',
       if (statusTrim.isNotEmpty) 'status': statusTrim,
@@ -75,7 +70,6 @@ Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
       if (endTrim.isNotEmpty) 'end_date': endTrim,
     },
   );
-  final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
   if (resp.statusCode != 200) {
     throw Exception('HTTP ${resp.statusCode}');
   }
@@ -91,6 +85,33 @@ Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
         .toList();
   }
   return list;
+}
+
+/// Daftar stok layak jual (ready/available/reserved) untuk cache offline CS.
+Future<List<Map<String, dynamic>>> fetchSellableStockItems({
+  required String branchId,
+  int limit = 500,
+}) async {
+  final bid = branchId.trim();
+  if (bid.isEmpty) return const [];
+
+  final resp = await ApiClient.get(
+    '/items',
+    query: <String, String>{
+      'branch_id': bid,
+      'sellable_only': 'true',
+      'limit': '$limit',
+    },
+  );
+  if (resp.statusCode != 200) {
+    throw Exception('HTTP ${resp.statusCode}');
+  }
+  final data = jsonDecode(resp.body);
+  if (data is! List) return const [];
+  return data
+      .whereType<Map>()
+      .map((e) => Map<String, dynamic>.from(e))
+      .toList();
 }
 
 /// Hanya item inventaris siap etalase (status ready, qty > 0).

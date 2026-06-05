@@ -9,11 +9,12 @@ const missingDbEnv = requiredDbEnv.filter((key) => !process.env[key]);
 const envPath = path.join(__dirname, '.env');
 const envFileExists = fs.existsSync(envPath);
 
+const isProduction = process.env.NODE_ENV === 'production';
 const isStrictDbEnv =
-  process.env.STRICT_DB_ENV === 'true' ||
-  process.env.NODE_ENV === 'production';
+  process.env.STRICT_DB_ENV === 'true' || isProduction;
+const isLocalDev =
+  process.env.NODE_ENV === 'development' && !isStrictDbEnv;
 
-// Jangan paksa env lengkap hanya karena jalan di PM2 — ecosystem sudah set NODE_ENV/STRICT_DB_ENV.
 const mustHaveEnv =
   isStrictDbEnv ||
   (missingDbEnv.length > 0 && !envFileExists && process.env.NODE_ENV !== 'development');
@@ -27,12 +28,13 @@ if (mustHaveEnv && missingDbEnv.length > 0) {
 
 if (!mustHaveEnv && missingDbEnv.length > 0) {
   console.warn(
-    `[db] Missing env vars (${missingDbEnv.join(', ')}). Falling back to local defaults for development.`
+    `[db] Missing env vars (${missingDbEnv.join(', ')}). Using localhost dev defaults.`
   );
 }
-if (!mustHaveEnv && (!process.env.DB_PASSWORD || process.env.DB_PASSWORD === 'password')) {
-  console.warn(
-    '[db] Using default DB password — set DB_* in backend/.env for production.'
+
+if (isProduction && process.env.DB_SSL !== 'true') {
+  throw new Error(
+    '[db] Production requires DB_SSL=true. Set DB_SSL and DB_* in backend/.env.'
   );
 }
 
@@ -41,14 +43,25 @@ const DB_SESSION_TIMEZONE =
   process.env.DB_TIMEZONE || 'Asia/Jakarta';
 
 const poolConfig = {
-  user: process.env.DB_USER || 'vanessa_store',
-  host: process.env.DB_HOST || 'vanessa.id',
-  database: process.env.DB_NAME || 'vanessa_store',
-  password: process.env.DB_PASSWORD || 'Aza|ia2I{28gQbLk',
+  user: process.env.DB_USER || (isLocalDev ? 'postgres' : undefined),
+  host: process.env.DB_HOST || (isLocalDev ? 'localhost' : undefined),
+  database: process.env.DB_NAME || (isLocalDev ? 'vanessa_store' : undefined),
+  password: process.env.DB_PASSWORD || (isLocalDev ? 'password' : undefined),
   port: parseInt(process.env.DB_PORT || '5432', 10),
-  // Timezone saat koneksi dibuka — hindari SET TIME ZONE terpisah (race + deprecation pg@9)
   options: `-c timezone=${DB_SESSION_TIMEZONE}`,
 };
+
+if (
+  isStrictDbEnv &&
+  (!poolConfig.user ||
+    !poolConfig.host ||
+    !poolConfig.database ||
+    !poolConfig.password)
+) {
+  throw new Error(
+    '[db] DB_USER, DB_HOST, DB_NAME, and DB_PASSWORD are required in production.'
+  );
+}
 
 if (process.env.DB_SSL === 'true') {
   poolConfig.ssl = {
@@ -61,7 +74,7 @@ const pool = new Pool(poolConfig);
 console.log(
   `[db] Pool: ${poolConfig.user}@${poolConfig.host}:${poolConfig.port}/${poolConfig.database}` +
     ` (session TZ: ${DB_SESSION_TIMEZONE})` +
-    (envFileExists ? ' (.env loaded)' : ' (NO .env file — using defaults)')
+    (envFileExists ? ' (.env loaded)' : ' (NO .env file)')
 );
 
 pool.on('error', (err) => {

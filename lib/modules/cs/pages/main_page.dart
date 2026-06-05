@@ -14,6 +14,7 @@ import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/shared_widgets/offline_status_banner.dart';
 import 'package:vanessa3/services/offline_sync_events.dart';
+import 'package:vanessa3/services/cs_stock_cache_service.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
@@ -97,6 +98,12 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
       ref.invalidate(orderTodayStatsProvider);
       ref.invalidate(todayOrdersProvider);
       bumpCsDailyOrdersListRevision(ref);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final branchId = ref.read(userStateProvider).branch;
+      if (branchId.trim().isNotEmpty) {
+        CsStockCacheService.prefetchSellable(branchId);
+      }
     });
   }
 

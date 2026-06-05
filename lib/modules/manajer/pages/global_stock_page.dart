@@ -2,14 +2,13 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_types.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_jenis_two_step_panel.dart';
 import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
@@ -55,8 +54,7 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchTokoWarehouseBranches() async {
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches');
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    final resp = await ApiClient.get('/branches');
     if (resp.statusCode != 200) {
       throw Exception('Gagal memuat cabang (${resp.statusCode})');
     }
@@ -116,15 +114,14 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final branches = await _fetchTokoWarehouseBranches();
 
       List<dynamic> items;
       if (_selectedBranchId != 'all') {
-        final uri = Uri.parse('$baseUrl/items').replace(
-          queryParameters: _itemsQueryParams(_selectedBranchId, limit: 1000),
+        final resp = await ApiClient.get(
+          '/items',
+          query: _itemsQueryParams(_selectedBranchId, limit: 1000),
         );
-        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
         if (resp.statusCode != 200) {
           throw Exception('Gagal memuat stok (${resp.statusCode})');
         }
@@ -158,11 +155,10 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
           final branchName = _branchDisplayLabel(b);
           if (branchId.isEmpty) return const <dynamic>[];
 
-          final uri = Uri.parse('$baseUrl/items').replace(
-            queryParameters: _itemsQueryParams(branchId, limit: 500),
+          final resp = await ApiClient.get(
+            '/items',
+            query: _itemsQueryParams(branchId, limit: 500),
           );
-          final resp =
-              await http.get(uri, headers: NetworkConfig.defaultHeaders);
           if (resp.statusCode != 200) return const <dynamic>[];
 
           final decoded = jsonDecode(resp.body);

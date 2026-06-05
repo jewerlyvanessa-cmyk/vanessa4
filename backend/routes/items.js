@@ -1,6 +1,8 @@
 'use strict';
 
 const { getItemsColumnFlags, itemsHasCreatedByColumn } = require('../lib/items_schema_helpers');
+const { parseQueryLimit } = require('../lib/query_limits');
+const { writeAuditLog } = require('../lib/audit_log');
 const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
 
 function registerItemsRoutes(app, deps) {
@@ -10,7 +12,7 @@ function registerItemsRoutes(app, deps) {
       const { item_id, order_id, branch_id } = req.query;
   
       let query = `
-        We SELECT
+        SELECT
           ic.condition_id,
           ic.item_id,
           ic.order_id,
@@ -262,12 +264,14 @@ function registerItemsRoutes(app, deps) {
       }
   
       query += ' ORDER BY i.created_at DESC';
-  
-      if (limit) {
-        query += ` LIMIT $${params.length + 1}`;
-        params.push(parseInt(limit));
-      }
-  
+
+      const effectiveLimit = parseQueryLimit(limit, {
+        defaultLimit: 500,
+        maxLimit: 2000,
+      });
+      query += ` LIMIT $${params.length + 1}`;
+      params.push(effectiveLimit);
+
       const result = await db.query(query, params);
       res.status(200).json(result.rows);
     } catch (error) {
@@ -306,33 +310,6 @@ function registerItemsRoutes(app, deps) {
     } catch (error) {
       console.error('Error fetching item status history:', error);
       return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-  
-  // Get item conditions
-  app.get('/item-conditions', async (req, res) => {
-    try {
-      const { item_id, order_id } = req.query;
-      let query = 'SELECT * FROM item_conditions WHERE 1=1';
-      const params = [];
-  
-      if (item_id) {
-        query += ' AND item_id = $' + (params.length + 1);
-        params.push(item_id);
-      }
-  
-      if (order_id) {
-        query += ' AND order_id = $' + (params.length + 1);
-        params.push(order_id);
-      }
-  
-      query += ' ORDER BY created_at DESC';
-  
-      const result = await db.query(query, params);
-      res.status(200).json(result.rows);
-    } catch (error) {
-      console.error('Error fetching item conditions:', error);
-      res.status(500).json({ error: 'Internal server error' });
     }
   });
   
@@ -628,6 +605,20 @@ function registerItemsRoutes(app, deps) {
         }
   
         await client.query('COMMIT');
+
+        await writeAuditLog(db, req, {
+          action: 'item.update',
+          entityType: 'item',
+          entityId: id,
+          branchId: branch_id,
+          payload: {
+            item_code: final_item_code,
+            old_status: oldStatus,
+            new_status: newStatusStr,
+            status_changed: oldStatus !== newStatusStr,
+          },
+        });
+
         return res.json(result.rows[0]);
       } catch (txErr) {
         await client.query('ROLLBACK');
@@ -721,6 +712,19 @@ function registerItemsRoutes(app, deps) {
         );
   
         await client.query('COMMIT');
+
+        await writeAuditLog(db, req, {
+          action: 'item.restock',
+          entityType: 'item',
+          entityId: id,
+          branchId: itemBranchId,
+          payload: {
+            delta_quantity: delta,
+            previous_quantity: prevQty,
+            current_quantity: nextQty,
+          },
+        });
+
         return res.status(200).json(row);
       } catch (txErr) {
         await client.query('ROLLBACK');
@@ -916,6 +920,21 @@ function registerItemsRoutes(app, deps) {
         }
 
         await client.query('COMMIT');
+
+        await writeAuditLog(db, req, {
+          action: 'stock.opname',
+          entityType: 'branch',
+          entityId: branchId,
+          branchId,
+          payload: {
+            applied_count: applied.length,
+            skipped_count: skipped.length,
+            applied,
+            skipped,
+            session_notes: sessionNote || null,
+          },
+        });
+
         return res.status(200).json({
           branch_id: branchId,
           applied_count: applied.length,
@@ -933,12 +952,6 @@ function registerItemsRoutes(app, deps) {
       console.error('Error stock opname:', error);
       return res.status(500).json({ error: 'Internal server error' });
     }
-  });
-
-  app.delete('/items/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    items = items.filter(item => item.id !== id);
-    res.status(204).send();
   });
 }
 

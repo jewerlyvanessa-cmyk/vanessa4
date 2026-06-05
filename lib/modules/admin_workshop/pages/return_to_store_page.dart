@@ -2,11 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/workshop_order_document_sheet.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/workshop_order_batch_group.dart';
 
 class ReturnToStorePage extends ConsumerStatefulWidget {
@@ -45,15 +44,13 @@ class _ReturnToStorePageState extends ConsumerState<ReturnToStorePage> {
       }
 
       // status=completed -> backend mengembalikan done_workshop + ready_for_pickup
-      final baseUrl = NetworkConfig.baseUrl;
-      final uri = Uri.parse('$baseUrl/workshop-orders').replace(
-        queryParameters: <String, String>{
+      final resp = await ApiClient.get(
+        '/workshop-orders',
+        query: {
           'branch_id': branch,
           'status': 'completed',
         },
       );
-
-      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) {
         setState(() {
           _error = 'Gagal memuat (HTTP ${resp.statusCode})';

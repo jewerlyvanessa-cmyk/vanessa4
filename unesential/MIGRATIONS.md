@@ -1,19 +1,34 @@
 # Migrasi database
 
-Di repo ini ada **dua mekanisme**; tim deploy harus tahu mana yang dipakai di lingkungan masing-masing.
+## Jalur utama (production): SQL + tracking otomatis
 
-## 1. File SQL di `migrations/`
+```bash
+npm run migrate:sql
+```
 
-- File `.sql` berurutan (nama berisi tanggal).
-- Cocok untuk dijalankan manual dengan `psql`, GUI, atau skrip internal Anda.
-- **Tidak** otomatis dijalankan oleh `npm run migrate:up`.
+- Membaca file `.sql` berurutan di `backend/migrations/`
+- Mencatat yang sudah jalan di tabel `sql_migrations`
+- Aman dijalankan ulang (idempotent per file — skip jika sudah tercatat)
 
-## 2. `node-pg-migrate` (`migrations_js/`)
+**Deploy:** setelah pull backend, jalankan `npm run migrate:sql` lalu restart PM2.
 
-- Perintah npm di root: `npm run migrate:create`, `npm run migrate:up`, `npm run migrate:down`.
-- Konfigurasi: `backend/migrate.config.cjs`, folder `backend/migrations_js/` (tetap di `backend/`).
+## Jalur alternatif: node-pg-migrate (`migrations_js/`)
 
-## Rekomendasi
+Untuk migrasi baru yang ditulis sebagai JS:
 
-- Untuk fitur baru: pilih **satu** jalur (SQL terpusat *atau* `node-pg-migrate`) dan catat di runbook deploy.
-- Setelah menyatukan ke satu tool, pertimbangkan mengarsipkan atau menggabungkan yang lain agar urutan migrasi tidak dobel.
+```bash
+npm run migrate:create -- nama_migrasi
+npm run migrate:up
+npm run migrate:down
+```
+
+Konfigurasi: `backend/migrate.config.cjs`, folder `backend/migrations_js/`.
+
+## Rekomendasi tim
+
+| Jenis perubahan | Gunakan |
+|-----------------|---------|
+| Schema existing (56 file SQL) | `npm run migrate:sql` |
+| Fitur baru (prefer JS rollback) | `node-pg-migrate` di `migrations_js/` |
+
+Jangan jalankan file SQL manual di server tanpa mencatat — gunakan `migrate:sql` agar urutan konsisten.

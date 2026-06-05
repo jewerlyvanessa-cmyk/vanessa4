@@ -6,7 +6,7 @@ const { createPgDumpTempFile } = require('./db_pg_dump');
 function loadGoogleApis() {
   try {
     return require('googleapis');
-  } catch (e) {
+  } catch (_) {
     const err = new Error(
       'Paket googleapis belum terpasang di server. Jalankan: npm install (di folder project), lalu restart API.',
     );

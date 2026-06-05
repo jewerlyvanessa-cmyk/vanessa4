@@ -1,0 +1,8 @@
+# Salin ke android/key.properties (file ini di-gitignore).
+# Generate keystore:
+#   keytool -genkey -v -keystore vanessa-release.keystore -alias vanessa \
+#     -keyalg RSA -keysize 2048 -validity 10000
+storePassword=GANTI_DENGAN_STORE_PASSWORD
+keyPassword=GANTI_DENGAN_KEY_PASSWORD
+keyAlias=vanessa
+storeFile=../vanessa-release.keystore

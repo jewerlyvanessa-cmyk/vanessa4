@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,11 +16,11 @@ import 'package:vanessa3/widgets/qr_scan_route.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/order_today_provider.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/widgets/pickup_branch_field.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/services/cs_order_submit_service.dart';
@@ -83,35 +84,17 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
   Future<String?> _uploadFoto() async {
     if (_fotoXFile == null && _fotoBytes == null) return null;
-    final storageUrl = NetworkConfig.storageUrl;
-    final uri = Uri.parse('$storageUrl/upload');
-    final request = http.MultipartRequest('POST', uri);
     if (kIsWeb) {
       final bytes = _fotoBytes ?? await _fotoXFile!.readAsBytes();
-      final name = _fotoName ?? _fotoXFile!.name;
-      request.files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: name),
-      );
-    } else {
-      request.files.add(
-        await http.MultipartFile.fromPath('file', _fotoXFile!.path),
+      return CsOrderPhotoUpload.upload(
+        bytes: bytes,
+        fileName: _fotoName ?? _fotoXFile!.name,
       );
     }
-    final token = NetworkConfig.authToken;
-    if (token != null && token.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $token';
-    }
-    final response = await request.send();
-    if (response.statusCode == 200) {
-      final respStr = await response.stream.bytesToString();
-      final data = jsonDecode(respStr);
-      final url = data['url'] ?? data['fileUrl'] ?? data['path'];
-      if (url is String && url.startsWith('/')) {
-        return '$storageUrl$url';
-      }
-      return url;
-    }
-    return null;
+    return CsOrderPhotoUpload.upload(
+      file: File(_fotoXFile!.path),
+      fileName: _fotoXFile!.name,
+    );
   }
 
   double _parseMoney(String raw) {
@@ -265,10 +248,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
 
     if (result == true) {
       try {
-        final baseUrl = NetworkConfig.baseUrl;
-        final response = await http.post(
-          Uri.parse('$baseUrl/api/customers'),
-          headers: NetworkConfig.defaultHeaders,
+        final response = await ApiClient.post(
+          '/api/customers',
           body: jsonEncode({
             'name': nameController.text,
             'email': emailController.text.trim().isEmpty
@@ -466,9 +447,8 @@ class _ServicePageState extends ConsumerState<ServicePage> {
         } else {
           if (uangMukaVal > 0 && createdOrderId != null) {
             try {
-              await http.post(
-                Uri.parse('${NetworkConfig.baseUrl}/payments'),
-                headers: NetworkConfig.defaultHeaders,
+              await ApiClient.post(
+                '/payments',
                 body: jsonEncode({
                   'order_id': createdOrderId,
                   'amount': uangMukaVal,
@@ -525,12 +505,9 @@ class _ServicePageState extends ConsumerState<ServicePage> {
     _notaLamaController.text = notaLama;
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final response = await http.get(
-        Uri.parse(
-          '$baseUrl/orders?order_number=${Uri.encodeComponent(notaLama)}',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/orders',
+        query: {'order_number': notaLama},
       );
 
       if (response.statusCode != 200) {

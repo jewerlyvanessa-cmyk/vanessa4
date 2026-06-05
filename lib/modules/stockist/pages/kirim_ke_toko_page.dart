@@ -3,12 +3,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/modules/stockist/pages/kirim_ke_toko_create_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/surat_jalan_print.dart';
 import 'package:vanessa3/utils/transfer_batch_group.dart';
 
@@ -40,11 +40,8 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
     return decoded;
   }
 
-  Future<http.Response> _fetchBranchesList(String baseUrl) async {
-    return http.get(
-      Uri.parse('$baseUrl/branches'),
-      headers: NetworkConfig.defaultHeaders,
-    );
+  Future<http.Response> _fetchBranchesList() async {
+    return ApiClient.get('/branches');
   }
 
   Future<void> _loadData() async {
@@ -55,15 +52,15 @@ class _KirimKeTokoPageState extends ConsumerState<KirimKeTokoPage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final transfersResp = await http.get(
-        Uri.parse(
-          '$baseUrl/transfers?branch_id=${userState.branch}&type=outgoing',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final transfersResp = await ApiClient.get(
+        '/transfers',
+        query: {
+          'branch_id': userState.branch,
+          'type': 'outgoing',
+        },
       );
-      final branchesResp = await _fetchBranchesList(baseUrl);
+      final branchesResp = await _fetchBranchesList();
 
       if (transfersResp.statusCode != 200) {
         setState(() {

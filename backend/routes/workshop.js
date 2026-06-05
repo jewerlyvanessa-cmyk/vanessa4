@@ -90,7 +90,6 @@ workshopApi.get("/work-queue", async (req, res) => {
         AND ${sqlWorkshopTukangQueueStatuses('o')}
     `;
     const params = [branchId];
-    const role = (req.user?.role ?? '').toString().trim().toLowerCase();
 
     if (unassignedOnly) {
       inner += ` AND (${sqlWorkshopOrderIsUnassigned('o', hasMetaWq)})`;
@@ -804,7 +803,6 @@ workshopApi.get("/dashboard", async (req, res) => {
       return res.status(400).json({ error: 'branch_id wajib berupa angka cabang yang valid' });
     }
 
-    const hasPickupDash = await ordersHasPickupBranchColumn(db);
     const hasMetaDash = await ordersHasMetadataColumnLive(db);
     const brScopeDash = sqlWorkshopAntrianVisibleAtBranch('o', 1, hasMetaDash);
     const queueStatusesDash = sqlWorkshopTukangQueueStatuses('o');

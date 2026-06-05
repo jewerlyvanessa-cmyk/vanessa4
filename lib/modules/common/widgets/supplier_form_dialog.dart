@@ -1,9 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/suppliers_api.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 
 /// Dialog tambah / ubah supplier. Mengembalikan row supplier jika berhasil.
 Future<Map<String, dynamic>?> showSupplierFormDialog(
@@ -105,15 +103,10 @@ class _SupplierFormDialogState extends State<_SupplierFormDialog> {
       'status': _status,
     });
     final id = widget.existing?['supplier_id']?.toString();
-    final url =
-        id == null ? suppliersApiBaseUrl() : '${suppliersApiBaseUrl()}/$id';
-    final method = id == null ? http.post : http.put;
     try {
-      final res = await method(
-        Uri.parse(url),
-        headers: NetworkConfig.defaultHeaders,
-        body: body,
-      );
+      final res = id == null
+          ? await ApiClient.post('/api/suppliers', body: body)
+          : await ApiClient.put('/api/suppliers/$id', body: body);
       if (!mounted) return;
       if (res.statusCode == 200 || res.statusCode == 201) {
         final decoded = jsonDecode(res.body);

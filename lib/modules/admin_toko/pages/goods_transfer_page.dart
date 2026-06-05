@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/admin_toko/pages/goods_transfer_create_page.dart';
 import 'package:vanessa3/shared_widgets/responsive_form_row.dart';
@@ -51,16 +50,16 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       _destScope != null &&
       normalizeBranchTypeKey(_destScope) == 'workshop';
 
-  Future<List<Map<String, dynamic>>> _loadBranchesList(String baseUrl) async {
+  Future<List<Map<String, dynamic>>> _loadBranchesList() async {
     final scopes = <String>{widget.branchTypeScope};
     if (_destScope != null) scopes.add(_destScope!);
     final merged = <Map<String, dynamic>>[];
     final seen = <String>{};
     for (final scope in scopes) {
-      final uri = Uri.parse('$baseUrl/branches').replace(
-        queryParameters: {'branch_type': scope},
+      final resp = await ApiClient.get(
+        '/branches',
+        query: {'branch_type': scope},
       );
-      final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (resp.statusCode != 200) continue;
       final data = jsonDecode(resp.body);
       for (final b in filterBranchesForTypeScope(
@@ -84,7 +83,6 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
       final scope = widget.branchTypeScope;
       final transferParams = <String, String>{
@@ -94,12 +92,12 @@ class _GoodsTransferPageState extends ConsumerState<GoodsTransferPage> {
       if (_isCrossTypeToWorkshop) {
         transferParams['transfer_lane'] = 'to_workshop';
       }
-      final transfersResponse = await http.get(
-        Uri.parse('$baseUrl/transfers').replace(queryParameters: transferParams),
-        headers: NetworkConfig.defaultHeaders,
+      final transfersResponse = await ApiClient.get(
+        '/transfers',
+        query: transferParams,
       );
 
-      final scopedBranches = await _loadBranchesList(baseUrl);
+      final scopedBranches = await _loadBranchesList();
 
       if (transfersResponse.statusCode == 200) {
         final transfersData = jsonDecode(transfersResponse.body);

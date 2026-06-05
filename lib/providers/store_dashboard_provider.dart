@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
 
@@ -80,7 +79,6 @@ class StoreDashboardNotifier extends StateNotifier<AsyncValue<StoreDashboardData
     state = const AsyncValue.loading();
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
       final branchId = int.tryParse(userState.branch) ?? 1;
@@ -101,11 +99,9 @@ class StoreDashboardNotifier extends StateNotifier<AsyncValue<StoreDashboardData
         'user_id': userId.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/api/store/dashboard').replace(queryParameters: queryParams);
-
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/api/store/dashboard',
+        query: queryParams,
       );
 
       if (response.statusCode == 200) {
@@ -123,23 +119,18 @@ class StoreDashboardNotifier extends StateNotifier<AsyncValue<StoreDashboardData
           StackTrace.current,
         );
       } else {
-        // Fallback to mock data if API not available
-        final mockData = StoreDashboardData(
-          todayOrders: 15,
-          todayPayments: 12,
-          todayRevenue: 2500000.0,
-          totalEmployees: 8,
-          activeEmployees: 7,
-          recentTransactions: [
-            {'id': 1, 'type': 'sale', 'amount': 500000, 'status': 'completed'},
-            {'id': 2, 'type': 'payment', 'amount': 750000, 'status': 'pending'},
-          ],
-          lastUpdated: DateTime.now(),
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(StoreDashboardData.fromJson(cached.value));
+          return;
+        }
+        state = AsyncValue.error(
+          'Gagal memuat dashboard toko (HTTP ${response.statusCode}).',
+          StackTrace.current,
         );
-        state = AsyncValue.data(mockData);
       }
-    } catch (error) {
-      // Fallback to cache if available, otherwise minimal empty data.
+    } catch (error, stackTrace) {
       try {
         final userState = _ref.read(userStateProvider);
         final userId = userState.userId;
@@ -155,17 +146,7 @@ class StoreDashboardNotifier extends StateNotifier<AsyncValue<StoreDashboardData
       } catch (_) {
         // ignore cache errors
       }
-      state = AsyncValue.data(
-        StoreDashboardData(
-          todayOrders: 0,
-          todayPayments: 0,
-          todayRevenue: 0.0,
-          totalEmployees: 0,
-          activeEmployees: 0,
-          recentTransactions: const [],
-          lastUpdated: DateTime.now(),
-        ),
-      );
+      state = AsyncValue.error(error, stackTrace);
     }
   }
 

@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/import_data_excel_template.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/save_download_bytes.dart';
 
@@ -474,28 +474,18 @@ class _ImportDataPageState extends ConsumerState<ImportDataPage> {
         throw Exception('File tidak ditemukan');
       }
 
-      // Create multipart request
-      final uri = Uri.parse('${NetworkConfig.baseUrl}/api/import/$_selectedDataType');
-      final request = http.MultipartRequest('POST', uri);
-
-      // Add file to request
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          filePath,
-          filename: _selectedFile!['name'],
-        ),
+      final response = await ApiClient.postMultipart(
+        '/api/import/$_selectedDataType',
+        fields: {'dataType': _selectedDataType},
+        files: [
+          await http.MultipartFile.fromPath(
+            'file',
+            filePath,
+            filename: _selectedFile!['name'],
+          ),
+        ],
       );
-
-      request.fields['dataType'] = _selectedDataType;
-
-      final authHeaders = Map<String, String>.from(NetworkConfig.defaultHeaders)
-        ..remove('Content-Type');
-      request.headers.addAll(authHeaders);
-
-      // Send request
-      final response = await request.send();
-      final responseBody = await response.stream.bytesToString();
+      final responseBody = response.body;
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final result = jsonDecode(responseBody);

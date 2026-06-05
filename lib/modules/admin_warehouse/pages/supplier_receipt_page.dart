@@ -6,11 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/modules/common/widgets/supplier_form_dialog.dart';
 import 'package:vanessa3/routes/app_routes.dart';
-import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/suppliers_api.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
@@ -69,10 +67,10 @@ class _SupplierReceiptPageState extends ConsumerState<SupplierReceiptPage> {
 
   Future<void> _loadActiveSuppliers() async {
     try {
-      final uri = Uri.parse(suppliersApiBaseUrl()).replace(
-        queryParameters: {'status': 'active'},
+      final res = await ApiClient.get(
+        '/api/suppliers',
+        query: {'status': 'active'},
       );
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200 || !mounted) return;
       final data = jsonDecode(res.body);
       setState(() {

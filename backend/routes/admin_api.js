@@ -280,8 +280,7 @@ function registerAdminApiRoutes(app, deps) {
     requireRoles('superadmin'),
     async (req, res) => {
       try {
-        const { getGoogleDriveBackupStatus, runDatabaseBackupToGoogleDrive } =
-          require('../lib/google_drive_backup');
+        const { runDatabaseBackupToGoogleDrive } = require('../lib/google_drive_backup');
         const result = await runDatabaseBackupToGoogleDrive();
         res.json(result);
       } catch (error) {

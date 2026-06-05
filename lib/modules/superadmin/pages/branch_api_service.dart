@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
-
-import '../../../utils/network_config.dart';
+import 'package:vanessa3/core/network/api_client.dart';
+import 'package:vanessa3/utils/network_config.dart';
 
 class BranchApiService {
   final String baseUrl;
@@ -25,10 +25,7 @@ class BranchApiService {
   }
 
   Future<List<Map<String, dynamic>>> fetchBranches() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/branches'),
-      headers: NetworkConfig.defaultHeaders,
-    );
+    final response = await ApiClient.get('/branches');
     if (response.statusCode == 200) {
       return _decodeBranchList(response.body);
     }
@@ -39,10 +36,7 @@ class BranchApiService {
 
   Future<Map<String, dynamic>?> fetchBranchById(String branchId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches/$branchId'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.get('/branches/$branchId');
       if (response.statusCode == 200) {
         return json.decode(response.body) as Map<String, dynamic>;
       }
@@ -55,10 +49,7 @@ class BranchApiService {
 
   Future<List<Map<String, dynamic>>> fetchBranchUsers(String branchId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches/$branchId/users'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.get('/branches/$branchId/users');
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         return data.cast<Map<String, dynamic>>();
@@ -72,10 +63,7 @@ class BranchApiService {
 
   Future<Map<String, dynamic>> fetchBranchStatistics(String branchId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches/$branchId/statistics'),
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.get('/branches/$branchId/statistics');
       if (response.statusCode == 200) {
         return json.decode(response.body);
       } else {
@@ -88,9 +76,8 @@ class BranchApiService {
 
   Future<bool> createBranch(Map<String, dynamic> branch) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/branches'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.post(
+        '/branches',
         body: json.encode(branch),
       );
       return response.statusCode == 201;
@@ -101,9 +88,8 @@ class BranchApiService {
 
   Future<bool> updateBranch(String branchId, Map<String, dynamic> branch) async {
     try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/branches/$branchId'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.put(
+        '/branches/$branchId',
         body: json.encode(branch),
       );
       return response.statusCode == 200;
@@ -114,9 +100,8 @@ class BranchApiService {
 
   Future<bool> updateBranchStatus(String branchId, String status) async {
     try {
-      final response = await http.patch(
-        Uri.parse('$baseUrl/branches/$branchId/status'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.patch(
+        '/branches/$branchId/status',
         body: json.encode({'status': status}),
       );
       return response.statusCode == 200;
@@ -126,10 +111,7 @@ class BranchApiService {
   }
 
   Future<bool> deleteBranch(String branchId) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl/branches/$branchId'),
-      headers: NetworkConfig.defaultHeaders,
-    );
+    final response = await ApiClient.delete('/branches/$branchId');
 
     if (response.statusCode == 200) return true;
 
@@ -156,8 +138,7 @@ class BranchApiService {
       if (query.isNotEmpty) queryParams['search'] = query;
       if (status != null) queryParams['status'] = status;
 
-      final uri = Uri.parse('$baseUrl/branches').replace(queryParameters: queryParams);
-      final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final response = await ApiClient.get('/branches', query: queryParams);
 
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
@@ -172,9 +153,9 @@ class BranchApiService {
 
   Future<String> exportBranches({String format = 'csv'}) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/branches/export?format=$format'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/branches/export',
+        query: {'format': format},
       );
       if (response.statusCode == 200) {
         return response.body;
@@ -188,25 +169,22 @@ class BranchApiService {
 
   /// Upload file logo cabang (field multipart: `logo`). Mengembalikan path relatif, mis. `/uploads/...`.
   Future<String> uploadBranchLogo(String branchId, XFile file) async {
-    final token = NetworkConfig.authToken;
-    if (token == null || token.isEmpty) {
+    if (NetworkConfig.authToken == null || NetworkConfig.authToken!.isEmpty) {
       throw Exception('Tidak ada token autentikasi');
     }
-    final uri = Uri.parse('$baseUrl/branches/$branchId/logo');
-    final req = http.MultipartRequest('POST', uri);
-    req.headers['Authorization'] = 'Bearer $token';
     final bytes = await file.readAsBytes();
     final mime = file.mimeType ?? 'image/jpeg';
-    req.files.add(
-      http.MultipartFile.fromBytes(
-        'logo',
-        bytes,
-        filename: file.name.isNotEmpty ? file.name : 'logo.jpg',
-        contentType: MediaType.parse(mime),
-      ),
+    final resp = await ApiClient.postMultipart(
+      '/branches/$branchId/logo',
+      files: [
+        http.MultipartFile.fromBytes(
+          'logo',
+          bytes,
+          filename: file.name.isNotEmpty ? file.name : 'logo.jpg',
+          contentType: MediaType.parse(mime),
+        ),
+      ],
     );
-    final streamed = await req.send().timeout(NetworkConfig.connectionTimeout);
-    final resp = await http.Response.fromStream(streamed);
     if (resp.statusCode == 200) {
       final decoded = json.decode(resp.body);
       if (decoded is Map && decoded['logo_url'] != null) {
@@ -227,14 +205,7 @@ class BranchApiService {
   }
 
   Future<void> deleteBranchLogo(String branchId) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl/branches/$branchId/logo'),
-      headers: {
-        'Accept': 'application/json',
-        if (NetworkConfig.authToken != null && NetworkConfig.authToken!.isNotEmpty)
-          'Authorization': 'Bearer ${NetworkConfig.authToken}',
-      },
-    ).timeout(NetworkConfig.connectionTimeout);
+    final response = await ApiClient.delete('/branches/$branchId/logo');
     if (response.statusCode != 200) {
       String msg = 'HTTP ${response.statusCode}';
       try {
@@ -254,8 +225,10 @@ class BranchApiService {
       final queryParams = <String, String>{'code': code};
       if (excludeBranchId != null) queryParams['exclude'] = excludeBranchId;
 
-      final uri = Uri.parse('$baseUrl/branches/validation/code').replace(queryParameters: queryParams);
-      final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final response = await ApiClient.get(
+        '/branches/validation/code',
+        query: queryParams,
+      );
 
       if (response.statusCode == 200) {
         final result = json.decode(response.body);

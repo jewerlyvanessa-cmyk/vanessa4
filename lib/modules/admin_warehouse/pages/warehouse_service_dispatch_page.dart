@@ -2,9 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/order_status_ui.dart';
 import 'package:vanessa3/utils/workshop_order_batch_api.dart';
 
@@ -39,16 +38,9 @@ class _WarehouseServiceDispatchPageState
       _error = null;
     });
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      final branchesUri = Uri.parse('$baseUrl/branches').replace(
-        queryParameters: {'branch_type': 'workshop'},
-      );
-      final queueUri =
-          Uri.parse('$baseUrl/api/workshop/warehouse-service-queue');
-
       final results = await Future.wait([
-        http.get(branchesUri, headers: NetworkConfig.defaultHeaders),
-        http.get(queueUri, headers: NetworkConfig.defaultHeaders),
+        ApiClient.get('/branches', query: {'branch_type': 'workshop'}),
+        ApiClient.get('/api/workshop/warehouse-service-queue'),
       ]);
 
       if (results[0].statusCode != 200) {

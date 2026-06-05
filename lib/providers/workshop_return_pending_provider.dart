@@ -2,9 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 /// Order `done_workshop` di cabang workshop — menunggu aksi Kirim ke Toko.
 final workshopReturnPendingCountProvider =
@@ -27,13 +26,13 @@ class WorkshopReturnPendingCountNotifier extends StateNotifier<int> {
       return;
     }
     try {
-      final uri = Uri.parse('${NetworkConfig.baseUrl}/workshop-orders').replace(
-        queryParameters: <String, String>{
+      final res = await ApiClient.get(
+        '/workshop-orders',
+        query: <String, String>{
           'branch_id': branch,
           'status': 'completed',
         },
       );
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200) return;
       final data = jsonDecode(res.body);
       if (data is! List) return;

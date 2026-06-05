@@ -10,7 +10,6 @@ const getOrdersDaily = require('./orders_daily_handler');
 const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
 const {
   ordersHasPickupBranchColumn,
-  ordersHasMetadataColumn,
   ordersHasMetadataColumnLive,
   paymentsHasRevenueBranchColumn,
   sqlOrderVisibleAtBranchForWorkshopPut,

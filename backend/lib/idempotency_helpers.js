@@ -85,12 +85,23 @@ async function storeIdempotentResponse(db, req, path, statusCode, responseBody) 
 /**
  * Jika key sudah ada, kirim respons tersimpan dan return true.
  */
-async function replayIdempotentIfExists(db, req, res, path) {
+async function replayIdempotentIfExists(db, req, res, _path) {
   const key = readIdempotencyKey(req);
   if (!key) return false;
   const existing = await findIdempotentResponse(db, key);
   if (!existing) return false;
   return res.status(existing.status_code).json(existing.response_body);
+}
+
+async function purgeExpiredIdempotency(db, maxAgeDays = 30) {
+  const ok = await ensureIdempotencyTable(db);
+  if (!ok) return 0;
+  const days = Math.max(1, parseInt(String(maxAgeDays), 10) || 30);
+  const res = await db.query(
+    `DELETE FROM api_idempotency WHERE created_at < NOW() - ($1 || ' days')::interval`,
+    [String(days)],
+  );
+  return res.rowCount ?? 0;
 }
 
 module.exports = {
@@ -99,4 +110,5 @@ module.exports = {
   storeIdempotentResponse,
   replayIdempotentIfExists,
   ensureIdempotencyTable,
+  purgeExpiredIdempotency,
 };

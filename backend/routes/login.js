@@ -151,9 +151,7 @@ function registerLoginRoutes(app, deps) {
       let isPasswordValid = false;
       const passwordHash = (user.password_hash || '').toString();
       const allowLegacyPlaintext =
-        process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD === 'true' ||
-        (process.env.NODE_ENV !== 'production' &&
-          process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD !== 'false');
+        process.env.ALLOW_LEGACY_PLAINTEXT_PASSWORD === 'true';
       if (passwordHash.startsWith('$2')) {
         // Hash dari PHP/Laravel ($2y$) atau bcrypt lama ($2a$) — normalisasi ke $2b$ untuk bcryptjs.
         const hashForCompare = passwordHash.startsWith('$2y$')

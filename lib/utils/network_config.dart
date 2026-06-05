@@ -141,4 +141,11 @@ class NetworkConfig {
     if (_authToken != null && _authToken!.isNotEmpty)
       'Authorization': 'Bearer $_authToken',
   };
+
+  /// Headers for `Image.network` / raster fetch (Authorization only).
+  static Map<String, String>? get imageHeaders {
+    final t = _authToken;
+    if (t == null || t.isEmpty) return null;
+    return {'Authorization': 'Bearer $t'};
+  }
 }

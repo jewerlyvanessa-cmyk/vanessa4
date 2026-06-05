@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:async';
-import 'package:http_parser/http_parser.dart';
 import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
 import '../../../utils/pembulatan.dart';
 import 'customers_page.dart';
 import '../../../providers/order_today_provider.dart';
+import 'package:vanessa3/services/cs_order_submit_service.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'faktur_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
@@ -268,14 +270,6 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     }
   }
 
-  MediaType _detectImageMediaType(String filePath) {
-    final lower = filePath.toLowerCase();
-    if (lower.endsWith('.png')) return MediaType('image', 'png');
-    if (lower.endsWith('.webp')) return MediaType('image', 'webp');
-    // default to jpeg for .jpg/.jpeg or unknown (we compress to jpg)
-    return MediaType('image', 'jpeg');
-  }
-
   void _generateOrderNumber() {
     final userState = ref.read(userStateProvider);
 
@@ -354,10 +348,13 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
       final headers = NetworkConfig.defaultHeaders;
 
       Future<http.Response> getOrders(Map<String, String> qp) async {
-        final uri = Uri.parse('$baseUrl/orders').replace(queryParameters: qp);
         final c = widget.client;
-        if (c != null) return c.get(uri, headers: headers);
-        return http.get(uri, headers: headers);
+        if (c != null) {
+          final uri =
+              Uri.parse('$baseUrl/orders').replace(queryParameters: qp);
+          return c.get(uri, headers: headers);
+        }
+        return ApiClient.get('/orders', query: qp);
       }
 
       Map<String, dynamic>? decodeOrderMap(http.Response response) {
@@ -670,10 +667,8 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
 
     if (result == true) {
       try {
-        final baseUrl = NetworkConfig.baseUrl;
-        final response = await http.post(
-          Uri.parse('$baseUrl/api/customers'),
-          headers: NetworkConfig.defaultHeaders,
+        final response = await ApiClient.post(
+          '/api/customers',
           body: jsonEncode({
             'name': nameController.text,
             'email': emailController.text.trim().isEmpty
@@ -756,11 +751,38 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = ref.read(userStateProvider);
 
-      // Prepare order data
-      final orderData = {
+      String? fotoUrl;
+      if (kIsWeb) {
+        fotoUrl = await CsOrderPhotoUpload.upload(
+          bytes: _fotoBytes ?? await _fotoXFile?.readAsBytes(),
+          fileName: _fotoName ?? _fotoXFile?.name,
+        );
+      } else if (_fotoXFile != null) {
+        fotoUrl = await CsOrderPhotoUpload.upload(file: File(_fotoXFile!.path));
+      } else if (_fotoBytes != null) {
+        fotoUrl = await CsOrderPhotoUpload.upload(
+          bytes: _fotoBytes,
+          fileName: _fotoName,
+        );
+      }
+
+      if (fotoUrl == null || fotoUrl.trim().isEmpty) {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Upload foto gagal. Buyback memerlukan koneksi untuk upload foto barang.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final qty = int.tryParse(_quantityController.text.trim()) ?? 1;
+      final hargaBeli = double.tryParse(_hargaBeliController.text.trim()) ?? 0;
+
+      final orderData = <String, dynamic>{
         'order_type': 'buyback',
         'order_number': _notaOrderController.text.isNotEmpty
             ? _notaOrderController.text
@@ -782,8 +804,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         'diskon': 0,
         'order_items': [
           {
-            'item_id':
-                _selectedItem?['item_id'], // Include item_id if selected from lookup
+            'item_id': _selectedItem?['item_id'],
             'nama_item': _namaItemController.text.trim(),
             'weight': double.tryParse(_beratController.text.trim()) ?? 0,
             'material': _materialController.text.trim(),
@@ -796,19 +817,17 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                 ? (_selectedTipeBarang ?? '')
                 : _tipeController.text.trim(),
             'kode_produk': _kodeProdukController.text.trim(),
-            'qty': int.tryParse(_quantityController.text.trim()) ?? 1,
-            'subtotal':
-                (double.tryParse(_hargaBeliController.text.trim()) ?? 0) *
-                (int.tryParse(_quantityController.text.trim()) ?? 1),
-            'total':
-                (double.tryParse(_hargaBeliController.text.trim()) ?? 0) *
-                (int.tryParse(_quantityController.text.trim()) ?? 1),
+            'qty': qty,
+            'subtotal': hargaBeli * qty,
+            'total': hargaBeli * qty,
             'diskon': 0,
+            'photo_produk': fotoUrl,
             'kondisi_barang': {
               'kondisi_fisik': _kondisiFisik,
               'berat_akhir': double.tryParse(_beratController.text.trim()),
               'penyesuaian_berat':
-                  double.tryParse(_penyesuaianBeratController.text.trim()) ?? 0,
+                  double.tryParse(_penyesuaianBeratController.text.trim()) ??
+                      0,
               'harga_per_gram':
                   double.tryParse(_hargaPerGramController.text.trim()) ?? 0,
               'nilai_untung_rugi': _nilaiUntungRugiController.text.trim(),
@@ -820,8 +839,7 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
                   double.tryParse(_potonganKondisiController.text.trim()) ?? 0,
               'nilai_resale':
                   double.tryParse(_nilaiResaleController.text.trim()) ?? 0,
-              'harga_beli':
-                  double.tryParse(_hargaBeliController.text.trim()) ?? 0,
+              'harga_beli': hargaBeli,
               'untung_rugi': _untungRugi,
               'catatan_kondisi': _catatanKondisiController.text.trim(),
             },
@@ -829,72 +847,39 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
         ],
       };
 
-      final uri = Uri.parse('$baseUrl/orders');
+      final fakturOverlay = <String, dynamic>{
+        'customer_name': _customerController.text,
+        'customer_phone': _customerPhoneController.text,
+        'customer_address': _customerAddressController.text,
+      };
 
-      final request = http.MultipartRequest('POST', uri);
-      // IMPORTANT: MultipartRequest tidak otomatis membawa header Authorization
-      // dari NetworkConfig.defaultHeaders (yang biasa dipakai untuk JSON request).
-      // Untuk multipart, biarkan Content-Type di-handle oleh MultipartRequest,
-      // tapi tetap kirim token auth.
-      final token = NetworkConfig.authToken;
-      if (token != null && token.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $token';
-      }
-      request.headers['Accept'] = 'application/json';
+      final result = await CsOrderSubmitService.submitJsonOrder(
+        orderData: orderData,
+        fakturOverlay: fakturOverlay,
+      );
 
-      // Add JSON data
-      request.fields['order_data'] = jsonEncode(orderData);
+      if (!mounted) return;
 
-      // Add image file (required)
-      if (kIsWeb) {
-        final bytes = _fotoBytes ?? await _fotoXFile!.readAsBytes();
-        final name = _fotoName ?? _fotoXFile!.name;
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'photo',
-            bytes,
-            filename: name,
-            contentType: _detectImageMediaType(name),
-          ),
-        );
-      } else {
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'photo',
-            _fotoXFile!.path,
-            contentType: _detectImageMediaType(_fotoXFile!.path),
-          ),
-        );
-      }
-
-      final response = await request.send();
-      final responseData = await response.stream.bytesToString();
-
-      if (response.statusCode == 401) {
-        NetworkConfig.notifyUnauthorized();
-      }
-      if (response.statusCode == 201) {
-        final jsonResponse = jsonDecode(responseData);
-
-        // Refresh "order hari ini" list + stats
-        ref.invalidate(todayOrdersProvider);
-        ref.invalidate(orderTodayStatsProvider);
-        bumpCsDailyOrdersListRevision(ref);
-
-        // Navigate to faktur page
-        if (mounted) {
-          Navigator.pushReplacement(
+      if (result.success && result.fakturData != null) {
+        if (result.offlineQueued) {
+          CsOrderSubmitService.showOfflineQueuedSnackBar(
             context,
-            MaterialPageRoute(
-              builder: (context) => FakturPage(orderData: jsonResponse),
-            ),
+            offlineRef: result.offlineRef ?? '??????',
           );
+        } else {
+          ref.invalidate(todayOrdersProvider);
+          ref.invalidate(orderTodayStatsProvider);
+          bumpCsDailyOrdersListRevision(ref);
         }
-      } else {
-        final errorResponse = jsonDecode(responseData);
-        throw Exception(
-          errorResponse['error'] ?? 'Failed to create buyback order',
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FakturPage(orderData: result.fakturData!),
+          ),
         );
+      } else {
+        throw Exception(result.errorMessage ?? 'Failed to create buyback order');
       }
     } catch (e) {
       scaffoldMessenger.showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -2005,16 +1990,21 @@ class _BuybackPageState extends ConsumerState<BuybackPage> {
               // Submit Button
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitBuyback,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: Colors.purple,
-                    foregroundColor: Colors.white,
+                child: Semantics(
+                  button: true,
+                  label: 'Buat order buyback',
+                  enabled: !_isSubmitting,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _submitBuyback,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.purple,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: _isSubmitting
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('BUAT ORDER BUYBACK'),
                   ),
-                  child: _isSubmitting
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('BUAT ORDER BUYBACK'),
                 ),
               ),
         ],

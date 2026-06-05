@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
+import 'package:vanessa3/core/network/api_exceptions.dart';
 import 'dart:convert';
 import 'dart:math' as math;
-import '../../../utils/network_config.dart';
 import '../../../utils/logger.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
@@ -72,18 +72,12 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
       hasLoaded: branchChanged ? false : state.hasLoaded,
     );
 
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/api/customers').replace(
-      queryParameters:
-          branchId != null && branchId.toString().trim().isNotEmpty
-              ? {'branch_id': branchId.toString()}
-              : null,
-    );
-    Logger.logInfo('DEBUG: Fetching customers from: $uri');
+    final query = branchId != null && branchId.toString().trim().isNotEmpty
+        ? {'branch_id': branchId.toString()}
+        : null;
+    Logger.logInfo('DEBUG: Fetching customers from /api/customers');
     try {
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.get('/api/customers', query: query);
       Logger.logInfo('DEBUG: Response status: ${response.statusCode}');
       Logger.logInfo('DEBUG: Response body length: ${response.body.length}');
       if (response.statusCode == 200) {
@@ -118,6 +112,14 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
         );
       }
     } catch (error) {
+      if (error is UnauthorizedException || error is ForbiddenException) {
+        state = state.copyWith(
+          isLoading: false,
+          hasLoaded: true,
+          error: error.toString(),
+        );
+        return;
+      }
       Logger.logInfo('DEBUG: Error fetching customers: $error');
       state = state.copyWith(
         customers: [],
@@ -135,7 +137,6 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     String? address,
     String? branchId,
   }) async {
-    final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers');
     try {
       final phoneTrim = phone?.trim() ?? '';
       final body = <String, dynamic>{
@@ -154,9 +155,8 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
         body['branch_id'] = branch;
       }
 
-      final response = await http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.post(
+        '/api/customers',
         body: json.encode(body),
       );
       if (response.statusCode == 201) {
@@ -193,11 +193,9 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
     String phone,
     String address,
   ) async {
-    final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers/$id');
     try {
-      final response = await http.patch(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.patch(
+        '/api/customers/$id',
         body: json.encode({
           'name': name,
           'email': email.trim().isEmpty ? null : email.trim(),
@@ -230,12 +228,8 @@ class CustomersNotifier extends StateNotifier<CustomersState> {
   }
 
   Future<void> deleteCustomer(String id) async {
-    final url = Uri.parse('${NetworkConfig.baseUrl}/api/customers/$id');
     try {
-      final response = await http.delete(
-        url,
-        headers: NetworkConfig.defaultHeaders,
-      );
+      final response = await ApiClient.delete('/api/customers/$id');
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         if (responseData['success'] == true) {
@@ -422,15 +416,14 @@ class CustomersPage extends ConsumerWidget {
     required String customerId,
     String? branchId,
   }) async {
-    final uri = Uri.parse(
-      '${NetworkConfig.baseUrl}/api/customers/$customerId/transactions',
-    ).replace(
-      queryParameters: (branchId == null || branchId.toString().trim().isEmpty)
-          ? null
-          : {'branch_id': branchId},
-    );
+    final query = (branchId == null || branchId.toString().trim().isEmpty)
+        ? null
+        : {'branch_id': branchId.toString()};
 
-    final response = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    final response = await ApiClient.get(
+      '/api/customers/$customerId/transactions',
+      query: query,
+    );
     if (response.statusCode != 200) {
       throw Exception('Gagal memuat riwayat transaksi (${response.statusCode})');
     }

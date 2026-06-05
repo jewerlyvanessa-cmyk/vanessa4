@@ -1,7 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
-import 'package:vanessa3/utils/network_config.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 
 /// Satu baris dari paste massal: `kode,nama,berat,qty,kadar`.
 class WarehouseBulkLine {
@@ -241,8 +240,6 @@ Future<({Map<String, dynamic>? created, String? error})> warehousePostStockItem(
   required String tipe,
 }) async {
   try {
-    final baseUrl = NetworkConfig.baseUrl;
-
     final payload = <String, dynamic>{
       'name': name,
       'item_code': kodeBarang,
@@ -259,11 +256,7 @@ Future<({Map<String, dynamic>? created, String? error})> warehousePostStockItem(
       if (purity.isNotEmpty) 'purity': purity,
     };
 
-    final resp = await http.post(
-      Uri.parse('$baseUrl/items'),
-      headers: NetworkConfig.defaultHeaders,
-      body: jsonEncode(payload),
-    );
+    final resp = await ApiClient.post('/items', body: jsonEncode(payload));
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
       Map<String, dynamic>? created;
@@ -340,7 +333,6 @@ Future<({Map<String, dynamic>? created, String? error})> warehousePostSupplierRe
   String? receiptBatchId,
 }) async {
   try {
-    final baseUrl = NetworkConfig.baseUrl;
     final metadata = <String, dynamic>{
       'supplier': supplierName.trim(),
       'received_at': DateTime.now().toIso8601String(),
@@ -369,11 +361,7 @@ Future<({Map<String, dynamic>? created, String? error})> warehousePostSupplierRe
       if (purity.isNotEmpty) 'purity': purity,
     };
 
-    final resp = await http.post(
-      Uri.parse('$baseUrl/items'),
-      headers: NetworkConfig.defaultHeaders,
-      body: jsonEncode(payload),
-    );
+    final resp = await ApiClient.post('/items', body: jsonEncode(payload));
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
       Map<String, dynamic>? created;
@@ -464,11 +452,14 @@ Future<({List<Map<String, dynamic>> items, String? error})>
   int limit = 20,
 }) async {
   try {
-    final baseUrl = NetworkConfig.baseUrl;
-    final uri = Uri.parse(
-      '$baseUrl/items?branch_id=$branchId&source=supplier_receipt&limit=$limit',
+    final resp = await ApiClient.get(
+      '/items',
+      query: {
+        'branch_id': branchId,
+        'source': 'supplier_receipt',
+        'limit': '$limit',
+      },
     );
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
     if (resp.statusCode != 200) {
       return (
         items: <Map<String, dynamic>>[],

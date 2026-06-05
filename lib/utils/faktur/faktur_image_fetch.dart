@@ -92,12 +92,7 @@ Future<Uint8List?> fakturFetchBytes(
   try {
     final Map<String, String>? headers = () {
       if (!fakturIsSameApiOrigin(url)) return null;
-      final t = NetworkConfig.authToken;
-      if (t == null || t.trim().isEmpty) return null;
-      if (imageBinary) {
-        return {'Authorization': 'Bearer $t'};
-      }
-      return NetworkConfig.defaultHeaders;
+      return NetworkConfig.imageHeaders ?? NetworkConfig.defaultHeaders;
     }();
     final resp = await http
         .get(Uri.parse(url), headers: headers)

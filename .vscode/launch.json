@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter (Brave web)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "toolEnv": {
+        "CHROME_EXECUTABLE": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+      }
+    },
+    {
+      "name": "Flutter (Brave web, local API)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "toolEnv": {
+        "CHROME_EXECUTABLE": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+      },
+      "args": [
+        "--dart-define=USE_LOCAL_API=true"
+      ]
+    }
+  ]
+}

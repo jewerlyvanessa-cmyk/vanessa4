@@ -11,11 +11,27 @@ class OfflineSyncService {
   OfflineSyncService._();
 
   static bool _isSyncing = false;
-  static const int _maxAttempts = 10;
+  static const int maxAttempts = 10;
+
+  static Future<List<OfflineQueueItem>> listPending() =>
+      OfflineQueue.instance.list();
 
   static Future<int> pendingCount() async {
-    final items = await OfflineQueue.instance.list();
+    final items = await listPending();
     return items.length;
+  }
+
+  static Future<int> stuckCount() async {
+    final items = await listPending();
+    return items.where((i) => i.attempts >= maxAttempts).length;
+  }
+
+  static Future<void> removeItem(String id) async {
+    final items = await listPending();
+    await OfflineQueue.instance.replaceAll(
+      items.where((i) => i.id != id).toList(),
+    );
+    OfflineSyncEvents.notifyFlushed();
   }
 
   /// Flush antrian tulis (payments, orders).
@@ -29,14 +45,16 @@ class OfflineSyncService {
 
       final remaining = <OfflineQueueItem>[];
       for (final item in items) {
-        if (item.attempts >= _maxAttempts) {
+        if (item.attempts >= maxAttempts) {
           remaining.add(item);
           continue;
         }
 
         try {
           if (item.method == 'POST' &&
-              (item.path == '/payments' || item.path == '/orders')) {
+              (item.path == '/payments' ||
+                  item.path == '/orders' ||
+                  item.path == '/items/stock-opname')) {
             final response = await ApiClient.post(
               item.path,
               headers: {'X-Idempotency-Key': item.idempotencyKey},

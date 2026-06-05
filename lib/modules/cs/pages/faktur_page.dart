@@ -650,6 +650,7 @@ class _FakturPageState extends State<FakturPage> {
                 width: 120,
                 height: 90,
                 fit: BoxFit.cover,
+                headers: NetworkConfig.imageHeaders,
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
                     width: 120,
@@ -682,6 +683,7 @@ class _FakturPageState extends State<FakturPage> {
                 child: Image.network(
                   photoUrl,
                   fit: BoxFit.cover,
+                  headers: NetworkConfig.imageHeaders,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(
                       color: Colors.grey.shade200,

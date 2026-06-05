@@ -1,12 +1,10 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/modules/admin_toko/data/daily_orders_payments_repository.dart';
 import 'package:vanessa3/modules/admin_toko/utils/daily_orders_payments_helpers.dart';
 import 'package:vanessa3/shared_widgets/stock_status_filter_summary_header.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 /// Ringkasan angka untuk kartu dashboard Owner.
 class OwnerDashboardSnapshot {
@@ -315,9 +313,7 @@ abstract final class OwnerDashboardService {
     if (ot != null && ot.isNotEmpty) {
       qp['order_type'] = ot;
     }
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/payments/daily-summary')
-        .replace(queryParameters: qp);
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    final resp = await ApiClient.get('/payments/daily-summary', query: qp);
     if (resp.statusCode != 200) return {};
     final decoded = jsonDecode(resp.body);
     if (decoded is! Map) return {};
@@ -328,15 +324,15 @@ abstract final class OwnerDashboardService {
   static Future<({int qty, int sku})> _readyStockTotalsForBranch(
     String branchId,
   ) async {
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/items').replace(
-      queryParameters: {
+    final resp = await ApiClient.get(
+      '/items',
+      query: {
         'branch_id': branchId,
         'status': 'ready',
         'in_stock_only': '1',
         'limit': '1000',
       },
     );
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
     if (resp.statusCode != 200) return (qty: 0, sku: 0);
     final decoded = jsonDecode(resp.body);
     if (decoded is! List) return (qty: 0, sku: 0);

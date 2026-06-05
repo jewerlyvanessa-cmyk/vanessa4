@@ -2,10 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/data/api_service.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Penambahan stok bahan baku / material ke cabang workshop (dari gudang).
@@ -84,10 +83,10 @@ class _WarehouseWorkshopMaterialPageState
       _branchError = null;
     });
     try {
-      final uri = Uri.parse('${NetworkConfig.baseUrl}/branches').replace(
-        queryParameters: {'branch_type': 'workshop'},
+      final res = await ApiClient.get(
+        '/branches',
+        query: {'branch_type': 'workshop'},
       );
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200) {
         setState(() {
           _branchError = 'Gagal memuat cabang (${res.statusCode})';

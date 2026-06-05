@@ -5,7 +5,8 @@
     "lint:fix": "eslint backend --ext .js --fix",
     "migrate:create": "node-pg-migrate create --migrations-dir backend/migrations_js",
     "migrate:up": "node-pg-migrate up --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
-    "migrate:down": "node-pg-migrate down --config backend/migrate.config.cjs --migrations-dir backend/migrations_js"
+    "migrate:down": "node-pg-migrate down --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
+    "migrate:sql": "node unesential/scripts/migrate-sql.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

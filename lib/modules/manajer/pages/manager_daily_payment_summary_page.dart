@@ -2,11 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/manager_report_print.dart';
@@ -109,10 +108,10 @@ class _ManagerDailyPaymentSummaryPageState
     if (scope != null && scope.isNotEmpty) {
       qp['branch_type'] = scope;
     }
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches').replace(
-      queryParameters: qp.isEmpty ? null : qp,
+    final resp = await ApiClient.get(
+      '/branches',
+      query: qp.isEmpty ? null : qp,
     );
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
     if (resp.statusCode != 200) {
       throw Exception('Gagal memuat cabang (${resp.statusCode})');
     }
@@ -179,7 +178,6 @@ class _ManagerDailyPaymentSummaryPageState
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final branches = await _resolveBranches();
       final periodQp =
           managerReportPeriodQueryParams(_periodStart, _periodEnd);
@@ -197,10 +195,7 @@ class _ManagerDailyPaymentSummaryPageState
         if (ot != null && ot.isNotEmpty) {
           qp['order_type'] = ot;
         }
-        final uri = Uri.parse('$baseUrl/payments/daily-summary').replace(
-          queryParameters: qp,
-        );
-        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+        final resp = await ApiClient.get('/payments/daily-summary', query: qp);
         if (resp.statusCode != 200) {
           return <String, dynamic>{
             'branch_id': branchId,

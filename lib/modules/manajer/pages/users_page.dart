@@ -2,9 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class ManagerUsersPage extends ConsumerStatefulWidget {
@@ -34,10 +33,10 @@ class _ManagerUsersPageState extends ConsumerState<ManagerUsersPage> {
     try {
       final userState = ref.read(userStateProvider);
       final branchId = (userState.branch).toString();
-      final uri = Uri.parse('${NetworkConfig.baseUrl}/employees')
-          .replace(queryParameters: {'branch_id': branchId});
-
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final res = await ApiClient.get(
+        '/employees',
+        query: {'branch_id': branchId},
+      );
       if (res.statusCode != 200) {
         setState(() {
           _error = 'Gagal memuat data user (${res.statusCode})';

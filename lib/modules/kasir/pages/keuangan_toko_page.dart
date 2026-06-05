@@ -488,6 +488,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
                     proofUrl,
                     height: 180,
                     fit: BoxFit.cover,
+                    headers: NetworkConfig.imageHeaders,
                     errorBuilder: (_, _, _) =>
                         const Text('Gagal memuat foto bukti.'),
                   ),

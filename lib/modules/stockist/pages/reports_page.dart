@@ -2,12 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/state/user_state.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stockist_input_report_print.dart';
 
 /// Mode laporan input stok.
@@ -110,7 +109,6 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
     }
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final queryParams = <String, String>{
         'branch_id': activeBranchId,
         'start_date': _isoDate(_fromDate),
@@ -120,12 +118,7 @@ class _StockistReportsPageState extends ConsumerState<StockistReportsPage> {
       if (widget.mode == StockInputReportMode.personal) {
         queryParams['mine'] = '1';
       }
-      final itemsUri = Uri.parse('$baseUrl/items').replace(
-        queryParameters: queryParams,
-      );
-
-      final itemsRes =
-          await http.get(itemsUri, headers: NetworkConfig.defaultHeaders);
+      final itemsRes = await ApiClient.get('/items', query: queryParams);
 
       if (itemsRes.statusCode != 200) {
         String msg = 'Gagal memuat data (${itemsRes.statusCode})';

@@ -1,9 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:intl/intl.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 
 /// Nama cabang dari daftar [branches] (userState.branches) untuk teks riwayat stok.
@@ -80,10 +79,8 @@ Future<bool> _postItemRestock({
   required int deltaQty,
 }) async {
   try {
-    final baseUrl = NetworkConfig.baseUrl;
-    final resp = await http.post(
-      Uri.parse('$baseUrl/items/$itemId/restock'),
-      headers: NetworkConfig.defaultHeaders,
+    final resp = await ApiClient.post(
+      '/items/$itemId/restock',
       body: jsonEncode(<String, dynamic>{
         'delta_quantity': deltaQty,
         'branch_id': branchId,
@@ -713,11 +710,14 @@ class _StockHistoryBottomSheetState extends State<StockHistoryBottomSheet> {
     if (id == null) {
       return const _StockHistoryBundle(mutations: [], statusHistory: []);
     }
-    final base = NetworkConfig.baseUrl;
-    final mutUri = Uri.parse(
-      '$base/stock-mutations?branch_id=${widget.branchId}&item_id=$id&limit=200',
+    final mut = await ApiClient.get(
+      '/stock-mutations',
+      query: {
+        'branch_id': widget.branchId,
+        'item_id': id,
+        'limit': '200',
+      },
     );
-    final mut = await http.get(mutUri, headers: NetworkConfig.defaultHeaders);
     if (mut.statusCode != 200) {
       throw Exception('Gagal memuat riwayat mutasi (${mut.statusCode})');
     }
@@ -730,8 +730,7 @@ class _StockHistoryBottomSheetState extends State<StockHistoryBottomSheet> {
 
     List<Map<String, dynamic>> statusHistory = [];
     try {
-      final shUri = Uri.parse('$base/items/$id/status-history');
-      final sh = await http.get(shUri, headers: NetworkConfig.defaultHeaders);
+      final sh = await ApiClient.get('/items/$id/status-history');
       if (sh.statusCode == 200) {
         final dec = jsonDecode(sh.body);
         if (dec is List) {

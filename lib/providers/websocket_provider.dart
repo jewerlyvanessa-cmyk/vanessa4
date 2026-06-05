@@ -356,8 +356,9 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
       );
       // #endregion
       _isReconnecting = false;
-      // Max retries reached, start mock updates for development
-      _startMockUpdates();
+      if (kDebugMode) {
+        _startMockUpdates();
+      }
     }
   }
 

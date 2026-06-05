@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import '../core/network/api_client.dart';
+import '../core/network/api_exceptions.dart';
 import '../utils/network_config.dart';
 
 class UnauthorizedApiException implements Exception {
@@ -73,6 +74,12 @@ class ApiService {
         rethrow;
       } on ForbiddenApiException {
         rethrow;
+      } on UnauthorizedException catch (e) {
+        NetworkConfig.setAuthToken(null);
+        NetworkConfig.notifyUnauthorized();
+        throw UnauthorizedApiException(e.message);
+      } on ForbiddenException catch (e) {
+        throw ForbiddenApiException(e.message);
       } on TimeoutException {
         if (attempt == retries) {
           throw Exception('Request timeout after ${timeout.inSeconds} seconds');
@@ -111,12 +118,13 @@ class ApiService {
     final url = Uri.parse('$baseUrl/login');
 
     try {
-      final response = await _makeRequest(
-        () => ApiClient.post(
-          url.toString(),
-          body: jsonEncode({'username': username, 'password': password}),
-        ),
-      );
+      final response = await http
+          .post(
+            url,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'username': username, 'password': password}),
+          )
+          .timeout(NetworkConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -164,11 +172,9 @@ class ApiService {
     required String branchId,
     required String role,
   }) async {
-    final url = Uri.parse('$baseUrl/api/auth/switch-context');
     final response = await _makeRequest(
-      () => http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.post(
+        '/api/auth/switch-context',
         body: jsonEncode({
           'branch_id': branchId,
           'role': role.trim().toLowerCase(),
@@ -193,11 +199,9 @@ class ApiService {
 
   /// Fetch all customers
   static Future<List<Map<String, dynamic>>> getCustomers() async {
-    final url = Uri.parse('$baseUrl/api/customers');
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get('/api/customers'),
       );
 
       if (response.statusCode == 200) {
@@ -216,15 +220,9 @@ class ApiService {
 
   /// Add a new customer
   static Future<bool> addCustomer(Map<String, dynamic> customer) async {
-    final url = Uri.parse('$baseUrl/api/customers');
-
     try {
       final response = await _makeRequest(
-        () => http.post(
-          url,
-          headers: NetworkConfig.defaultHeaders,
-          body: jsonEncode(customer),
-        ),
+        () => ApiClient.post('/api/customers', body: jsonEncode(customer)),
       );
 
       return response.statusCode == 201;
@@ -239,15 +237,9 @@ class ApiService {
     int id,
     Map<String, dynamic> customer,
   ) async {
-    final url = Uri.parse('$baseUrl/api/customers/$id');
-
     try {
       final response = await _makeRequest(
-        () => http.put(
-          url,
-          headers: NetworkConfig.defaultHeaders,
-          body: jsonEncode(customer),
-        ),
+        () => ApiClient.put('/api/customers/$id', body: jsonEncode(customer)),
       );
 
       return response.statusCode == 200;
@@ -259,11 +251,9 @@ class ApiService {
 
   /// Delete a customer
   static Future<bool> deleteCustomer(int id) async {
-    final url = Uri.parse('$baseUrl/api/customers/$id');
-
     try {
       final response = await _makeRequest(
-        () => http.delete(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.delete('/api/customers/$id'),
       );
 
       return response.statusCode == 204;
@@ -288,13 +278,9 @@ class ApiService {
     if (unassignedOnly) {
       qp['unassigned_only'] = '1';
     }
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/work-queue',
-    ).replace(queryParameters: qp);
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get('/api/workshop/work-queue', query: qp),
       );
 
       if (response.statusCode == 200) {
@@ -313,13 +299,12 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getMaterialStock(
     String branchId,
   ) async {
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/material-stock?branch_id=$branchId',
-    );
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get(
+          '/api/workshop/material-stock',
+          query: {'branch_id': branchId},
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -351,7 +336,6 @@ class ApiService {
     String? location,
     String? supplier,
   }) async {
-    final url = Uri.parse('$baseUrl/api/workshop/material-stock');
     final body = <String, dynamic>{
       'branch_id': branchId,
       'name': name,
@@ -368,9 +352,8 @@ class ApiService {
     };
 
     final response = await _makeRequest(
-      () => http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.post(
+        '/api/workshop/material-stock',
         body: jsonEncode(body),
       ),
     );
@@ -400,7 +383,6 @@ class ApiService {
     required Map<String, dynamic> output,
     String? notes,
   }) async {
-    final url = Uri.parse('$baseUrl/api/workshop/produce-from-material');
     final body = <String, dynamic>{
       'branch_id': branchId,
       'technician_id': technicianId,
@@ -413,9 +395,8 @@ class ApiService {
       body['order_id'] = orderId;
     }
     final response = await _makeRequest(
-      () => http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.post(
+        '/api/workshop/produce-from-material',
         body: jsonEncode(body),
       ),
     );
@@ -441,13 +422,14 @@ class ApiService {
     String period = 'month',
     int? orderId,
   }) async {
-    final q = StringBuffer(
-      '$baseUrl/api/workshop/productions?branch_id=$branchId&period=$period',
-    );
-    if (orderId != null) q.write('&order_id=$orderId');
+    final qp = <String, String>{
+      'branch_id': branchId,
+      'period': period,
+    };
+    if (orderId != null) qp['order_id'] = orderId.toString();
 
     final response = await _makeRequest(
-      () => http.get(Uri.parse(q.toString()), headers: NetworkConfig.defaultHeaders),
+      () => ApiClient.get('/api/workshop/productions', query: qp),
     );
 
     if (response.statusCode == 200) {
@@ -465,13 +447,12 @@ class ApiService {
     String branchId, {
     String period = 'month',
   }) async {
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/reports?branch_id=$branchId&period=$period',
-    );
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get(
+          '/api/workshop/reports',
+          query: {'branch_id': branchId, 'period': period},
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -491,11 +472,11 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getReadyForPickupList(
     String branchId,
   ) async {
-    final url = Uri.parse('$baseUrl/api/orders/ready-for-pickup-list').replace(
-      queryParameters: <String, String>{'branch_id': branchId},
-    );
     final response = await _makeRequest(
-      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+      () => ApiClient.get(
+        '/api/orders/ready-for-pickup-list',
+        query: {'branch_id': branchId},
+      ),
     );
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
@@ -518,13 +499,9 @@ class ApiService {
     required int orderId,
     required String branchId,
   }) async {
-    final url = Uri.parse(
-      '$baseUrl/api/orders/confirm-workshop-store-receipt',
-    );
     final response = await _makeRequest(
-      () => http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.post(
+        '/api/orders/confirm-workshop-store-receipt',
         body: jsonEncode({
           'order_id': orderId,
           'branch_id': int.tryParse(branchId) ?? branchId,
@@ -542,11 +519,8 @@ class ApiService {
 
   /// GET /technicians — daftar tukang aktif di cabang (admin workshop).
   static Future<List<Map<String, dynamic>>> getTechnicians(String branchId) async {
-    final url = Uri.parse('$baseUrl/technicians').replace(
-      queryParameters: <String, String>{'branch_id': branchId},
-    );
     final response = await _makeRequest(
-      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+      () => ApiClient.get('/technicians', query: {'branch_id': branchId}),
     );
     if (response.statusCode != 200) {
       throw Exception('Gagal memuat daftar tukang: ${response.statusCode}');
@@ -566,11 +540,9 @@ class ApiService {
     required int technicianId,
     bool startImmediately = false,
   }) async {
-    final url = Uri.parse('$baseUrl/workshop-orders/$orderId/assign-technician');
     final response = await _makeRequest(
-      () => http.put(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.put(
+        '/workshop-orders/$orderId/assign-technician',
         body: jsonEncode({
           'branch_id': int.tryParse(branchId) ?? branchId,
           'technician_id': technicianId,
@@ -597,13 +569,10 @@ class ApiService {
     String notes = '',
     required String branchId,
   }) async {
-    final url = Uri.parse('$baseUrl/api/workshop/update-progress');
-
     try {
       final response = await _makeRequest(
-        () => http.post(
-          url,
-          headers: NetworkConfig.defaultHeaders,
+        () => ApiClient.post(
+          '/api/workshop/update-progress',
           body: jsonEncode({
             'order_id': orderId,
             'status': status,
@@ -642,14 +611,14 @@ class ApiService {
     int orderId,
     String branchId,
   ) async {
-    final url = Uri.parse('$baseUrl/api/workshop/order-cost-breakdown').replace(
-      queryParameters: <String, String>{
-        'order_id': orderId.toString(),
-        'branch_id': branchId,
-      },
-    );
     final response = await _makeRequest(
-      () => http.get(url, headers: NetworkConfig.defaultHeaders),
+      () => ApiClient.get(
+        '/api/workshop/order-cost-breakdown',
+        query: {
+          'order_id': orderId.toString(),
+          'branch_id': branchId,
+        },
+      ),
     );
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
@@ -670,11 +639,9 @@ class ApiService {
     required double otherCost,
     String notes = '',
   }) async {
-    final url = Uri.parse('$baseUrl/api/workshop/order-cost-breakdown');
     final response = await _makeRequest(
-      () => http.post(
-        url,
-        headers: NetworkConfig.defaultHeaders,
+      () => ApiClient.post(
+        '/api/workshop/order-cost-breakdown',
         body: jsonEncode({
           'order_id': orderId,
           'branch_id': int.tryParse(branchId) ?? branchId,
@@ -705,13 +672,10 @@ class ApiService {
     String technicianId, {
     String notes = '',
   }) async {
-    final url = Uri.parse('$baseUrl/api/workshop/update-stock');
-
     try {
       final response = await _makeRequest(
-        () => http.post(
-          url,
-          headers: NetworkConfig.defaultHeaders,
+        () => ApiClient.post(
+          '/api/workshop/update-stock',
           body: jsonEncode({
             'item_id': itemId,
             'quantity': quantity,
@@ -734,13 +698,16 @@ class ApiService {
     String branchId, {
     String period = 'all',
   }) async {
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/work-history?technician_id=$technicianId&branch_id=$branchId&period=$period',
-    );
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get(
+          '/api/workshop/work-history',
+          query: {
+            'technician_id': technicianId,
+            'branch_id': branchId,
+            'period': period,
+          },
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -761,13 +728,16 @@ class ApiService {
     String branchId, {
     String period = 'today',
   }) async {
-    final url = Uri.parse(
-      '$baseUrl/api/workshop/technician-reports?technician_id=$technicianId&branch_id=$branchId&period=$period',
-    );
-
     try {
       final response = await _makeRequest(
-        () => http.get(url, headers: NetworkConfig.defaultHeaders),
+        () => ApiClient.get(
+          '/api/workshop/technician-reports',
+          query: {
+            'technician_id': technicianId,
+            'branch_id': branchId,
+            'period': period,
+          },
+        ),
       );
 
       if (response.statusCode == 200) {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'dart:math' as math;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -10,7 +10,6 @@ import 'package:printing/printing.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_logo_pdf.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 int _stockMutationQty(Map<String, dynamic> m) {
   return int.tryParse(m['quantity']?.toString() ?? '') ?? 0;
@@ -206,7 +205,6 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
       final query = <String, String>{
         'branch_id': userState.branch.toString(),
         'limit': '200',
@@ -218,9 +216,9 @@ class _StockMutationPageState extends ConsumerState<StockMutationPage> {
         query['end_date'] = _isoDate(_endDate!);
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/stock-mutations').replace(queryParameters: query),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/stock-mutations',
+        query: query,
       );
 
       if (response.statusCode == 200) {

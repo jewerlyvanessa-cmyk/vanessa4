@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class EmployeeManagementPage extends ConsumerStatefulWidget {
@@ -101,11 +100,10 @@ class _EmployeeManagementPageState
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/employees?branch_id=${userState.branch}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/employees',
+        query: {'branch_id': userState.branch.toString()},
       );
 
       if (response.statusCode == 200) {
@@ -717,13 +715,10 @@ dataRowMinHeight:
 
   Future<void> _toggleEmployeeStatus(Map<String, dynamic> employee) async {
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-
       final newStatus = employee['status'] == 'active' ? 'inactive' : 'active';
 
-      final response = await http.put(
-        Uri.parse('$baseUrl/employees/${employee['user_id']}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.put(
+        '/employees/${employee['user_id']}',
         body: jsonEncode({'status': newStatus}),
       );
 
@@ -782,11 +777,8 @@ dataRowMinHeight:
 
   Future<void> _deleteEmployee(Map<String, dynamic> employee) async {
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-
-      final response = await http.delete(
-        Uri.parse('$baseUrl/employees/${employee['user_id']}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.delete(
+        '/employees/${employee['user_id']}',
       );
 
       if (response.statusCode == 200) {
@@ -929,8 +921,6 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-
       final userState = context
           .findAncestorStateOfType<_EmployeeManagementPageState>()
           ?.ref
@@ -944,9 +934,8 @@ class _AddEmployeeDialogState extends State<AddEmployeeDialog> {
         'status': 'active',
       };
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/employees'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.post(
+        '/employees',
         body: jsonEncode(employeeData),
       );
 
@@ -1092,13 +1081,10 @@ class _EditEmployeeDialogState extends State<EditEmployeeDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-
       final employeeData = {'username': _username, 'role': _selectedRole};
 
-      final response = await http.put(
-        Uri.parse('$baseUrl/employees/${widget.employee['user_id']}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.put(
+        '/employees/${widget.employee['user_id']}',
         body: jsonEncode(employeeData),
       );
 

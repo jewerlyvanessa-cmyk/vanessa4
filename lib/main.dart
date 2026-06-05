@@ -13,6 +13,7 @@ import 'utils/auth_session_end.dart';
 import 'utils/network_config.dart';
 import 'utils/network_connectivity.dart';
 import 'utils/responsive_layout.dart';
+import 'utils/sentry_bootstrap.dart';
 import 'providers/websocket_provider.dart';
 
 void main() async {
@@ -34,7 +35,9 @@ void main() async {
   debugPrint('Network Config - Base URL: ${NetworkConfig.baseUrl}');
   debugPrint('Network Config - WebSocket URL: ${NetworkConfig.wsUrl}');
 
-  runApp(ProviderScope(child: const VanessaApp()));
+  await SentryBootstrap.runApp(() {
+    runApp(ProviderScope(child: const VanessaApp()));
+  });
 }
 
 class VanessaApp extends ConsumerStatefulWidget {

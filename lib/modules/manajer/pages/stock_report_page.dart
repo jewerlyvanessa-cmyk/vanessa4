@@ -2,11 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/branch_types.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/manager_report_print.dart';
@@ -175,8 +174,7 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchReportBranches() async {
-    final uri = Uri.parse('${NetworkConfig.baseUrl}/branches');
-    final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+    final resp = await ApiClient.get('/branches');
     if (resp.statusCode != 200) {
       throw Exception('Gagal memuat cabang (${resp.statusCode})');
     }
@@ -202,7 +200,6 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
     });
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final branches = await _fetchReportBranches();
 
       final aggStok = _emptyAgg();
@@ -218,13 +215,13 @@ class _StockReportPageState extends ConsumerState<StockReportPage> {
         final locStok = _emptyAgg();
         final locBb = _emptyAgg();
 
-        final uri = Uri.parse('$baseUrl/items').replace(
-          queryParameters: {
+        final resp = await ApiClient.get(
+          '/items',
+          query: {
             'branch_id': branchId,
             'limit': '5000',
           },
         );
-        final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
         if (resp.statusCode != 200) {
           branchErrors.add('$alias: HTTP ${resp.statusCode}');
           perBranchList.add(

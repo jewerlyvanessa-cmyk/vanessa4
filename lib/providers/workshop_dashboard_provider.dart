@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart'; // Import for NetworkConfig
 import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
 
@@ -81,7 +80,6 @@ class WorkshopDashboardNotifier extends StateNotifier<AsyncValue<WorkshopDashboa
     state = const AsyncValue.loading();
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
       final userState = _ref.read(userStateProvider);
       final userId = userState.userId;
       final branchId = int.tryParse(userState.branch) ?? 1;
@@ -103,11 +101,9 @@ class WorkshopDashboardNotifier extends StateNotifier<AsyncValue<WorkshopDashboa
         'user_id': userId.toString(),
       };
 
-      final uri = Uri.parse('$baseUrl/api/workshop/dashboard').replace(queryParameters: queryParams);
-
-      final response = await http.get(
-        uri,
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/api/workshop/dashboard',
+        query: queryParams,
       );
 
       if (response.statusCode == 200) {
@@ -125,23 +121,18 @@ class WorkshopDashboardNotifier extends StateNotifier<AsyncValue<WorkshopDashboa
           StackTrace.current,
         );
       } else {
-        // Fallback to mock data if API not available
-        final mockData = WorkshopDashboardData(
-          pendingOrders: 12,
-          inProgressOrders: 8,
-          completedOrders: 25,
-          totalTechnicians: 5,
-          activeTechnicians: 4,
-          recentOrders: [
-            {'id': 1, 'title': 'Perbaikan Emas Putus', 'status': 'pending'},
-            {'id': 2, 'title': 'Polesan Cincin', 'status': 'in_progress'},
-          ],
-          lastUpdated: DateTime.now(),
+        final cached =
+            await OfflineCache.instance.getJson<Map<String, dynamic>>(cacheKey);
+        if (cached != null) {
+          state = AsyncValue.data(WorkshopDashboardData.fromJson(cached.value));
+          return;
+        }
+        state = AsyncValue.error(
+          'Gagal memuat dashboard workshop (HTTP ${response.statusCode}).',
+          StackTrace.current,
         );
-        state = AsyncValue.data(mockData);
       }
-    } catch (error) {
-      // Fallback to cache if available, otherwise minimal empty data.
+    } catch (error, stackTrace) {
       try {
         final userState = _ref.read(userStateProvider);
         final userId = userState.userId;
@@ -157,17 +148,7 @@ class WorkshopDashboardNotifier extends StateNotifier<AsyncValue<WorkshopDashboa
       } catch (_) {
         // ignore cache errors
       }
-      state = AsyncValue.data(
-        WorkshopDashboardData(
-          pendingOrders: 0,
-          inProgressOrders: 0,
-          completedOrders: 0,
-          totalTechnicians: 0,
-          activeTechnicians: 0,
-          recentOrders: const [],
-          lastUpdated: DateTime.now(),
-        ),
-      );
+      state = AsyncValue.error(error, stackTrace);
     }
   }
 

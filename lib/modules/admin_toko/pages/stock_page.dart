@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/modules/stockist/widgets/stock_inventory_grouped_table.dart';
 import 'package:vanessa3/shared_widgets/stock_inventory_search_field.dart';
@@ -60,11 +60,10 @@ class _StockPageState extends ConsumerState<StockPage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/items?branch_id=${userState.branch}'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.get(
+        '/items',
+        query: {'branch_id': userState.branch.toString()},
       );
 
       if (response.statusCode == 200) {
@@ -396,11 +395,9 @@ class _StockPageState extends ConsumerState<StockPage> {
   }) async {
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/items'),
-        headers: NetworkConfig.defaultHeaders,
+      final response = await ApiClient.post(
+        '/items',
         body: jsonEncode({
           'name': name,
           'kode_produk': kodeBarang,
@@ -584,6 +581,7 @@ class _StockPageState extends ConsumerState<StockPage> {
                       height: 150,
                       width: 150,
                       fit: BoxFit.cover,
+                      headers: NetworkConfig.imageHeaders,
                       errorBuilder: (context, error, stackTrace) =>
                           const Icon(Icons.broken_image, size: 100),
                     ),

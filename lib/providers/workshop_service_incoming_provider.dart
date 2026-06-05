@@ -2,9 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
-import 'package:vanessa3/utils/network_config.dart';
 
 /// Jumlah order service/custom menunggu persetujuan admin workshop.
 final workshopServiceIncomingCountProvider =
@@ -27,10 +26,10 @@ class WorkshopServiceIncomingCountNotifier extends StateNotifier<int> {
       return;
     }
     try {
-      final uri = Uri.parse(
-        '${NetworkConfig.baseUrl}/api/workshop/service-incoming?branch_id=${Uri.encodeQueryComponent(branch)}',
+      final res = await ApiClient.get(
+        '/api/workshop/service-incoming',
+        query: {'branch_id': branch},
       );
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
       if (res.statusCode != 200) {
         return;
       }

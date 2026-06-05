@@ -3,12 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/transfer_document_receive_sheet.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/transfer_batch_group.dart';
 
 class DariTokoPage extends ConsumerStatefulWidget {
@@ -40,13 +39,13 @@ class _DariTokoPageState extends ConsumerState<DariTokoPage> {
 
     try {
       final userState = ref.read(userStateProvider);
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final resp = await http.get(
-        Uri.parse(
-          '$baseUrl/transfers?branch_id=${userState.branch}&type=incoming',
-        ),
-        headers: NetworkConfig.defaultHeaders,
+      final resp = await ApiClient.get(
+        '/transfers',
+        query: {
+          'branch_id': userState.branch,
+          'type': 'incoming',
+        },
       );
 
       if (resp.statusCode != 200) {

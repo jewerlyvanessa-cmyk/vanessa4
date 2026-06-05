@@ -2,8 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
-
+import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
 import 'package:vanessa3/routes/app_routes.dart';
@@ -12,7 +11,6 @@ import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
-import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/stock_request_transfer.dart';
 import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
@@ -128,11 +126,11 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
     try {
       final user = ref.read(userStateProvider);
       final branchId = user.branch;
-      final baseUrl = NetworkConfig.baseUrl;
 
-      final uri =
-          Uri.parse('$baseUrl/transfers?branch_id=$branchId&status=pending');
-      final res = await http.get(uri, headers: NetworkConfig.defaultHeaders);
+      final res = await ApiClient.get(
+        '/transfers',
+        query: {'branch_id': branchId, 'status': 'pending'},
+      );
 
       if (res.statusCode != 200) {
         setState(() {

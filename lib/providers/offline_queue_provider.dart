@@ -4,8 +4,15 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:vanessa3/services/offline_sync_events.dart';
 import 'package:vanessa3/services/offline_sync_service.dart';
 
-class OfflineQueueCountNotifier extends StateNotifier<int> {
-  OfflineQueueCountNotifier() : super(0) {
+class OfflineQueueStats {
+  const OfflineQueueStats({required this.pending, required this.stuck});
+
+  final int pending;
+  final int stuck;
+}
+
+class OfflineQueueCountNotifier extends StateNotifier<OfflineQueueStats> {
+  OfflineQueueCountNotifier() : super(const OfflineQueueStats(pending: 0, stuck: 0)) {
     unawaited(refresh());
     _sub = OfflineSyncEvents.onFlushed.listen((_) => refresh());
   }
@@ -13,7 +20,10 @@ class OfflineQueueCountNotifier extends StateNotifier<int> {
   StreamSubscription<void>? _sub;
 
   Future<void> refresh() async {
-    state = await OfflineSyncService.pendingCount();
+    final items = await OfflineSyncService.listPending();
+    final stuck =
+        items.where((i) => i.attempts >= OfflineSyncService.maxAttempts).length;
+    state = OfflineQueueStats(pending: items.length, stuck: stuck);
   }
 
   @override
@@ -24,6 +34,6 @@ class OfflineQueueCountNotifier extends StateNotifier<int> {
 }
 
 final offlineQueueCountProvider =
-    StateNotifierProvider<OfflineQueueCountNotifier, int>((ref) {
+    StateNotifierProvider<OfflineQueueCountNotifier, OfflineQueueStats>((ref) {
   return OfflineQueueCountNotifier();
 });
