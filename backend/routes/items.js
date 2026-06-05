@@ -10,7 +10,7 @@ function registerItemsRoutes(app, deps) {
       const { item_id, order_id, branch_id } = req.query;
   
       let query = `
-        SELECT
+        We SELECT
           ic.condition_id,
           ic.item_id,
           ic.order_id,
@@ -679,6 +679,12 @@ function registerItemsRoutes(app, deps) {
         let updSql = `
         UPDATE items
         SET quantity = COALESCE(quantity, 0) + $1,
+            status = CASE
+              WHEN (COALESCE(quantity, 0) + $1) > 0
+                AND LOWER(TRIM(COALESCE(status, ''))) = 'missing'
+              THEN 'ready'
+              ELSE status
+            END,
             updated_at = NOW()
         WHERE item_id = $2
       `;
@@ -728,6 +734,207 @@ function registerItemsRoutes(app, deps) {
     }
   });
   
+  // Stok opname: sesuaikan quantity sistem dengan hasil hitung fisik
+  // Path di bawah /items agar ter-cover middleware authRequired di server.js
+  app.post('/items/stock-opname', async (req, res) => {
+    try {
+      if (req.user?.user_id == null && req.user?.id == null) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const roleNorm = String(req.user?.role ?? '')
+        .trim()
+        .toLowerCase();
+      const opnameRoles = new Set([
+        'admin_toko',
+        'admin_warehouse',
+        'admin_workshop',
+        'manajer',
+        'superadmin',
+        'owner',
+        'stockist',
+      ]);
+      if (!opnameRoles.has(roleNorm)) {
+        return res.status(403).json({
+          error: 'Role tidak diizinkan melakukan stok opname',
+          details: roleNorm.isEmpty
+              ? 'Role tidak ditemukan di token. Coba logout/login atau ganti cabang/role.'
+              : `Role saat ini: ${roleNorm}`,
+        });
+      }
+
+      const { branch_id: branchIdRaw, lines, notes: sessionNotes } = req.body || {};
+      const scope = await assertUserCanAccessBranchForOrders(req, branchIdRaw);
+      if (!scope.ok) {
+        return res.status(scope.status).json(scope.body);
+      }
+      const branchId = scope.branchId;
+
+      if (!Array.isArray(lines) || lines.length === 0) {
+        return res.status(400).json({ error: 'lines wajib berisi minimal satu item' });
+      }
+
+      const creatorId = parseInt(String(req.user?.user_id ?? req.user?.id ?? ''), 10);
+      const creatorOk = Number.isFinite(creatorId) && creatorId > 0;
+      const sessionNote =
+        sessionNotes != null ? String(sessionNotes).trim() : '';
+
+      const client = await db.getClient();
+      const applied = [];
+      const skipped = [];
+
+      try {
+        await client.query('BEGIN');
+
+        for (const rawLine of lines) {
+          const itemId = parseInt(String(rawLine?.item_id ?? ''), 10);
+          const counted = parseInt(String(rawLine?.counted_quantity ?? ''), 10);
+          const lineNote =
+            rawLine?.notes != null ? String(rawLine.notes).trim() : '';
+
+          if (!Number.isFinite(itemId) || itemId <= 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'item_id tidak valid pada lines' });
+          }
+          if (!Number.isFinite(counted) || counted < 0) {
+            await client.query('ROLLBACK');
+            return res
+              .status(400)
+              .json({ error: `counted_quantity harus bilangan bulat >= 0 (item ${itemId})` });
+          }
+
+          const selRes = await client.query(
+            `
+              SELECT item_id, branch_id, COALESCE(quantity, 0) AS quantity, name
+              FROM items
+              WHERE item_id = $1 AND branch_id = $2
+              FOR UPDATE
+            `,
+            [itemId, branchId]
+          );
+          if (selRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: `Item ${itemId} tidak ditemukan di cabang ini` });
+          }
+
+          const row = selRes.rows[0];
+          const prevQty = parseInt(row.quantity, 10) || 0;
+          const isVerify =
+            rawLine?.verified === true ||
+            String(rawLine?.verified ?? '').trim().toLowerCase() === 'true';
+
+          if (prevQty === counted) {
+            if (isVerify) {
+              const verifyNoteParts = [
+                `Stok opname: terverifikasi ada (qty ${prevQty} tidak berubah)`,
+              ];
+              if (lineNote) verifyNoteParts.push(lineNote);
+              if (sessionNote) verifyNoteParts.push(sessionNote);
+
+              await client.query(
+                `
+                  INSERT INTO stock_mutations (
+                    item_id, branch_id, type, quantity, previous_stock, current_stock,
+                    notes, reference_id, reference_type, created_by
+                  )
+                  VALUES ($1, $2, 'adjustment', 0, $3, $3, $4, NULL, 'opname', $5)
+                `,
+                [
+                  itemId,
+                  branchId,
+                  prevQty,
+                  verifyNoteParts.join(' · '),
+                  creatorOk ? creatorId : null,
+                ]
+              );
+
+              applied.push({
+                item_id: itemId,
+                name: row.name,
+                action: 'verified',
+                previous_quantity: prevQty,
+                counted_quantity: counted,
+                delta: 0,
+              });
+            } else {
+              skipped.push({ item_id: itemId, reason: 'unchanged' });
+            }
+            continue;
+          }
+
+          const delta = counted - prevQty;
+          const updRes = await client.query(
+            `
+              UPDATE items
+              SET quantity = $1,
+                  status = CASE
+                    WHEN $1 <= 0 THEN 'missing'
+                    ELSE status
+                  END,
+                  updated_at = NOW()
+              WHERE item_id = $2 AND branch_id = $3
+              RETURNING item_id, quantity, name, status
+            `,
+            [counted, itemId, branchId]
+          );
+          const updated = updRes.rows[0];
+          const nextQty = parseInt(updated.quantity, 10) || 0;
+
+          const noteParts = [
+            `Stok opname: ${prevQty} → ${counted} (selisih ${delta >= 0 ? '+' : ''}${delta}) · status missing`,
+          ];
+          if (lineNote) noteParts.push(lineNote);
+          if (sessionNote) noteParts.push(sessionNote);
+
+          await client.query(
+            `
+              INSERT INTO stock_mutations (
+                item_id, branch_id, type, quantity, previous_stock, current_stock,
+                notes, reference_id, reference_type, created_by
+              )
+              VALUES ($1, $2, 'adjustment', $3, $4, $5, $6, NULL, 'opname', $7)
+            `,
+            [
+              itemId,
+              branchId,
+              delta,
+              prevQty,
+              nextQty,
+              noteParts.join(' · '),
+              creatorOk ? creatorId : null,
+            ]
+          );
+
+          applied.push({
+            item_id: itemId,
+            name: updated.name,
+            action: 'missing',
+            previous_quantity: prevQty,
+            counted_quantity: counted,
+            delta,
+          });
+        }
+
+        await client.query('COMMIT');
+        return res.status(200).json({
+          branch_id: branchId,
+          applied_count: applied.length,
+          skipped_count: skipped.length,
+          applied,
+          skipped,
+        });
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('Error stock opname:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   app.delete('/items/:id', (req, res) => {
     const id = parseInt(req.params.id);
     items = items.filter(item => item.id !== id);

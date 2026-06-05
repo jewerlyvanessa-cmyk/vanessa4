@@ -14,7 +14,9 @@ import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class GlobalStockPage extends ConsumerStatefulWidget {
-  const GlobalStockPage({super.key});
+  const GlobalStockPage({super.key, this.initialStatusFilter});
+
+  final String? initialStatusFilter;
 
   @override
   ConsumerState<GlobalStockPage> createState() => _GlobalStockPageState();
@@ -28,13 +30,16 @@ class _GlobalStockPageState extends ConsumerState<GlobalStockPage> {
   List<dynamic> _items = const [];
   List<Map<String, dynamic>> _branches = const [];
   String _search = '';
-  String _selectedStatus = 'ready';
+  late String _selectedStatus;
   String _selectedBranchId = 'all';
   String? _jenisDetailFocus;
 
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialStatusFilter?.trim();
+    _selectedStatus =
+        (initial != null && initial.isNotEmpty) ? initial : 'ready';
     _load();
   }
 

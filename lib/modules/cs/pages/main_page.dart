@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,6 +12,10 @@ import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
+import 'package:vanessa3/shared_widgets/offline_status_banner.dart';
+import 'package:vanessa3/services/offline_sync_events.dart';
+import 'package:vanessa3/providers/order_today_provider.dart';
+import 'package:vanessa3/providers/cs_daily_orders_refresh_provider.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 String getMainModuleForRole(String role) {
@@ -81,6 +87,24 @@ class CSMainPage extends ConsumerStatefulWidget {
 
 class _CSMainPageState extends ConsumerState<CSMainPage> {
   ProviderSubscription<UserState>? _csUserSessionSub;
+  StreamSubscription<void>? _offlineSyncSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _offlineSyncSub = OfflineSyncEvents.onFlushed.listen((_) {
+      if (!mounted) return;
+      ref.invalidate(orderTodayStatsProvider);
+      ref.invalidate(todayOrdersProvider);
+      bumpCsDailyOrdersListRevision(ref);
+    });
+  }
+
+  @override
+  void dispose() {
+    _offlineSyncSub?.cancel();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -118,6 +142,7 @@ class _CSMainPageState extends ConsumerState<CSMainPage> {
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const OfflineStatusBanner(),
               Padding(
                 padding: ResponsiveLayout.roleMenuHeaderPadding,
                 child: Column(

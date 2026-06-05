@@ -28,6 +28,10 @@ const {
 const { ORDER_CALENDAR_TIMEZONE } = require('../lib/business_timezone');
 const { resolveNotaOrder } = require('../lib/order_nota_helpers');
 const {
+  replayIdempotentIfExists,
+  storeIdempotentResponse,
+} = require('../lib/idempotency_helpers');
+const {
   timestampOnBusinessDateSql,
   timestampOnBusinessDateBetweenSql,
 } = require('../lib/order_calendar_date_sql');
@@ -1204,6 +1208,10 @@ function registerOrdersCoreRoutes(app, deps) {
   });
   
   app.post('/orders', upload.single('photo'), async (req, res) => {
+    if (await replayIdempotentIfExists(db, req, res, '/orders')) {
+      return;
+    }
+
     const client = await db.getClient();
   
     try {
@@ -2106,12 +2114,14 @@ function registerOrdersCoreRoutes(app, deps) {
           tipe: item.tipe || item.item_tipe,
         }));
   
-        res.status(201).json({
+        const orderPayload = {
           ...orderFresh,
           total: orderTotal,
           items: orderItems,
-          message: 'Order created successfully'
-        });
+          message: 'Order created successfully',
+        };
+        await storeIdempotentResponse(db, req, '/orders', 201, orderPayload);
+        res.status(201).json(orderPayload);
       } finally {
         itemsClient.release();
       }

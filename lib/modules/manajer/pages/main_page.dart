@@ -269,6 +269,15 @@ class _ManajerMainPageState extends ConsumerState<ManajerMainPage> {
                               onTap: () => _openStok(context),
                             ),
                             ModuleMenuEntry(
+                              icon: Icons.fact_check_outlined,
+                              label: 'STOK OPNAME',
+                              iconColor: Colors.blueGrey,
+                              onTap: () => pushAppRoute(
+                                context,
+                                AppRoutes.manajerStockOpname,
+                              ),
+                            ),
+                            ModuleMenuEntry(
                               icon: DashboardMenuIcons.kelolaPengguna,
                               label: 'USER',
                               iconColor: Colors.purple,

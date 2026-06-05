@@ -47,6 +47,8 @@ import '../modules/admin_toko/pages/request_stock_warehouse_page.dart';
 import '../modules/admin_toko/pages/service_awaiting_store_receipt_page.dart';
 import '../modules/admin_toko/pages/stock_mutation_page.dart';
 import '../modules/admin_toko/pages/stock_page.dart';
+import '../modules/common/pages/stock_opname_page.dart';
+import '../utils/stock_list_route_args.dart';
 import '../modules/admin_toko/pages/employee_management_page.dart';
 import '../modules/kasir/pages/payment_queue_page.dart';
 import '../modules/kasir/pages/daily_payments_page.dart';
@@ -59,6 +61,7 @@ import '../modules/stockist/pages/permintaan_stok_toko_page.dart';
 import '../modules/stockist/pages/reports_page.dart';
 import '../modules/stockist/pages/stock_cabang_page.dart';
 import '../modules/stockist/pages/main_page.dart';
+import '../modules/stockist/pages/stock_warehouse_page.dart';
 import '../pages/switch_branch_role_page.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
@@ -66,6 +69,35 @@ import '../providers/websocket_provider.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 
 class AppRoutes {
+  static Widget _stockPageFromRoute(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    return StockPage(
+      initialStatusFilter: StockListRouteArgs.statusFilter(args),
+    );
+  }
+
+  static Widget _stockCabangPageFromRoute(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    return StockCabangPage(
+      initialStatusFilter: StockListRouteArgs.statusFilter(args),
+      initialBranchId: StockListRouteArgs.branchId(args),
+    );
+  }
+
+  static Widget _stockistStockPageFromRoute(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    return StockWarehousePage(
+      initialStatusFilter: StockListRouteArgs.statusFilter(args),
+    );
+  }
+
+  static Widget _globalStockPageFromRoute(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    return GlobalStockPage(
+      initialStatusFilter: StockListRouteArgs.statusFilter(args),
+    );
+  }
+
   static const String cs = '/cs';
   static const String superadmin = '/superadmin';
   static const String login = '/login';
@@ -90,10 +122,13 @@ class AppRoutes {
   static const String manajerGlobalStock = '/manager/global_stock';
   static const String manajerStockCabang = '/manager/stock_cabang';
   static const String manajerStockReport = '/manager/stock_report';
+  static const String manajerStockOpname = '/manager/stock_opname';
+  static const String adminWorkshopStockOpname = '/admin_workshop/stock_opname';
   static const String manajerEmployees = '/manager/employees';
   static const String warehouseStock = '/warehouse/stock';
   static const String warehouseGoodsTransfer = '/warehouse/goods_transfer';
   static const String warehouseStockMutation = '/warehouse/stock_mutation';
+  static const String warehouseStockOpname = '/warehouse/stock_opname';
   static const String warehouseStockRequests = '/warehouse/stock_requests';
   static const String warehouseFromStore = '/warehouse/from_store';
   static const String warehouseToStore = '/warehouse/to_store';
@@ -112,6 +147,7 @@ class AppRoutes {
   static const String adminTokoGoodsTransfer = '/admin_toko/goods_transfer';
   static const String adminTokoStockRequest = '/admin_toko/stock_request';
   static const String adminTokoStockMutation = '/admin_toko/stock_mutation';
+  static const String adminTokoStockOpname = '/admin_toko/stock_opname';
   static const String adminTokoEmployees = '/admin_toko/employees';
   static const String adminWorkshopEmployees = '/admin_workshop/employees';
   static const String adminWorkshopGoodsTransfer = '/admin_workshop/goods_transfer';
@@ -125,6 +161,8 @@ class AppRoutes {
   static const String manajerKeuangan = '/manager/keuangan';
   static const String manajerSystemSettings = '/manager/system_settings';
   static const String stockist = '/stockist';
+  static const String stockistStock = '/stockist/stock';
+  static const String stockistStockOpname = '/stockist/stock_opname';
   static const String switchBranchRole = '/switch_branch_role';
   static Map<String, WidgetBuilder> get routes => {
     login: (context) => const LoginPage(),
@@ -140,24 +178,28 @@ class AppRoutes {
     owner: (context) => const OwnerMainPage(),
     ownerSalesGlobal: (context) => const OwnerSalesGlobalPage(),
     ownerBuybackGlobal: (context) => const OwnerBuybackGlobalPage(),
-    ownerGlobalStock: (context) => const GlobalStockPage(),
+    ownerGlobalStock: _globalStockPageFromRoute,
     ownerGlobalOrders: (context) => const OwnerGlobalOrdersPage(),
     manajerCompletedOrdersToday: (context) => const CompletedOrdersTodayPage(),
     manajerBranchPerformance: (context) => const BranchPerformancePage(),
     manajerSalesToday: (context) => const SalesReportTodayPage(),
     manajerBuybackReport: (context) => const BuybackReportTodayPage(),
-    manajerGlobalStock: (context) => const GlobalStockPage(),
-    manajerStockCabang: (context) => const StockCabangPage(),
+    manajerGlobalStock: _globalStockPageFromRoute,
+    manajerStockCabang: _stockCabangPageFromRoute,
     manajerStockReport: (context) => const StockReportPage(),
     manajerEmployees: (context) => const ManagerUsersPage(),
     manajerKeuangan: (context) => const KeuanganTokoPage(
           scope: StoreOperationalPageScope.manajer,
           title: 'Pencatatan Keuangan',
         ),
-    warehouseStock: (context) => const StockPage(),
+    warehouseStock: _stockPageFromRoute,
     warehouseGoodsTransfer: (context) =>
         const GoodsTransferPage(branchTypeScope: 'warehouse'),
     warehouseStockMutation: (context) => const StockMutationPage(),
+    warehouseStockOpname: (context) => const StockOpnamePage(
+          title: 'Stok Opname Gudang',
+          missingStockRouteName: AppRoutes.warehouseStock,
+        ),
     warehouseStockRequests: (context) => const PermintaanStokTokoPage(),
     warehouseFromStore: (context) => const DariTokoPage(),
     warehouseToStore: (context) => const KirimKeTokoPage(),
@@ -182,11 +224,24 @@ class AppRoutes {
     ),
     adminTokoWorkshopReceipt: (context) =>
         const ServiceAwaitingStoreReceiptPage(),
-    adminTokoStock: (context) => const StockPage(),
+    adminTokoStock: _stockPageFromRoute,
     adminTokoGoodsTransfer: (context) =>
         const GoodsTransferPage(branchTypeScope: 'toko'),
     adminTokoStockRequest: (context) => const RequestStockWarehousePage(),
     adminTokoStockMutation: (context) => const StockMutationPage(),
+    adminTokoStockOpname: (context) => const StockOpnamePage(
+          title: 'Stok Opname Toko',
+          missingStockRouteName: AppRoutes.adminTokoStock,
+        ),
+    manajerStockOpname: (context) => const StockOpnamePage(
+          title: 'Stok Opname',
+          allowBranchPicker: true,
+          missingStockRouteName: AppRoutes.manajerStockCabang,
+        ),
+    adminWorkshopStockOpname: (context) => const StockOpnamePage(
+          title: 'Stok Opname Material',
+          stockTypeFilter: 'non_inventory',
+        ),
     adminTokoEmployees: (context) => const EmployeeManagementPage(),
     adminWorkshopEmployees: (context) => const EmployeeManagementPage(),
     adminWorkshopGoodsTransfer: (context) =>
@@ -207,6 +262,11 @@ class AppRoutes {
           'Halaman ini siap digunakan.\n\nJika Anda ingin fitur pengaturan sistem untuk manajer, beritahu pengaturan apa saja yang perlu ditambahkan (mis. target bulanan, batas diskon, dsb).',
     ),
     stockist: (context) => const StockistMainPage(),
+    stockistStock: _stockistStockPageFromRoute,
+    stockistStockOpname: (context) => const StockOpnamePage(
+          title: 'Stok Opname',
+          missingStockRouteName: AppRoutes.stockistStock,
+        ),
     switchBranchRole: (context) => const SwitchBranchRolePage(),
     customers: (context) => const CustomersPage(),
     '/jual': (context) => const JualPage(),

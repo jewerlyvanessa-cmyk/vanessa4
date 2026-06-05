@@ -21,6 +21,8 @@ String stockItemStatusLabel(String status) {
       return 'On Service';
     case 'on-custom':
       return 'On Custom';
+    case 'missing':
+      return 'Hilang (Opname)';
     default:
       return status;
   }
@@ -36,6 +38,10 @@ int stockItemQuantity(dynamic item) {
 
 /// Cocok untuk filter status [selectedStatus] (bukan `'all'`).
 bool stockItemVisibleForStatusFilter(dynamic item, String selectedStatus) {
+  final status = (item['status'] ?? '').toString().trim().toLowerCase();
+  if (selectedStatus == 'missing') {
+    return status == 'missing';
+  }
   if ((item['status'] ?? '').toString() != selectedStatus) return false;
   // Ready dengan qty 0 tetap `status` ready di DB, tapi tidak dianggap stok siap.
   if (selectedStatus == 'ready' && stockItemQuantity(item) <= 0) return false;
@@ -102,6 +108,7 @@ class StockStatusFilterSummaryHeader extends StatelessWidget {
     ('buyback', 'Buyback'),
     ('on-service', 'On Service'),
     ('on-custom', 'On Custom'),
+    ('missing', 'Hilang'),
   ];
 
   Widget _metric(BuildContext context, String label, String value) {

@@ -23,6 +23,10 @@ const {
 } = require('../lib/items_schema_helpers');
 const { assertUserCanAccessBranchForOrders } = require('./order_branch_scope');
 const {
+  replayIdempotentIfExists,
+  storeIdempotentResponse,
+} = require('../lib/idempotency_helpers');
+const {
   resolvePaymentActorUserId,
   resolvePaymentsUserFilterMode,
   appendPaymentsUserFilter,
@@ -51,6 +55,11 @@ function registerPaymentsCoreRoutes(app, deps) {
 app.post('/payments', async (req, res) => {
   const client = await db.getClient();
   try {
+    if (await replayIdempotentIfExists(db, req, res, '/payments')) {
+      client.release();
+      return;
+    }
+
     const { order_id, amount, method, status, notes, proof_url } = req.body;
 
     if (!order_id || amount === undefined || amount === null || !method) {
@@ -320,7 +329,9 @@ app.post('/payments', async (req, res) => {
       }
     }
 
-    res.status(201).json({ message: 'Pembayaran berhasil dicatat', payment });
+    const payload = { message: 'Pembayaran berhasil dicatat', payment };
+    await storeIdempotentResponse(db, req, '/payments', 201, payload);
+    res.status(201).json(payload);
   } catch (error) {
     try {
       await client.query('ROLLBACK');

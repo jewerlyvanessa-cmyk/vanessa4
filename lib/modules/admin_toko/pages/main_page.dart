@@ -245,6 +245,13 @@ class _AdminTokoMainPageState extends ConsumerState<AdminTokoMainPage> {
                         pushAppRoute(context, AppRoutes.adminTokoStockMutation),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.fact_check_outlined,
+                    label: 'STOK OPNAME',
+                    iconColor: Colors.blueGrey,
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.adminTokoStockOpname),
+                  ),
+                  ModuleMenuEntry(
                     icon: Icons.warehouse_outlined,
                     label: ModuleMenuGroupLabels.warehouse,
                     iconColor: Colors.deepOrange,

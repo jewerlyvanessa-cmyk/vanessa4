@@ -22,6 +22,7 @@ import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
+import 'package:vanessa3/services/cs_order_submit_service.dart';
 
 int? toInt(dynamic value) {
   if (value is int) return value;
@@ -424,94 +425,84 @@ class _ServicePageState extends ConsumerState<ServicePage> {
       orderData['pickup_branch_id'] = _pickupBranchId;
     }
 
-    try {
-      final baseUrl = NetworkConfig.baseUrl;
+    final fakturOverlay = <String, dynamic>{
+      ...orderData,
+      'customer_name': _customerController.text,
+      'customer_phone': _customerPhoneController.text,
+      'customer_address': _customerAddressController.text,
+    };
+    final itemsReq = orderData['order_items'];
+    if (itemsReq is List && itemsReq.isNotEmpty && itemsReq.first is Map) {
+      final first = Map<String, dynamic>.from(itemsReq.first as Map);
+      final tipe = first['tipe']?.toString().trim();
+      if (tipe != null && tipe.isNotEmpty) {
+        fakturOverlay['jenis_service'] = tipe;
+      }
+    }
+    if (uangMukaVal > 0) {
+      fakturOverlay['service_dp_amount'] = uangMukaVal;
+    }
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/orders'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(orderData),
+    try {
+      final result = await CsOrderSubmitService.submitJsonOrder(
+        orderData: orderData,
+        fakturOverlay: fakturOverlay,
       );
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        if (decoded is! Map) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Respons order tidak valid')),
-            );
-          }
-          return;
-        }
-        final data = Map<String, dynamic>.from(decoded);
+      if (!mounted) return;
+
+      if (result.success && result.fakturData != null) {
+        final data = Map<String, dynamic>.from(result.fakturData!);
         final createdOrderId = data['order_id'] ?? data['orderId'];
 
-        // Gabungkan field form ke payload faktur (respons API tidak selalu mengembalikan root payload).
-        final itemsReq = orderData['order_items'];
-        if (itemsReq is List && itemsReq.isNotEmpty && itemsReq.first is Map) {
-          final first = Map<String, dynamic>.from(itemsReq.first as Map);
-          final tipe = first['tipe']?.toString().trim();
-          if (tipe != null && tipe.isNotEmpty) {
-            data['jenis_service'] = tipe;
+        if (result.offlineQueued) {
+          CsOrderSubmitService.showOfflineQueuedSnackBar(
+            context,
+            offlineRef: result.offlineRef ?? '??????',
+            dpNote: uangMukaVal > 0
+                ? 'Uang muka akan dicatat setelah order tersinkron.'
+                : null,
+          );
+        } else {
+          if (uangMukaVal > 0 && createdOrderId != null) {
+            try {
+              await http.post(
+                Uri.parse('${NetworkConfig.baseUrl}/payments'),
+                headers: NetworkConfig.defaultHeaders,
+                body: jsonEncode({
+                  'order_id': createdOrderId,
+                  'amount': uangMukaVal,
+                  'method': 'cash',
+                  'status': 'pending',
+                  'notes': 'Uang muka (service)',
+                  'payment_kind': 'dp',
+                }),
+              );
+            } catch (_) {}
           }
-        }
-        for (final e in [
-          ['kelengkapan', orderData['kelengkapan']],
-          ['keterangan', orderData['keterangan']],
-          ['estimasi_selesai', orderData['estimasi_selesai']],
-          ['service_estimated_total', orderData['service_estimated_total']],
-        ]) {
-          final v = e[1];
-          if (v != null && v.toString().trim().isNotEmpty) {
-            data[e[0] as String] = v;
-          }
-        }
-        if (uangMukaVal > 0) {
-          data['service_dp_amount'] = uangMukaVal;
+          ref.invalidate(todayOrdersProvider);
+          ref.invalidate(orderTodayStatsProvider);
+          bumpCsDailyOrdersListRevision(ref);
         }
 
-        // Record DP as a pending payment (uang muka) if provided.
-        if (uangMukaVal > 0 && createdOrderId != null) {
-          try {
-            await http.post(
-              Uri.parse('$baseUrl/payments'),
-              headers: NetworkConfig.defaultHeaders,
-              body: jsonEncode({
-                'order_id': createdOrderId,
-                'amount': uangMukaVal,
-                'method': 'cash',
-                'status': 'pending',
-                'notes': 'Uang muka (service)',
-                'payment_kind': 'dp',
-              }),
-            );
-          } catch (_) {
-            // DP best-effort; order creation still considered success.
-          }
-        }
-        // Refresh "order hari ini" list + stats
-        ref.invalidate(todayOrdersProvider);
-        ref.invalidate(orderTodayStatsProvider);
-        bumpCsDailyOrdersListRevision(ref);
-        if (mounted) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => FakturPage(orderData: data),
-            ),
-          );
-        }
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => FakturPage(orderData: data),
+          ),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gagal menyimpan order: ${response.body}')),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.errorMessage ?? 'Gagal menyimpan order'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Terjadi error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Terjadi error: $e')),
+        );
       }
     }
   }

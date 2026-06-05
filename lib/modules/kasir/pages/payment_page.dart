@@ -5,10 +5,13 @@ import 'dart:convert';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/data/offline_queue.dart';
+import 'package:vanessa3/providers/offline_queue_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
+import 'package:vanessa3/services/offline_write_service.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/payment_proof_upload.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
+import 'package:vanessa3/modules/kasir/widgets/cash_denomination_input.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 
 class PaymentPage extends ConsumerStatefulWidget {
@@ -31,6 +34,9 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   bool _proofUploading = false;
   CsOrderPhotoPickResult? _proofPick;
   String? _proofUrl;
+  Map<int, int> _denomCounts = {
+    for (final d in kCashDenominations) d: 0,
+  };
 
   @override
   void initState() {
@@ -147,8 +153,28 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     final change = _cashChange();
     final parts = <String>[];
     if (baseNotes.trim().isNotEmpty) parts.add(baseNotes.trim());
+    final pecahan = cashDenominationNotesSummary(_denomCounts);
+    if (pecahan.isNotEmpty) parts.add(pecahan);
     parts.add('Tunai: diterima=${received.toStringAsFixed(0)}, kembalian=${change.toStringAsFixed(0)}');
     return parts.join(' | ');
+  }
+
+  void _onDenomCountsChanged(Map<int, int> counts, double total) {
+    setState(() {
+      _denomCounts = counts;
+      _cashReceivedController.text =
+          total > 0 ? total.toStringAsFixed(0) : '';
+    });
+  }
+
+  void _onCashReceivedTyped(String _) {
+    final typedTotal = _cashReceived();
+    final denomTotal = CashDenominationInput.totalFromCounts(_denomCounts);
+    setState(() {
+      if ((typedTotal - denomTotal).abs() > 0.5) {
+        _denomCounts = {for (final d in kCashDenominations) d: 0};
+      }
+    });
   }
 
   Future<void> _processPayment() async {
@@ -205,21 +231,59 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         paymentData['payment_kind'] = paymentKind;
       }
 
-      final response = await ApiClient.post(
-        '/payments',
-        headers: {'X-Idempotency-Key': idempotencyKey},
-        body: jsonEncode(paymentData),
-      );
+      if (_paymentMethod == 'cash') {
+        final outcome = await OfflineWriteService.postJson(
+          path: '/payments',
+          body: paymentData,
+          queueType: 'payment',
+          idempotencyKey: idempotencyKey,
+        );
 
-      if (response.statusCode == 201) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Pembayaran berhasil!')));
+        if (!mounted) return;
+
+        if (outcome.queuedOffline) {
+          await ref.read(offlineQueueCountProvider.notifier).refresh();
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Pembayaran tunai disimpan offline. '
+                'Akan dikirim otomatis saat server kembali online.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          if (mounted) Navigator.pop(context, true);
+          return;
+        }
+
+        final response = outcome.response!;
+        if (response.statusCode == 201) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Pembayaran berhasil!')),
+          );
           Navigator.pop(context, true);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Gagal memproses pembayaran: ${response.body}'),
+            ),
+          );
         }
       } else {
-        if (mounted) {
+        final response = await ApiClient.post(
+          '/payments',
+          headers: {'X-Idempotency-Key': idempotencyKey},
+          body: jsonEncode(paymentData),
+        );
+        if (!mounted) return;
+        if (response.statusCode == 201) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Pembayaran berhasil!')),
+          );
+          Navigator.pop(context, true);
+        } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Gagal memproses pembayaran: ${response.body}'),
@@ -228,50 +292,10 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         }
       }
     } catch (e) {
-      try {
-        final isCash = _paymentMethod == 'cash';
-        final amountToRecord = isCash ? _orderTotal() : (double.tryParse(_amountController.text) ?? 0);
-        final notesToSend = isCash
-            ? _composeNotesForCash(_notesController.text)
-            : _notesController.text;
-
-        final orderType =
-            (widget.order['order_type'] ?? '').toString().toLowerCase();
-        final hc = widget.order['has_completed_payment'];
-        final hasCompleted =
-            hc == true || hc == 1 || hc?.toString().toLowerCase() == 'true';
-        final isServiceLike =
-            orderType == 'service' || orderType == 'custom';
-        final paymentKind =
-            isServiceLike ? (hasCompleted ? 'settlement' : 'dp') : null;
-        final body = <String, dynamic>{
-          'order_id': widget.order['order_id'],
-          'amount': amountToRecord,
-          'method': _paymentMethod,
-          'notes': notesToSend,
-          'proof_url': _proofUrl,
-          'user_id': ref.read(userStateProvider).userId,
-          'branch_id': ref.read(userStateProvider).branch,
-        };
-        if (paymentKind != null) {
-          body['payment_kind'] = paymentKind;
-        }
-        final item = OfflineQueueItem(
-          id: DateTime.now().microsecondsSinceEpoch.toString(),
-          type: 'payment',
-          method: 'POST',
-          path: '/payments',
-          body: body,
-          idempotencyKey: OfflineQueue.instance.newIdempotencyKey(),
-          attempts: 0,
-          createdAt: DateTime.now(),
-        );
-        await OfflineQueue.instance.enqueue(item);
-      } catch (_) {}
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
       }
     } finally {
       if (mounted) {
@@ -387,10 +411,12 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
-                    labelText: 'Uang diterima',
+                    labelText: 'Uang diterima (total)',
                     prefixText: 'Rp ',
+                    helperText:
+                        'Ketik manual atau gunakan pecahan di bawah',
                   ),
-                  onChanged: (_) => setState(() {}),
+                  onChanged: _onCashReceivedTyped,
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Uang diterima wajib diisi';
@@ -404,6 +430,11 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                     }
                     return null;
                   },
+                ),
+                const SizedBox(height: 16),
+                CashDenominationInput(
+                  counts: _denomCounts,
+                  onCountsChanged: _onDenomCountsChanged,
                 ),
                 const SizedBox(height: 12),
                 InputDecorator(
@@ -556,6 +587,10 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
           if (!_methodRequiresProof()) {
             _proofPick = null;
             _proofUrl = null;
+          }
+          if (value == 'cash') {
+            _denomCounts = {for (final d in kCashDenominations) d: 0};
+            _cashReceivedController.text = _orderTotal().toStringAsFixed(0);
           }
         });
       },

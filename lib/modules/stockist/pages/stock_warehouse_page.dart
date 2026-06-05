@@ -15,7 +15,10 @@ import 'package:vanessa3/modules/stockist/stock_warehouse_bulk.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockWarehousePage extends ConsumerStatefulWidget {
-  const StockWarehousePage({super.key});
+  const StockWarehousePage({super.key, this.initialStatusFilter});
+
+  /// Filter status awal, mis. `missing` setelah stok opname.
+  final String? initialStatusFilter;
 
   @override
   ConsumerState<StockWarehousePage> createState() => _StockWarehousePageState();
@@ -27,7 +30,7 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   String _error = '';
   List<dynamic> _items = [];
   String _search = '';
-  String _selectedStatus = 'ready';
+  late String _selectedStatus;
   /// `null` = hanya tampilkan daftar jenis; non-null = detail stok untuk jenis itu.
   String? _jenisDetailFocus;
   // Note: saving state is handled inside the add dialog to avoid
@@ -36,6 +39,9 @@ class _StockWarehousePageState extends ConsumerState<StockWarehousePage> {
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialStatusFilter?.trim();
+    _selectedStatus =
+        (initial != null && initial.isNotEmpty) ? initial : 'ready';
     _loadItems();
   }
 

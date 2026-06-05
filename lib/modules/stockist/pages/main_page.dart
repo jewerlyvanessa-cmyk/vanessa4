@@ -13,11 +13,12 @@ import 'package:vanessa3/utils/network_config.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
-import 'stock_warehouse_page.dart';
 import 'stock_bulk_input_page.dart';
 import 'stock_standard_input_page.dart';
 import 'stock_reprint_qr_page.dart';
 import 'reports_page.dart';
+import 'package:vanessa3/routes/app_navigator.dart';
+import 'package:vanessa3/routes/app_routes.dart';
 
 class StockistMainPage extends ConsumerStatefulWidget {
   const StockistMainPage({super.key});
@@ -127,12 +128,14 @@ class _StockistMainPageState extends ConsumerState<StockistMainPage> {
                   icon: Icons.inventory_2,
                   label: 'STOK',
                   iconColor: Colors.blue,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const StockWarehousePage(),
-                    ),
-                  ),
+                  onTap: () => pushAppRoute(context, AppRoutes.stockistStock),
+                ),
+                ModuleMenuEntry(
+                  icon: Icons.fact_check_outlined,
+                  label: 'STOK OPNAME',
+                  iconColor: Colors.blueGrey,
+                  onTap: () =>
+                      pushAppRoute(context, AppRoutes.stockistStockOpname),
                 ),
                 ModuleMenuEntry(
                   icon: Icons.qr_code_2,

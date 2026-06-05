@@ -224,6 +224,13 @@ class _AdminWarehouseMainPageState extends ConsumerState<AdminWarehouseMainPage>
                         pushAppRoute(context, AppRoutes.warehouseStockMutation),
                   ),
                   ModuleMenuEntry(
+                    icon: Icons.fact_check_outlined,
+                    label: 'STOK OPNAME',
+                    iconColor: Colors.blueGrey,
+                    onTap: () =>
+                        pushAppRoute(context, AppRoutes.warehouseStockOpname),
+                  ),
+                  ModuleMenuEntry(
                     icon: DashboardMenuIcons.laporan,
                     label: 'LAPORAN INPUT',
                     iconColor: Colors.indigo,

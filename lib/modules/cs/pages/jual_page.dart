@@ -21,6 +21,7 @@ import 'package:vanessa3/utils/order_item_kategori_jenis.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_field.dart';
 import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
+import 'package:vanessa3/services/cs_order_submit_service.dart';
 
 class JualPage extends ConsumerStatefulWidget {
   const JualPage({super.key, this.client});
@@ -810,60 +811,44 @@ class _JualPageState extends ConsumerState<JualPage> {
     debugPrint('Submitting order payload with ${orderItems.length} item(s)');
 
     try {
-      final baseUrl = NetworkConfig.baseUrl;
-      debugPrint('Submitting order to: $baseUrl/orders');
+      final fakturOverlay = <String, dynamic>{
+        'customer_name': _customerController.text,
+        'customer_phone': _customerPhoneController.text,
+        'customer_address': _customerAddressController.text,
+      };
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/orders'),
-        headers: NetworkConfig.defaultHeaders,
-        body: jsonEncode(orderData),
+      final result = await CsOrderSubmitService.submitJsonOrder(
+        orderData: orderData,
+        fakturOverlay: fakturOverlay,
       );
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final fakturData = <String, dynamic>{
-          ...(data is Map<String, dynamic> ? data : <String, dynamic>{}),
-          // Ensure customer fields are present for immediate Faktur display
-          'customer_name':
-              (data is Map<String, dynamic> &&
-                  (data['customer_name']?.toString().trim().isNotEmpty ??
-                      false))
-              ? data['customer_name']
-              : _customerController.text,
-          'customer_phone':
-              (data is Map<String, dynamic> &&
-                  (data['customer_phone']?.toString().trim().isNotEmpty ??
-                      false))
-              ? data['customer_phone']
-              : _customerPhoneController.text,
-          'customer_address':
-              (data is Map<String, dynamic> &&
-                  (data['customer_address']?.toString().trim().isNotEmpty ??
-                      false))
-              ? data['customer_address']
-              : _customerAddressController.text,
-        };
+      if (!mounted) return;
 
-        // Refresh order hari ini (stats + list) — bundle dipicu dari stats provider.
-        if (mounted) {
+      if (result.success && result.fakturData != null) {
+        if (result.offlineQueued) {
+          CsOrderSubmitService.showOfflineQueuedSnackBar(
+            context,
+            offlineRef: result.offlineRef ?? '??????',
+          );
+        } else {
           ref.invalidate(orderTodayStatsProvider);
           ref.invalidate(todayOrdersProvider);
           bumpCsDailyOrdersListRevision(ref);
         }
 
-        if (mounted) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => FakturPage(orderData: fakturData),
-            ),
-          );
-        }
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => FakturPage(orderData: result.fakturData!),
+          ),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gagal menyimpan order: ${response.body}')),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.errorMessage ?? 'Gagal menyimpan order',
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

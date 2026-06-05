@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/stockist/stock_lookup_by_code.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
+import 'package:vanessa3/utils/app_date_picker.dart';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 import 'package:vanessa3/widgets/qr_scan_route.dart';
 
@@ -420,6 +422,11 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
   String _error = '';
   List<Map<String, dynamic>> _all = const [];
   final Set<String> _selectedKeys = {};
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  static final _isoDateFmt = DateFormat('yyyy-MM-dd');
+  static final _displayDateFmt = DateFormat('dd/MM/yyyy', 'id_ID');
 
   @override
   void initState() {
@@ -444,6 +451,65 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
   String _kode(Map<String, dynamic> i) =>
       (i['item_code'] ?? i['kode_produk'] ?? '-').toString();
 
+  String _isoDate(DateTime d) => _isoDateFmt.format(d);
+
+  String _dateFilterLabel() {
+    if (_startDate == null && _endDate == null) return 'Semua tanggal';
+    if (_startDate != null &&
+        _endDate != null &&
+        _isoDate(_startDate!) == _isoDate(_endDate!)) {
+      return _displayDateFmt.format(_startDate!);
+    }
+    final a =
+        _startDate != null ? _displayDateFmt.format(_startDate!) : '…';
+    final b = _endDate != null ? _displayDateFmt.format(_endDate!) : '…';
+    return '$a – $b';
+  }
+
+  String? _formatCreatedAt(Map<String, dynamic> item) {
+    final raw = item['created_at']?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return null;
+    return DateFormat('dd/MM/yyyy HH:mm', 'id_ID').format(dt.toLocal());
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final initialRange = (_startDate != null && _endDate != null)
+        ? DateTimeRange(start: _startDate!, end: _endDate!)
+        : DateTimeRange(start: now, end: now);
+    final picked = await showAppDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 3),
+      lastDate: DateTime(now.year + 2),
+      initialDateRange: initialRange,
+    );
+    if (picked == null) return;
+    setState(() {
+      _startDate = DateTime(
+        picked.start.year,
+        picked.start.month,
+        picked.start.day,
+      );
+      _endDate = DateTime(
+        picked.end.year,
+        picked.end.month,
+        picked.end.day,
+      );
+    });
+    await _load();
+  }
+
+  void _clearDateFilter() {
+    if (_startDate == null && _endDate == null) return;
+    setState(() {
+      _startDate = null;
+      _endDate = null;
+    });
+    _load();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -453,6 +519,8 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
       final list = await fetchStockInventoryItems(
         branchId: widget.branchId,
         status: 'ready',
+        startDate: _startDate != null ? _isoDate(_startDate!) : null,
+        endDate: _endDate != null ? _isoDate(_endDate!) : null,
       );
       if (!mounted) return;
       setState(() {
@@ -502,6 +570,27 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
     });
   }
 
+  bool get _allFilteredSelected =>
+      _filtered.isNotEmpty &&
+      _filtered.every((it) => _selectedKeys.contains(_key(it)));
+
+  bool? get _masterCheckboxValue {
+    if (_filtered.isEmpty) return false;
+    final n =
+        _filtered.where((it) => _selectedKeys.contains(_key(it))).length;
+    if (n == 0) return false;
+    if (n == _filtered.length) return true;
+    return null;
+  }
+
+  void _onMasterCheckboxChanged(bool? value) {
+    if (value == true) {
+      _selectAllVisible(true);
+    } else {
+      _selectAllVisible(false);
+    }
+  }
+
   void _confirm() {
     final out = <Map<String, dynamic>>[];
     for (final it in _all) {
@@ -520,14 +609,8 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
         actions: [
           if (!_loading && _error.isEmpty && _filtered.isNotEmpty)
             TextButton(
-              onPressed: () => _selectAllVisible(
-                _filtered.any((it) => !_selectedKeys.contains(_key(it))),
-              ),
-              child: Text(
-                _filtered.every((it) => _selectedKeys.contains(_key(it)))
-                    ? 'Batal pilih'
-                    : 'Pilih tampilan',
-              ),
+              onPressed: () => _selectAllVisible(!_allFilteredSelected),
+              child: Text(_allFilteredSelected ? 'Batal semua' : 'Pilih semua'),
             ),
         ],
       ),
@@ -543,6 +626,29 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _loading ? null : _pickDateRange,
+                        icon: const Icon(Icons.date_range, size: 20),
+                        label: Text(
+                          _dateFilterLabel(),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    if (_startDate != null || _endDate != null) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Hapus filter tanggal',
+                        onPressed: _loading ? null : _clearDateFilter,
+                        icon: const Icon(Icons.clear),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -585,12 +691,31 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
                       ),
                     )
                   : ListView.builder(
-                      itemCount: _filtered.length,
+                      itemCount: _filtered.length + 1,
                       itemBuilder: (context, i) {
-                        final it = _filtered[i];
+                        if (i == 0) {
+                          return CheckboxListTile(
+                            value: _masterCheckboxValue,
+                            tristate: true,
+                            onChanged:
+                                _loading ? null : _onMasterCheckboxChanged,
+                            title: Text(
+                              'Pilih semua (${_filtered.length})',
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: Text(
+                              _selectedKeys.isEmpty
+                                  ? 'Centang untuk memilih semua item tampilan'
+                                  : 'Terpilih: ${_selectedKeys.length} item',
+                            ),
+                            controlAffinity: ListTileControlAffinity.leading,
+                          );
+                        }
+                        final it = _filtered[i - 1];
                         final k = _key(it);
                         final code = _kode(it);
                         final name = (it['name'] ?? '-').toString();
+                        final created = _formatCreatedAt(it);
                         return CheckboxListTile(
                           value: _selectedKeys.contains(k),
                           onChanged: (v) => _toggle(k, v),
@@ -599,10 +724,11 @@ class _StockInventoryPickerPageState extends State<_StockInventoryPickerPage> {
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           subtitle: Text(
-                            name,
-                            maxLines: 2,
+                            created != null ? '$name\nInput: $created' : name,
+                            maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                           ),
+                          isThreeLine: created != null,
                           controlAffinity: ListTileControlAffinity.leading,
                         );
                       },

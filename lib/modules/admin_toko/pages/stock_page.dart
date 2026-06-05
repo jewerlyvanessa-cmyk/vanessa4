@@ -12,7 +12,10 @@ import 'package:vanessa3/utils/stock_item_qr_print.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockPage extends ConsumerStatefulWidget {
-  const StockPage({super.key});
+  const StockPage({super.key, this.initialStatusFilter});
+
+  /// Filter status awal, mis. `missing` setelah stok opname.
+  final String? initialStatusFilter;
 
   @override
   ConsumerState<StockPage> createState() => _StockPageState();
@@ -23,7 +26,7 @@ class _StockPageState extends ConsumerState<StockPage> {
   List<dynamic> _items = [];
   bool _isLoading = true;
   String _error = '';
-  String _selectedStatus = 'ready';
+  late String _selectedStatus;
   String _search = '';
 
   String? _normalizePhotoUrl(dynamic raw) {
@@ -37,6 +40,9 @@ class _StockPageState extends ConsumerState<StockPage> {
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialStatusFilter?.trim();
+    _selectedStatus =
+        (initial != null && initial.isNotEmpty) ? initial : 'ready';
     _loadItems();
   }
 
@@ -521,8 +527,8 @@ class _StockPageState extends ConsumerState<StockPage> {
                           branches: ref.watch(userStateProvider).branches,
                           branchId: ref.watch(userStateProvider).branch,
                         ),
-                        showStockistActions: false,
-                        showReadOnlyHistory: true,
+                        showStockistActions: _selectedStatus == 'missing',
+                        showReadOnlyHistory: _selectedStatus != 'missing',
                         onOpenItemDetail: (Map<String, dynamic> item) {
                           _showItemDetails(context, item);
                         },

@@ -13,7 +13,14 @@ import 'package:vanessa3/utils/stock_inventory_search.dart';
 import 'package:vanessa3/utils/stock_inventory_report_print.dart';
 
 class StockCabangPage extends ConsumerStatefulWidget {
-  const StockCabangPage({super.key});
+  const StockCabangPage({
+    super.key,
+    this.initialStatusFilter,
+    this.initialBranchId,
+  });
+
+  final String? initialStatusFilter;
+  final String? initialBranchId;
 
   @override
   ConsumerState<StockCabangPage> createState() => _StockCabangPageState();
@@ -27,12 +34,15 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
   List<Map<String, dynamic>> _branches = const [];
   String? _selectedBranchId;
   String _search = '';
-  String _selectedStatus = 'ready';
+  late String _selectedStatus;
   String? _jenisDetailFocus;
 
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialStatusFilter?.trim();
+    _selectedStatus =
+        (initial != null && initial.isNotEmpty) ? initial : 'ready';
     _initBranchesAndLoad();
   }
 
@@ -88,7 +98,7 @@ class _StockCabangPageState extends ConsumerState<StockCabangPage> {
     try {
       final branches = await _fetchTokoWarehouseBranches();
       if (!mounted) return;
-      var selected = _selectedBranchId;
+      var selected = widget.initialBranchId?.trim() ?? _selectedBranchId;
       final ids = branches
           .map((b) => b['branch_id']?.toString().trim())
           .whereType<String>()

@@ -239,6 +239,15 @@ class _AdminWorkshopMainPageState extends ConsumerState<AdminWorkshopMainPage> {
                       ),
                     ),
                     ModuleMenuEntry(
+                      icon: Icons.fact_check_outlined,
+                      label: 'STOK OPNAME',
+                      iconColor: Colors.blueGrey,
+                      onTap: () => pushAppRoute(
+                        context,
+                        AppRoutes.adminWorkshopStockOpname,
+                      ),
+                    ),
+                    ModuleMenuEntry(
                       icon: Icons.diamond_outlined,
                       label: 'PRODUKSI TUKANG',
                       iconColor: Colors.amber,

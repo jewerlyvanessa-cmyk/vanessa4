@@ -7,6 +7,7 @@ import 'payment_page.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 import 'package:vanessa3/modules/kasir/widgets/kasir_payment_queue_table.dart';
 import '../../../core/network/api_client.dart';
+import 'package:vanessa3/data/offline_cache.dart';
 import '../../../core/network/api_exceptions.dart';
 import '../../../utils/logger.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
@@ -145,33 +146,58 @@ class _PaymentQueuePageState extends ConsumerState<PaymentQueuePage> {
         return;
       }
 
-      final response = await ApiClient.get(
-        '/orders/pending-payment',
-        query: {'branch_id': userState.branch},
-      );
+      final cacheKey = 'kasir_payment_queue_${userState.branch}';
+      const cacheTtl = Duration(hours: 12);
 
-      Logger.logInfo('Response status: ${response.statusCode}');
-      Logger.logInfo('Payment queue fetched with status: ${response.statusCode}');
+      try {
+        final response = await ApiClient.get(
+          '/orders/pending-payment',
+          query: {'branch_id': userState.branch},
+        );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        Logger.logInfo('Parsed data: $data');
-        final List<dynamic> rawList = (data is List) ? data : [];
-        final normalized = rawList.map((e) {
-          if (e is! Map) return e;
-          final m = Map<String, dynamic>.from(e);
-          normalizeKasirOrderMap(m);
-          return m;
-        }).toList();
-        setState(() {
-          _pendingOrders = normalized;
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _error = 'Gagal memuat antrian pembayaran: ${response.statusCode}';
-          _isLoading = false;
-        });
+        Logger.logInfo('Response status: ${response.statusCode}');
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final List<dynamic> rawList = (data is List) ? data : [];
+          final normalized = rawList.map((e) {
+            if (e is! Map) return e;
+            final m = Map<String, dynamic>.from(e);
+            normalizeKasirOrderMap(m);
+            return m;
+          }).toList();
+          await OfflineCache.instance.setJson(
+            cacheKey,
+            normalized,
+            ttl: cacheTtl,
+          );
+          setState(() {
+            _pendingOrders = normalized;
+            _isLoading = false;
+            _error = '';
+          });
+        } else {
+          throw Exception('HTTP ${response.statusCode}');
+        }
+      } catch (fetchErr) {
+        final cached =
+            await OfflineCache.instance.getJson<List<dynamic>>(cacheKey);
+        if (cached != null && !cached.isExpired) {
+          final normalized = cached.value.map((e) {
+            if (e is! Map) return e;
+            final m = Map<String, dynamic>.from(e);
+            normalizeKasirOrderMap(m);
+            return m;
+          }).toList();
+          setState(() {
+            _pendingOrders = normalized;
+            _isLoading = false;
+            _error =
+                'Menampilkan cache offline (${normalized.length} order). $fetchErr';
+          });
+          return;
+        }
+        rethrow;
       }
     } on UnauthorizedException catch (_) {
       // ApiClient sudah memicu logout; tidak perlu pesan tambahan.

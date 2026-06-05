@@ -36,7 +36,10 @@ String _stockMutationTypeLabel(Map<String, dynamic> m) {
     if (ref == 'order') return 'Penjualan';
     return 'Stok keluar';
   }
-  if (type == 'adjustment') return 'Koreksi';
+  if (type == 'adjustment') {
+    if (ref == 'opname') return 'Stok opname';
+    return 'Koreksi';
+  }
   return 'Lainnya';
 }
 
@@ -121,6 +124,7 @@ String _stockMutationDescription(Map<String, dynamic> m) {
   }
   if (ref == 'item_create') return 'Input stok baru di etalase';
   if (ref == 'restock') return 'Penambahan / restok manual';
+  if (ref == 'opname') return 'Koreksi hasil stok opname';
   if (ref == 'order') {
     if (orderType == 'buyback') {
       if (orderNo.isNotEmpty) return 'Buyback lunas · $orderNo';

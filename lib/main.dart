@@ -7,6 +7,7 @@ import 'core/state/user_state.dart';
 import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
 import 'providers/network_provider.dart';
+import 'providers/offline_queue_provider.dart';
 import 'providers/user_state_provider.dart';
 import 'utils/auth_session_end.dart';
 import 'utils/network_config.dart';
@@ -49,6 +50,7 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
   @override
   void initState() {
     super.initState();
+    ref.read(offlineQueueCountProvider.notifier).refresh();
     WebSocketNotifier.onAdminForceLogout = _onAdminForceLogout;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;

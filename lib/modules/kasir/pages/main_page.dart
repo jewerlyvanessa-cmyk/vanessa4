@@ -13,6 +13,7 @@ import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';
 import 'package:vanessa3/modules/kasir/kasir_order_display.dart';
 import 'package:vanessa3/modules/kasir/widgets/kasir_payment_queue_table.dart';
+import 'package:vanessa3/shared_widgets/offline_status_banner.dart';
 
 String getMainModuleForRole(String role) {
   switch (role) {
@@ -209,6 +210,7 @@ class _KasirMainPageState extends ConsumerState<KasirMainPage> {
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const OfflineStatusBanner(),
               Builder(
                 builder: (context) {
                   return Padding(

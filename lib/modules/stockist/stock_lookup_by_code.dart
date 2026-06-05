@@ -52,20 +52,27 @@ Future<List<Map<String, dynamic>>> fetchStockItemsByCode({
 
 /// Daftar stok cabang aktif (sama query seperti halaman Stok stockist / admin toko).
 /// [status] opsional, mis. `ready` — disaring juga di klien (ready + qty > 0).
+/// [startDate]/[endDate] format `yyyy-MM-dd`, filter `created_at` item (API).
 Future<List<Map<String, dynamic>>> fetchStockInventoryItems({
   required String branchId,
   int limit = 500,
   String? status,
+  String? startDate,
+  String? endDate,
 }) async {
   final bid = branchId.trim();
   if (bid.isEmpty) return const [];
 
   final statusTrim = status?.trim() ?? '';
+  final startTrim = startDate?.trim() ?? '';
+  final endTrim = endDate?.trim() ?? '';
   final uri = Uri.parse('${NetworkConfig.baseUrl}/items').replace(
     queryParameters: <String, String>{
       'branch_id': bid,
       'limit': '$limit',
       if (statusTrim.isNotEmpty) 'status': statusTrim,
+      if (startTrim.isNotEmpty) 'start_date': startTrim,
+      if (endTrim.isNotEmpty) 'end_date': endTrim,
     },
   );
   final resp = await http.get(uri, headers: NetworkConfig.defaultHeaders);
