@@ -1,14 +1,54 @@
 # P0 Deploy & Rotasi Secret — Server Production
 
 **Target server:** `mobile.vanessa.id`  
-**Path deploy (dari `fix_production_login.sh`):**
+**Path:** `/home/vanessa/web/mobile.vanessa.id/private/nodeapp`
+
+## Layout deploy — pilih yang cocok
+
+Cek di server:
+
+```bash
+cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
+ls -la ecosystem.config.cjs scripts/preflight.js backend/ecosystem.config.cjs 2>/dev/null
+```
+
+| Yang ada | Layout | Perintah deploy |
+|----------|--------|-----------------|
+| `ecosystem.config.cjs` + `scripts/preflight.js` di **nodeapp/** | **FLAT** (umum di production) | `bash scripts/restart-production.sh` |
+| `backend/ecosystem.config.cjs` | **REPO** (git clone penuh) | `bash unesential/scripts/p0-production-security.sh` |
+
+### Error umum (layout flat)
 
 ```
-/home/vanessa/web/mobile.vanessa.id/private/nodeapp/     ← root repo (ada package.json)
-/home/vanessa/web/mobile.vanessa.id/private/nodeapp/backend/   ← .env + PM2 config
+npm error Missing script: "migrate:sql"
+[PM2][ERROR] File backend/ecosystem.config.cjs not found
 ```
 
-Layout: **repo penuh** + subfolder `backend/` (bukan flat `nodeapp` tanpa backend).
+**Penyebab:** Skrip repo memakai `backend/` dan `npm run migrate:sql`, tapi server flat tidak punya subfolder `backend/`.
+
+**Perbaikan cepat (flat):**
+
+```bash
+cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
+export NODE_ENV=production
+node scripts/preflight.js --ping-db
+node scripts/migrate-sql.js          # bukan npm run migrate:sql
+pm2 startOrRestart ecosystem.config.cjs --update-env
+pm2 save
+```
+
+Jika `scripts/migrate-sql.js` belum ada — salin dari repo setelah `git pull`, atau:
+
+```bash
+# setelah pull repo ke folder lain, copy file baru:
+cp /path/to/repo/backend/scripts/migrate-sql.js scripts/
+```
+
+Jika `ecosystem.config.cjs` belum ada:
+
+```bash
+cp ecosystem.flat.config.cjs ecosystem.config.cjs   # dari repo backend/
+```
 
 ---
 
@@ -21,31 +61,37 @@ ssh vanessa@vanessa.id
 
 ---
 
-## 1. Pull kode terbaru (termasuk preflight P0)
+## 1. Pull / sync kode terbaru
+
+**Repo penuh:**
 
 ```bash
 cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
 git pull origin main
 ```
 
-Pastikan commit `P0 keamanan: bersihkan .env.example...` sudah ada (`git log -1 --oneline`).
+**Flat (tanpa git):** upload/rsync isi `backend/` dari laptop ke `nodeapp/`, termasuk `scripts/migrate-sql.js` dan `scripts/restart-production.sh`.
 
 ---
 
 ## 2. Rotasi JWT secret (wajib jika secret lama pernah di git)
 
+**Flat:**
+
 ```bash
 cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
+node scripts/generate-jwt-secret.js
+nano .env
+```
+
+**Repo:**
+
+```bash
 node backend/scripts/generate-jwt-secret.js
+nano backend/.env
 ```
 
 Salin output `JWT_SECRET=...` (jangan commit, jangan paste di chat publik).
-
-Edit `.env` production:
-
-```bash
-nano backend/.env
-```
 
 Pastikan baris-baris ini benar:
 
@@ -82,7 +128,8 @@ Jika `DB_PASSWORD` pernah bocor:
 ```bash
 cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
 export NODE_ENV=production
-node backend/scripts/preflight.js --ping-db
+node scripts/preflight.js --ping-db
+# repo: node backend/scripts/preflight.js --ping-db
 ```
 
 Harus muncul `[preflight] Siap start backend.`
@@ -101,23 +148,27 @@ Harus muncul `[preflight] Siap start backend.`
 
 ## 5. Deploy backend (install + migrate + PM2)
 
-**Cara otomatis:**
+**Flat (production — gunakan ini jika error `backend/ecosystem.config.cjs not found`):**
 
 ```bash
 cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
+bash scripts/restart-production.sh
+```
+
+**Repo penuh:**
+
+```bash
 bash unesential/scripts/p0-production-security.sh
 ```
 
-Ketik `y` saat diminta deploy.
-
-**Atau manual (sama isinya):**
+**Manual flat:**
 
 ```bash
 cd /home/vanessa/web/mobile.vanessa.id/private/nodeapp
-npm install --omit=dev
-node backend/scripts/preflight.js --ping-db
-npm run migrate:sql
-pm2 startOrRestart backend/ecosystem.config.cjs --update-env
+export NODE_ENV=production
+node scripts/preflight.js --ping-db
+node scripts/migrate-sql.js
+pm2 startOrRestart ecosystem.config.cjs --update-env
 pm2 save
 ```
 
@@ -170,16 +221,13 @@ Uji app Flutter/web: login → pastikan tidak 429 berlebihan saat banyak user.
 
 ---
 
-## Layout alternatif (flat nodeapp)
+## Layout repo (subfolder backend/)
 
-Jika server Anda **tidak** punya subfolder `backend/` (semua file di `nodeapp/` langsung):
+Jika `backend/ecosystem.config.cjs` ada:
 
 ```bash
-cd ~/web/mobile.vanessa.id/private/nodeapp
-# .env di root nodeapp, bukan backend/.env
-node scripts/generate-jwt-secret.js
-NODE_ENV=production node scripts/preflight.js --ping-db
-pm2 startOrRestart ecosystem.config.cjs --update-env
+npm run migrate:sql
+pm2 startOrRestart backend/ecosystem.config.cjs --update-env
 ```
 
-Gunakan `backend/ecosystem.flat.config.cjs` sebagai template `ecosystem.config.cjs` di root flat.
+`.env` di `backend/.env`.
