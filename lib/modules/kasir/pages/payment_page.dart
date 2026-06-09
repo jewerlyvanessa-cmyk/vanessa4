@@ -53,16 +53,43 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         _paymentMethod == 'e-wallet';
   }
 
+  void _snackProofError([String? detail]) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          detail ??
+              'Gagal mengambil foto bukti. Coba lagi atau pilih dari galeri.',
+        ),
+      ),
+    );
+  }
+
+  void _applyProofPick(CsOrderPhotoPickResult? pick) {
+    if (pick == null || !pick.hasPhoto) return;
+    setState(() {
+      _proofPick = pick;
+      _proofUrl = null;
+    });
+  }
+
   Future<void> _pickProofFromCamera() async {
     setState(() => _proofPicking = true);
     try {
       final pick = await CsOrderPhotoPicker.pickFromCamera(imageQuality: 80);
-      if (pick != null && mounted) {
-        setState(() {
-          _proofPick = pick;
-          _proofUrl = null;
-        });
+      if (!mounted) return;
+      if (pick == null) return;
+      if (!pick.hasPhoto) {
+        _snackProofError();
+        return;
       }
+      _applyProofPick(pick);
+    } catch (e) {
+      _snackProofError(
+        kIsWeb
+            ? 'Kamera web gagal. Izinkan akses kamera di browser, atau gunakan Galeri.'
+            : 'Gagal ambil foto: $e',
+      );
     } finally {
       if (mounted) setState(() => _proofPicking = false);
     }
@@ -72,12 +99,15 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     setState(() => _proofPicking = true);
     try {
       final pick = await CsOrderPhotoPicker.pickFromGallery(imageQuality: 80);
-      if (pick != null && mounted) {
-        setState(() {
-          _proofPick = pick;
-          _proofUrl = null;
-        });
+      if (!mounted) return;
+      if (pick == null) return;
+      if (!pick.hasPhoto) {
+        _snackProofError();
+        return;
       }
+      _applyProofPick(pick);
+    } catch (e) {
+      _snackProofError('Gagal memilih foto: $e');
     } finally {
       if (mounted) setState(() => _proofPicking = false);
     }
@@ -93,10 +123,20 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     try {
       final token = ref.read(userStateProvider).authToken;
       final url = await PaymentProofUpload.upload(pick, token: token);
-      if (url != null && url.trim().isNotEmpty && mounted) {
-        setState(() => _proofUrl = url);
+      if (url != null && url.trim().isNotEmpty) {
+        if (mounted) setState(() => _proofUrl = url);
+        return url;
       }
-      return url;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Gagal mengunggah bukti pembayaran. Periksa koneksi lalu coba lagi.',
+            ),
+          ),
+        );
+      }
+      return null;
     } finally {
       if (mounted) setState(() => _proofUploading = false);
     }
@@ -476,6 +516,13 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
               if (_methodRequiresProof()) ...[
                 const Text('Bukti Pembayaran'),
+                if (kIsWeb) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Web: izinkan kamera saat browser meminta, atau pilih file dari Galeri.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -489,7 +536,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.photo_camera_outlined),
-                        label: const Text('Kamera'),
+                        label: Text(kIsWeb ? 'Ambil Foto' : 'Kamera'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -503,7 +550,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.photo_library_outlined),
-                        label: const Text('Galeri'),
+                        label: Text(kIsWeb ? 'Pilih File' : 'Galeri'),
                       ),
                     ),
                   ],

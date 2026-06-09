@@ -90,20 +90,23 @@ abstract final class CsOrderPhotoPicker {
     ImageSource source, {
     int imageQuality = 85,
   }) async {
+    // Web: hindari maxWidth/maxHeight/quality agresif — beberapa browser
+    // (Chrome mobile) gagal membuka kamera jika constraint terlalu ketat.
     final picked = await _picker.pickImage(
       source: source,
-      imageQuality: imageQuality,
-      maxWidth: 1600,
-      maxHeight: 1600,
+      imageQuality: kIsWeb ? null : imageQuality,
+      maxWidth: kIsWeb ? null : 1600,
+      maxHeight: kIsWeb ? null : 1600,
+      requestFullMetadata: !kIsWeb,
     );
     if (picked == null) return null;
 
     if (kIsWeb) {
       final raw = await picked.readAsBytes();
       if (raw.isEmpty) return null;
-      final bytes = await _compressBytesToJpeg(raw);
+      // flutter_image_compress tidak andal di web — kirim bytes asli.
       return CsOrderPhotoPickResult(
-        bytes: bytes,
+        bytes: raw,
         fileName: _defaultFileName(picked.name),
       );
     }
