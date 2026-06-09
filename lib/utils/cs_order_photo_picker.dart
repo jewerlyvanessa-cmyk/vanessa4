@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
 
-/// Hasil pilih foto (mobile: file terkompresi; web: bytes).
+/// Hasil pilih foto (mobile: file JPEG terkompresi; web: bytes JPEG terkompresi).
 class CsOrderPhotoPickResult {
   const CsOrderPhotoPickResult({
     this.file,
@@ -27,15 +27,19 @@ abstract final class CsOrderPhotoPicker {
 
   static final ImagePicker _picker = ImagePicker();
 
+  /// Sama dengan [compressToJpeg] / Android: max 800×800, JPEG kualitas 90%.
+  static const int _compressMaxSide = 800;
+  static const int _compressQuality = 90;
+
   static Future<File> compressToJpeg(File file) async {
     final targetPath =
         '${file.parent.path}/foto_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final resultX = await FlutterImageCompress.compressAndGetFile(
       file.absolute.path,
       targetPath,
-      minWidth: 800,
-      minHeight: 800,
-      quality: 90,
+      minWidth: _compressMaxSide,
+      minHeight: _compressMaxSide,
+      quality: _compressQuality,
       format: CompressFormat.jpeg,
       keepExif: false,
     );
@@ -47,10 +51,11 @@ abstract final class CsOrderPhotoPicker {
     try {
       final compressed = await FlutterImageCompress.compressWithList(
         input,
-        minWidth: 800,
-        minHeight: 800,
-        quality: 90,
+        minWidth: _compressMaxSide,
+        minHeight: _compressMaxSide,
+        quality: _compressQuality,
         format: CompressFormat.jpeg,
+        keepExif: false,
       );
       if (compressed.isNotEmpty) return compressed;
     } catch (_) {}
@@ -59,6 +64,25 @@ abstract final class CsOrderPhotoPicker {
 
   static String _defaultFileName(String name) =>
       name.isNotEmpty ? name : 'foto.jpg';
+
+  static String _jpegFileName(String name) {
+    final base = _defaultFileName(name);
+    final lower = base.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return base;
+    return '$base.jpg';
+  }
+
+  static Future<CsOrderPhotoPickResult?> _bytesToCompressedResult(
+    Uint8List raw,
+    String fileName,
+  ) async {
+    if (raw.isEmpty) return null;
+    final bytes = await _compressBytesToJpeg(raw);
+    return CsOrderPhotoPickResult(
+      bytes: bytes,
+      fileName: _jpegFileName(fileName),
+    );
+  }
 
   static Future<Uint8List?> _platformFileBytes(PlatformFile file) async {
     try {
@@ -78,12 +102,8 @@ abstract final class CsOrderPhotoPicker {
     );
     if (f == null) return null;
     final bytes = await _platformFileBytes(f);
-    if (bytes == null || bytes.isEmpty) return null;
-    final compressed = await _compressBytesToJpeg(bytes);
-    return CsOrderPhotoPickResult(
-      bytes: compressed,
-      fileName: _defaultFileName(f.name),
-    );
+    if (bytes == null) return null;
+    return _bytesToCompressedResult(bytes, f.name);
   }
 
   static Future<CsOrderPhotoPickResult?> _pickImage(
@@ -103,12 +123,8 @@ abstract final class CsOrderPhotoPicker {
 
     if (kIsWeb) {
       final raw = await picked.readAsBytes();
-      if (raw.isEmpty) return null;
-      // flutter_image_compress tidak andal di web — kirim bytes asli.
-      return CsOrderPhotoPickResult(
-        bytes: raw,
-        fileName: _defaultFileName(picked.name),
-      );
+      // Kompres sama seperti Android (800×800, JPEG 90%) via compressWithList.
+      return _bytesToCompressedResult(raw, picked.name);
     }
 
     final file = await compressToJpeg(File(picked.path));
