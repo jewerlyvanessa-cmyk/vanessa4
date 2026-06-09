@@ -5,7 +5,7 @@ import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
-import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/routes/app_routes.dart';
 import 'package:vanessa3/shared_widgets/user_branch_role_header.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';

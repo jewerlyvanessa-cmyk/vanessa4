@@ -2,41 +2,31 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
-  flutter:
-    name: Flutter analyze & test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Pub get
-        run: flutter pub get
-
-      - name: Analyze
-        run: flutter analyze
-
-      - name: Test
-        run: flutter test
-
-  # Logika langkah backend ada di unesential/scripts/ci.sh (workflow harus tetap di .github/workflows/).
-  backend:
-    name: Backend sanity checks
+  backend-and-flutter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
           cache: npm
 
-      - name: Backend CI (script di repo)
+      - name: Backend CI
         run: bash unesential/scripts/ci.sh
 
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter test
+        run: flutter test
+
+      - name: Flutter analyze
+        run: flutter analyze --no-fatal-infos

@@ -19,3 +19,10 @@ test('Permissions-Policy allows camera for same origin', async () => {
   assert.ok(policy, 'expected Permissions-Policy header');
   assert.match(policy, /camera=\(self\)/);
 });
+
+test('Content-Security-Policy restricts default sources', async () => {
+  const res = await request(app).get('/__no_such_route_for_header_check__');
+  const csp = res.headers['content-security-policy'];
+  assert.ok(csp, 'expected Content-Security-Policy header');
+  assert.match(csp, /default-src 'none'/);
+});

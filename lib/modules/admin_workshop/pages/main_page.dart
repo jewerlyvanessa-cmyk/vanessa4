@@ -16,7 +16,7 @@ import 'package:vanessa3/shared_widgets/module_destination_sheet.dart';
 import 'package:vanessa3/shared_widgets/module_menu_grid.dart';
 import 'package:vanessa3/shared_widgets/module_menu_group_labels.dart';
 import 'package:vanessa3/routes/app_navigator.dart';
-import 'package:vanessa3/routes/app_routes.dart' hide SwitchBranchRoleWidget;
+import 'package:vanessa3/routes/app_routes.dart';
 import 'package:vanessa3/shared_widgets/module_dashboard_app_bar.dart';
 import 'package:vanessa3/shared_widgets/role_menu_body.dart';
 import 'package:vanessa3/utils/responsive_layout.dart';

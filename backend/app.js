@@ -129,6 +129,17 @@ app.use((req, res, next) => {
     'Permissions-Policy',
     'camera=(self), microphone=(), geolocation=()'
   );
+  // API JSON — batasi sumber konten; upload/file dilayani terpisah.
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'none'; frame-ancestors 'none'"
+  );
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains'
+    );
+  }
   next();
 });
 

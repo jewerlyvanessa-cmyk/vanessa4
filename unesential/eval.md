@@ -194,7 +194,7 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 
 ### P2 — Arsitektur & maintainability
 
-- [ ] **Pecah `app_routes.dart`** (~980 baris): ekstrak `LoginPage`, `WebSocketService`, `BranchRoleNotifier` ke file terpisah
+- [x] **Pecah `app_routes.dart`**: `LoginPage` → `features/auth/presentation/`; hapus prototype mati (~680 baris); `role_home_route.dart`
 - [ ] **Migrasi Riverpod**: `StateNotifierProvider` + manual `AsyncValue` → `AsyncNotifierProvider` / `FutureProvider` + `ref.invalidate()`
 - [ ] **Pecah route backend besar**: `orders_create.js`, `items.js`, `payments_core.js` (ikuti pola refactor workshop)
 - [x] **Hapus stub comment** di `server.js` baris 1–4
@@ -203,17 +203,17 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 
 ### P2 — Testing
 
-- [ ] **Flutter**: test login + redirect per role
+- [x] **Flutter**: test `homeRouteForRole` (redirect per role)
 - [ ] **Flutter**: test `CsOrderPhotoPicker` kompresi web/Android
 - [ ] **Flutter**: test offline queue enqueue + sync drop 4xx / retry 5xx
 - [ ] **Backend**: smoke test `import_data.js`, `users.js`, `reports.js`
 - [ ] **Backend**: integration test Postgres (minimal login + create order) di CI
 - [ ] **WebSocket**: unit/smoke test presence + `force_logout`
-- [ ] **Wire CI**: GitHub Actions jalankan `unesential/scripts/ci.sh` on push/PR
+- [x] **Wire CI**: `.github/workflows/ci.yml` → `unesential/scripts/ci.sh` + flutter test
 
 ### P2 — Keamanan lanjutan
 
-- [ ] **Tambah CSP + HSTS** di `app.js` atau verifikasi nginx sudah set keduanya
+- [x] **Tambah CSP + HSTS** di `app.js` (HSTS production only)
 - [ ] **Audit dependency** `xlsx` (ReDoS advisory) — upgrade atau batasi ukuran/tipe file import
 - [ ] **Review Express 5** compatibility middleware yang dipakai
 
@@ -235,3 +235,5 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 - [x] Backend rate limit login 429 — `server.js`, `app.js` (perlu deploy)
 - [x] Bersihkan log debug AGENT_NDJSON
 - [x] Backend npm test 37/37 lulus
+- [x] Fix WebSocket disconnect web (close code 1000)
+- [x] Deploy script layout flat nodeapp + migrasi payments idempotent

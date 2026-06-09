@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'core/state/user_state.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/presentation/login_page.dart';
 import 'routes/app_routes.dart';
+import 'routes/role_home_route.dart';
 import 'providers/network_provider.dart';
 import 'providers/offline_queue_provider.dart';
 import 'providers/user_state_provider.dart';
@@ -232,22 +234,6 @@ class _AppHomeGateState extends ConsumerState<_AppHomeGate> {
         userState.authToken.trim().isNotEmpty;
   }
 
-  String _homeRouteForRole(String role) {
-    return switch (role.trim().toLowerCase()) {
-      'cs' => AppRoutes.cs,
-      'kasir' => AppRoutes.kasir,
-      'superadmin' => AppRoutes.superadmin,
-      'admin_toko' => AppRoutes.adminToko,
-      'admin_workshop' => AppRoutes.adminWorkshop,
-      'admin_warehouse' => AppRoutes.adminWarehouse,
-      'tukang' => AppRoutes.tukang,
-      'manajer' => AppRoutes.manajer,
-      'owner' => AppRoutes.owner,
-      'stockist' => AppRoutes.stockist,
-      _ => AppRoutes.dashboard,
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!_hydrated) {
@@ -271,7 +257,7 @@ class _AppHomeGateState extends ConsumerState<_AppHomeGate> {
       return const LoginPage();
     }
 
-    final route = _homeRouteForRole(userState.role);
+    final route = homeRouteForRole(userState.role);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final current = ModalRoute.of(context)?.settings.name;
