@@ -1,14 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:intl/intl.dart';
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/modules/kasir/logic/store_operational_utils.dart';
-import 'package:vanessa3/utils/file_uploader.dart';
+import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/network_config.dart';
 import 'package:vanessa3/utils/store_operational_print.dart';
 
@@ -19,7 +17,6 @@ Future<void> showStoreOperationalEntrySheet({
   required String branchLabel,
   required String branchIdForLogo,
   required String? authToken,
-  required ImagePicker picker,
   required ValueChanged<Map<String, dynamic>> onEntryUpdated,
 }) async {
   final proofUrl = StoreOperationalUtils.normalizeProofUrl(
@@ -44,7 +41,7 @@ Future<void> showStoreOperationalEntrySheet({
 
   Future<void> uploadOrChangePhoto() async {
     if (branchId.isEmpty || entryId.isEmpty) return;
-    final source = await showModalBottomSheet<ImageSource>(
+    final useCamera = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
       builder: (c) => SafeArea(
@@ -53,31 +50,39 @@ Future<void> showStoreOperationalEntrySheet({
           children: [
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Kamera'),
-              onTap: () => Navigator.of(c).pop(ImageSource.camera),
+              title: Text(kIsWeb ? 'Ambil Foto' : 'Kamera'),
+              onTap: () => Navigator.of(c).pop(true),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Galeri'),
-              onTap: () => Navigator.of(c).pop(ImageSource.gallery),
+              title: Text(kIsWeb ? 'Pilih File' : 'Galeri'),
+              onTap: () => Navigator.of(c).pop(false),
             ),
           ],
         ),
       ),
     );
-    if (source == null) return;
+    if (useCamera == null) return;
 
-    final picked = await picker.pickImage(
-      source: source,
-      imageQuality: 80,
-      maxWidth: 1600,
-    );
-    if (picked == null) return;
-    if (kIsWeb) return;
+    CsOrderPhotoPickResult? picked;
+    try {
+      picked = useCamera
+          ? await CsOrderPhotoPicker.pickFromCamera(imageQuality: 80)
+          : await CsOrderPhotoPicker.pickFromGallery(imageQuality: 80);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memilih foto: $e')),
+        );
+      }
+      return;
+    }
+    if (picked == null || !picked.hasPhoto) return;
 
-    final url = await FileUploader.uploadImage(
-      File(picked.path),
-      token: authToken,
+    final url = await CsOrderPhotoUpload.upload(
+      file: picked.file,
+      bytes: picked.bytes,
+      fileName: picked.fileName,
     );
     if (url == null || url.trim().isEmpty) {
       if (context.mounted) {

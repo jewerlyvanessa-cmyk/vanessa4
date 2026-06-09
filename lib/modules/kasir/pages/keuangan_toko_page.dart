@@ -1,12 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) '../../../utils/image_picker_stub.dart';
 
 import 'package:vanessa3/core/network/api_client.dart';
 import 'package:vanessa3/core/network/api_exceptions.dart';
@@ -21,7 +18,8 @@ import 'package:vanessa3/modules/kasir/widgets/store_operational_summary_card.da
 import 'package:vanessa3/providers/user_state_provider.dart';
 import 'package:vanessa3/shared_widgets/manager_report_period_selector.dart';
 import 'package:vanessa3/utils/app_date_picker.dart';
-import 'package:vanessa3/utils/file_uploader.dart';
+import 'package:vanessa3/utils/cs_order_photo_picker.dart';
+import 'package:vanessa3/utils/cs_order_photo_upload.dart';
 import 'package:vanessa3/utils/kasir_scope_filter.dart';
 import 'package:vanessa3/utils/store_operational_print.dart';
 import 'package:vanessa3/modules/manajer/widgets/store_operational_categories_sheet.dart';
@@ -47,8 +45,6 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
   final _notesController = TextEditingController();
-  final ImagePicker _picker = ImagePicker();
-
   StoreOperationalMoneyKind _kind = StoreOperationalMoneyKind.expense;
   String _category = StoreOperationalFormConstants.expenseCategories.first;
 
@@ -68,7 +64,7 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
         : StoreOperationalFormConstants.expenseCategories;
   }
 
-  XFile? _newProofX;
+  CsOrderPhotoPickResult? _newProofPick;
   String? _newProofUrl;
   bool _uploadingProof = false;
 
@@ -248,22 +244,47 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     );
   }
 
-  Future<void> _pickNewProof(ImageSource source) async {
-    final picked = await _picker.pickImage(
-      source: source,
-      imageQuality: 80,
-      maxWidth: 1600,
-    );
-    if (picked == null) return;
-    setState(() {
-      _newProofX = picked;
-      _newProofUrl = null;
-    });
+  Future<void> _pickNewProofFromCamera() async {
+    try {
+      final pick = await CsOrderPhotoPicker.pickFromCamera(imageQuality: 80);
+      if (pick == null || !pick.hasPhoto) return;
+      setState(() {
+        _newProofPick = pick;
+        _newProofUrl = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kIsWeb
+                ? 'Kamera web gagal. Izinkan akses kamera, atau gunakan Pilih File.'
+                : 'Gagal ambil foto: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _pickNewProofFromGallery() async {
+    try {
+      final pick = await CsOrderPhotoPicker.pickFromGallery(imageQuality: 80);
+      if (pick == null || !pick.hasPhoto) return;
+      setState(() {
+        _newProofPick = pick;
+        _newProofUrl = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal memilih foto: $e')),
+      );
+    }
   }
 
   void _clearNewProof() {
     setState(() {
-      _newProofX = null;
+      _newProofPick = null;
       _newProofUrl = null;
     });
   }
@@ -272,15 +293,15 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     if (_newProofUrl != null && _newProofUrl!.trim().isNotEmpty) {
       return _newProofUrl;
     }
-    final x = _newProofX;
-    if (x == null) return null;
-    if (kIsWeb) return null;
+    final pick = _newProofPick;
+    if (pick == null || !pick.hasPhoto) return null;
 
     setState(() => _uploadingProof = true);
     try {
-      final url = await FileUploader.uploadImage(
-        File(x.path),
-        token: ref.read(userStateProvider).authToken,
+      final url = await CsOrderPhotoUpload.upload(
+        file: pick.file,
+        bytes: pick.bytes,
+        fileName: pick.fileName,
       );
       if (url == null || url.trim().isEmpty) return null;
       setState(() => _newProofUrl = url);
@@ -299,7 +320,6 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
       branchLabel: StoreOperationalUtils.branchLabel(user, _activeBranchId),
       branchIdForLogo: _activeBranchId,
       authToken: user.authToken,
-      picker: _picker,
       onEntryUpdated: (updated) {
         setState(() {
           final entryId = updated['entry_id']?.toString() ?? '';
@@ -444,7 +464,9 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
     setState(() => _submitting = true);
     try {
       final proofUrl = await _ensureNewProofUploaded();
-      if (_newProofX != null && (proofUrl == null || proofUrl.isEmpty)) {
+      if (_newProofPick != null &&
+          _newProofPick!.hasPhoto &&
+          (proofUrl == null || proofUrl.isEmpty)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Upload foto bukti gagal. Coba lagi.')),
@@ -589,8 +611,9 @@ class _KeuanganTokoPageState extends ConsumerState<KeuanganTokoPage> {
               notesController: _notesController,
               submitting: _submitting,
               uploadingProof: _uploadingProof,
-              newProofX: _newProofX,
-              onPickProof: _pickNewProof,
+              newProofPick: _newProofPick,
+              onPickCamera: _pickNewProofFromCamera,
+              onPickGallery: _pickNewProofFromGallery,
               onClearProof: _clearNewProof,
               onOpenCategoryManager: _openCategoryManager,
               onSubmit: _submit,

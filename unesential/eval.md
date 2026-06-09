@@ -180,8 +180,8 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 
 ### P1 — Paritas web & alur operasional
 
-- [ ] **Upload bukti keuangan toko di web**: ganti `kIsWeb return null` di `keuangan_toko_page.dart` → pakai `CsOrderPhotoPicker`
-- [ ] **Seragamkan foto upload** di `store_operational_entry_sheet.dart`, `store_operational_entry_form.dart`, `service_page.dart` (hindari `image_picker_stub` langsung)
+- [x] **Upload bukti keuangan toko di web**: `keuangan_toko_page.dart` → `CsOrderPhotoPicker` + `CsOrderPhotoUpload`
+- [x] **Seragamkan foto upload** di `store_operational_entry_sheet.dart`, `store_operational_entry_form.dart` (`service_page` sudah pakai CsOrderPhotoPicker)
 - [ ] **Deploy web build** terbaru (kamera kasir + kompresi 800×800 JPEG 90%)
 - [ ] **Uji end-to-end web**: login → kasir bayar QRIS/transfer → upload bukti → sukses
 - [ ] **UX saat fitur web tidak tersedia**: pesan jelas (bukan silent fail), mis. cetak TSPL Bluetooth
@@ -190,7 +190,7 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 
 - [ ] **Aktifkan Sentry** di build production (`--dart-define=SENTRY_DSN=...`)
 - [ ] **Satukan HTTP client Flutter**: deprecate jalur ganda `ApiService` vs `ApiClient`; satu hierarki exception
-- [ ] **Tambah retry** di `ApiClient` untuk timeout/transient error (selaras `ApiService`)
+- [x] **Tambah retry** di `ApiClient` untuk timeout/transient error (selaras `ApiService`)
 
 ### P2 — Arsitektur & maintainability
 

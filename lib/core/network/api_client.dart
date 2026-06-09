@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../utils/network_config.dart';
@@ -14,6 +15,9 @@ import 'api_exceptions.dart';
 /// - centralized 401/403 handling
 class ApiClient {
   ApiClient._();
+
+  static const int _maxRetries = 3;
+  static const Duration _retryDelay = Duration(seconds: 1);
 
   static Duration get _timeout => NetworkConfig.connectionTimeout;
 
@@ -148,24 +152,52 @@ class ApiClient {
     return '$body (HTTP ${response.statusCode})';
   }
 
+  static bool _isRetryableNetworkError(Object e) {
+    return e is TimeoutException || e is http.ClientException;
+  }
+
   static Future<http.Response> _send(Future<http.Response> Function() request) async {
-    http.Response response;
-    try {
-      response = await request().timeout(_timeout);
-    } catch (e, st) {
-      AppErrorReporter.report(e, stackTrace: st, context: 'ApiClient.network');
-      rethrow;
+    Object? lastError;
+    StackTrace? lastStack;
+
+    for (var attempt = 0; attempt <= _maxRetries; attempt++) {
+      http.Response response;
+      try {
+        response = await request().timeout(_timeout);
+      } catch (e, st) {
+        lastError = e;
+        lastStack = st;
+        if (attempt < _maxRetries && _isRetryableNetworkError(e)) {
+          assert(() {
+            debugPrint(
+              'ApiClient retry ${attempt + 1}/$_maxRetries: $e',
+            );
+            return true;
+          }());
+          await Future<void>.delayed(_retryDelay * (attempt + 1));
+          continue;
+        }
+        AppErrorReporter.report(e, stackTrace: st, context: 'ApiClient.network');
+        rethrow;
+      }
+
+      if (response.statusCode == 401) {
+        NetworkConfig.setAuthToken(null);
+        NetworkConfig.notifyUnauthorized();
+        throw UnauthorizedException(_errorMessageFromResponse(response));
+      }
+      if (response.statusCode == 403) {
+        throw ForbiddenException(_errorMessageFromResponse(response));
+      }
+      return response;
     }
-    if (response.statusCode == 401) {
-      NetworkConfig.setAuthToken(null);
-      NetworkConfig.notifyUnauthorized();
-      throw UnauthorizedException(_errorMessageFromResponse(response));
-    }
-    if (response.statusCode == 403) {
-      // Do not clear token: user is authenticated but lacks permission.
-      throw ForbiddenException(_errorMessageFromResponse(response));
-    }
-    return response;
+
+    AppErrorReporter.report(
+      lastError ?? StateError('ApiClient retry exhausted'),
+      stackTrace: lastStack,
+      context: 'ApiClient.network',
+    );
+    throw lastError ?? StateError('ApiClient retry exhausted');
   }
 
   static Map<String, dynamic> decodeJsonObject(http.Response response) {

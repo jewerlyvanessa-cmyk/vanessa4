@@ -1,12 +1,12 @@
+// ignore: unused_import — dipakai Image.file di build mobile (!kIsWeb).
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) '../../../utils/image_picker_stub.dart';
 import 'package:vanessa3/core/theme/app_typography.dart';
 import 'package:vanessa3/modules/kasir/logic/store_operational_types.dart';
 import 'package:vanessa3/modules/kasir/logic/store_operational_utils.dart';
+import 'package:vanessa3/utils/cs_order_photo_picker.dart';
 
 class StoreOperationalEntryForm extends StatelessWidget {
   const StoreOperationalEntryForm({
@@ -23,8 +23,9 @@ class StoreOperationalEntryForm extends StatelessWidget {
     required this.notesController,
     required this.submitting,
     required this.uploadingProof,
-    required this.newProofX,
-    required this.onPickProof,
+    required this.newProofPick,
+    required this.onPickCamera,
+    required this.onPickGallery,
     required this.onClearProof,
     required this.onOpenCategoryManager,
     required this.onSubmit,
@@ -42,15 +43,52 @@ class StoreOperationalEntryForm extends StatelessWidget {
   final TextEditingController notesController;
   final bool submitting;
   final bool uploadingProof;
-  final XFile? newProofX;
-  final ValueChanged<ImageSource> onPickProof;
+  final CsOrderPhotoPickResult? newProofPick;
+  final VoidCallback onPickCamera;
+  final VoidCallback onPickGallery;
   final VoidCallback onClearProof;
   final VoidCallback onOpenCategoryManager;
   final VoidCallback onSubmit;
 
+  Widget? _proofPreview(ColorScheme cs) {
+    final pick = newProofPick;
+    if (pick == null || !pick.hasPhoto) return null;
+    if (pick.bytes != null && pick.bytes!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.memory(
+          pick.bytes!,
+          height: 160,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    final file = pick.file;
+    if (!kIsWeb && file != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.file(
+          file,
+          height: 160,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    return Container(
+      height: 160,
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      alignment: Alignment.center,
+      child: const Text('Foto bukti dipilih'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final preview = _proofPreview(cs);
 
     return Material(
       elevation: 0,
@@ -170,9 +208,9 @@ class StoreOperationalEntryForm extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: (submitting || uploadingProof)
                           ? null
-                          : () => onPickProof(ImageSource.camera),
+                          : onPickCamera,
                       icon: const Icon(Icons.photo_camera_outlined),
-                      label: const Text('Kamera'),
+                      label: Text(kIsWeb ? 'Ambil Foto' : 'Kamera'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -180,14 +218,14 @@ class StoreOperationalEntryForm extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: (submitting || uploadingProof)
                           ? null
-                          : () => onPickProof(ImageSource.gallery),
+                          : onPickGallery,
                       icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('Galeri'),
+                      label: Text(kIsWeb ? 'Pilih File' : 'Galeri'),
                     ),
                   ),
                 ],
               ),
-              if (newProofX != null) ...[
+              if (newProofPick != null && newProofPick!.hasPhoto) ...[
                 const SizedBox(height: 10),
                 Row(
                   children: [
@@ -206,21 +244,7 @@ class StoreOperationalEntryForm extends StatelessWidget {
                     ),
                   ],
                 ),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: kIsWeb
-                      ? Container(
-                          height: 160,
-                          color: cs.surfaceContainerHighest,
-                          alignment: Alignment.center,
-                          child: const Text('Preview tidak tersedia di web'),
-                        )
-                      : Image.file(
-                          File(newProofX!.path),
-                          height: 160,
-                          fit: BoxFit.cover,
-                        ),
-                ),
+                ?preview,
               ],
               if (uploadingProof) ...[
                 const SizedBox(height: 10),
