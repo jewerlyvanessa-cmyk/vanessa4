@@ -1,9 +1,3 @@
-// ...existing code...
-
-// ...existing code...
-
-// PATCH endpoints dipindahkan ke bawah setelah app dan middleware
-
 const { app, port, SECRET_KEY, JWT_EXPIRES_IN } = require('./app');
 const express = require('express');
 const multer = require('multer');
