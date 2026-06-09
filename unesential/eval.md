@@ -199,16 +199,18 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 - [ ] **Pecah route backend besar**: `orders_create.js`, `items.js`, `payments_core.js` (ikuti pola refactor workshop)
 - [x] **Hapus stub comment** di `server.js` baris 1–4
 - [ ] **Rename migrasi SQL** tanpa date-prefix (`add_kode_produk_...`, dll.) atau dokumentasikan urutan eksplisit
-- [ ] **Satu sumber deploy PM2**: pilih `ecosystem.config.cjs` atau `ecosystem.flat.config.cjs`, dokumentasikan di README deploy
+- [x] **Satu sumber deploy PM2**: flat vs repo — `unesential/scripts/DEPLOY.md`
 
 ### P2 — Testing
 
 - [x] **Flutter**: test `homeRouteForRole` (redirect per role)
-- [ ] **Flutter**: test `CsOrderPhotoPicker` kompresi web/Android
-- [ ] **Flutter**: test offline queue enqueue + sync drop 4xx / retry 5xx
-- [ ] **Backend**: smoke test `import_data.js`, `users.js`, `reports.js`
+- [x] **Flutter**: test `CsOrderPhotoPickResult.hasPhoto`
+- [ ] **Flutter**: test `CsOrderPhotoPicker` kompresi web/Android (integration)
+- [x] **Flutter**: test offline queue enqueue + sync drop 4xx / retry 5xx
+- [x] **Backend**: smoke test `import_data.js`, `users.js`
+- [ ] **Backend**: smoke test `reports.js`
 - [ ] **Backend**: integration test Postgres (minimal login + create order) di CI
-- [ ] **WebSocket**: unit/smoke test presence + `force_logout`
+- [x] **WebSocket**: unit test presence registry + `force_logout` disconnect
 - [x] **Wire CI**: `.github/workflows/ci.yml` → `unesential/scripts/ci.sh` + flutter test
 
 ### P2 — Keamanan lanjutan

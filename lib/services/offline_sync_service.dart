@@ -13,6 +13,15 @@ class OfflineSyncService {
   static bool _isSyncing = false;
   static const int maxAttempts = 10;
 
+  /// HTTP 4xx dari server — item di-drop dari antrian (tidak di-retry).
+  @visibleForTesting
+  static bool isPermanentClientError(int statusCode) =>
+      statusCode >= 400 && statusCode < 500;
+
+  /// HTTP 5xx — item tetap di antrian dengan attempts+1.
+  @visibleForTesting
+  static bool shouldRetryServerError(int statusCode) => statusCode >= 500;
+
   static Future<List<OfflineQueueItem>> listPending() =>
       OfflineQueue.instance.list();
 
@@ -67,15 +76,18 @@ class OfflineSyncService {
               }
               continue;
             }
-            if (response.statusCode >= 500) {
+            if (shouldRetryServerError(response.statusCode)) {
               remaining.add(item.copyWith(attempts: item.attempts + 1));
               continue;
             }
-            // 4xx permanen — buang dari antrian agar tidak macet
-            debugPrint(
-              'OfflineSyncService: drop ${item.path} HTTP ${response.statusCode}',
-            );
-            await OfflinePendingOrders.take(item.id);
+            if (isPermanentClientError(response.statusCode)) {
+              debugPrint(
+                'OfflineSyncService: drop ${item.path} HTTP ${response.statusCode}',
+              );
+              await OfflinePendingOrders.take(item.id);
+              continue;
+            }
+            remaining.add(item.copyWith(attempts: item.attempts + 1));
             continue;
           }
 
