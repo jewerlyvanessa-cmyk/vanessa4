@@ -5,10 +5,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# Production path umum (lihat backend/scripts/fix_production_login.sh)
+NODEAPP_HINT="${NODEAPP_HINT:-/home/vanessa/web/mobile.vanessa.id/private/nodeapp}"
+
 export NODE_ENV=production
 
+if [[ -f backend/scripts/preflight.js ]]; then
+  PREFLIGHT="node backend/scripts/preflight.js"
+elif [[ -f scripts/preflight.js ]]; then
+  PREFLIGHT="node scripts/preflight.js"
+else
+  echo "ERROR: preflight.js tidak ditemukan. cd ke root repo (mis. $NODEAPP_HINT)"
+  exit 1
+fi
+
 echo "==> P0: preflight production (env + modul + DB)"
-node backend/scripts/preflight.js --ping-db
+$PREFLIGHT --ping-db
 
 echo ""
 echo "==> Rotasi JWT (jika secret pernah bocor di git):"

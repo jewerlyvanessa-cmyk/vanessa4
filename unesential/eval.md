@@ -175,7 +175,7 @@ Prioritas: **P0** segera · **P1** minggu ini · **P2** sprint berikutnya · **P
 - [x] **Bersihkan `backend/.env.example`**: secret nyata dihapus, satu blok template
 - [ ] **Rotate password DB** production jika secret pernah ter-commit / ter-share (manual di Postgres)
 - [x] **Preflight production**: cek JWT kuat, `DB_SSL`, blok `ALLOW_LEGACY_PLAINTEXT_PASSWORD` — `backend/scripts/preflight.js`
-- [ ] **Deploy backend** — di server: `bash unesential/scripts/p0-production-security.sh`
+- [ ] **Deploy backend** — di server: ikuti `unesential/scripts/P0_DEPLOY_SERVER.md`
 - [x] **Migrasi Android built-in Kotlin** — `android/app/build.gradle.kts`, `gradle.properties`
 
 ### P1 — Paritas web & alur operasional
