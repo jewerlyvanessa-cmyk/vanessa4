@@ -15,7 +15,7 @@ module.exports = {
   apps: [
     {
       name: 'vanessa',
-      script: path.join(backendDir, 'server.js'),
+      script: path.join(backendDir, 'scripts/start.js'),
       cwd: rootDir,
       env_file: path.join(backendDir, '.env'),
       instances: 1,

@@ -1,3 +1,4 @@
+import 'package:vanessa3/core/network/api_exceptions.dart';
 import 'package:vanessa3/utils/network_config.dart';
 
 import '../data/auth_api.dart';
@@ -35,6 +36,15 @@ class AuthRepository {
         'roles': data['roles'] ?? [],
         'branches': data['branches'] ?? [],
         'token': token,
+      };
+    } on ApiException catch (e) {
+      NetworkConfig.setAuthToken(null);
+      return {
+        'success': false,
+        'error': e.message,
+        'role': '',
+        'mainModule': '',
+        'branch': '',
       };
     } catch (e) {
       NetworkConfig.setAuthToken(null);

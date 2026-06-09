@@ -386,7 +386,10 @@ class _StockBulkInputPageState extends ConsumerState<StockBulkInputPage> {
         thumbVisibility: true,
         child: SingleChildScrollView(
           controller: _scrollCtrl,
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(
+            16, 16, 16,
+            16 + MediaQuery.viewPaddingOf(context).bottom,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

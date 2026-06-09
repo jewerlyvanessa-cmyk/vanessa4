@@ -20,7 +20,8 @@ cat <<'EOF'
 
 ==> Release checklist (manual)
   1. npm run migrate:sql          # audit_log, idempotency, schema baru
-  2. Restart backend (PM2/systemd)
+  2. bash unesential/scripts/restart-backend-production.sh
+     # atau: npm run preflight:backend && pm2 restart backend/ecosystem.config.cjs --update-env
   3. REQUEST_LOG=true             # optional structured logging
   4. Flutter APK release:
        flutter build apk --release \

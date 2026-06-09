@@ -1,6 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:vanessa3/shared_widgets/cs_order_photo_source_sheet.dart';
 
@@ -47,8 +47,8 @@ class CsOrderPhotoField extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ElevatedButton.icon(
-                icon: Icon(kIsWeb ? Icons.upload_file : Icons.photo_camera),
-                label: Text(kIsWeb ? 'Pilih file gambar' : 'Pilih Foto'),
+                icon: const Icon(Icons.photo_camera),
+                label: const Text('Pilih Foto'),
                 onPressed: () => showCsOrderPhotoSourceSheet(
                   context,
                   onCamera: onCamera,

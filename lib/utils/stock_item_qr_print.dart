@@ -5,9 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/utils/save_download_bytes.dart';
-import 'package:vanessa3/utils/open_pdf_web_stub.dart'
-    if (dart.library.html) 'package:vanessa3/utils/open_pdf_web.dart'
-    as open_pdf_web;
+import 'package:vanessa3/utils/xprinter_tspl_print.dart';
 
 /// Label stok thermal: 80 × 12 mm (satu label per halaman PDF).
 const double kStockLabelWidthMm = 80;
@@ -369,7 +367,7 @@ Future<void> _saveLabelPdf(
   }
 }
 
-enum _LabelOutput { print, savePdf }
+enum _LabelOutput { print, savePdf, bluetoothTspl }
 
 Future<_LabelOutput?> _askLabelOutput(BuildContext context) async {
   return showModalBottomSheet<_LabelOutput>(
@@ -383,7 +381,9 @@ Future<_LabelOutput?> _askLabelOutput(BuildContext context) async {
             leading: const Icon(Icons.print),
             title: const Text('Cetak'),
             subtitle: Text(
-              'Printer / Save as PDF sistem ($kStockLabelWidthMm×$kStockLabelHeightMm mm)',
+              kIsWeb
+                  ? 'Dialog cetak browser — pilih XP-TT426B (USB) dari daftar printer'
+                  : 'Printer / Save as PDF sistem ($kStockLabelWidthMm×$kStockLabelHeightMm mm)',
             ),
             onTap: () => Navigator.pop(ctx, _LabelOutput.print),
           ),
@@ -395,6 +395,27 @@ Future<_LabelOutput?> _askLabelOutput(BuildContext context) async {
             ),
             onTap: () => Navigator.pop(ctx, _LabelOutput.savePdf),
           ),
+          if (supportsTsplBluetoothPrint)
+            ListTile(
+              leading: const Icon(Icons.bluetooth),
+              title: const Text('Cetak Bluetooth (TSPL)'),
+              subtitle: const Text(
+                'Xprinter XP-TT426B — langsung tanpa dialog sistem',
+              ),
+              onTap: () => Navigator.pop(ctx, _LabelOutput.bluetoothTspl),
+            ),
+          // Web: Bluetooth Classic (SPP) tidak didukung browser.
+          // Informasikan user untuk pakai USB + driver printer.
+          if (kIsWeb)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Text(
+                'Bluetooth tidak tersedia di browser. Hubungkan XP-TT426B via kabel USB '
+                'dan pastikan driver printer terinstall di komputer, '
+                'lalu pilih "Cetak" di atas.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ),
         ],
       ),
     ),
@@ -405,6 +426,8 @@ Future<void> _runPrint(
   BuildContext context,
   Future<Uint8List> Function() buildPdf, {
   required String errorPrefix,
+  List<Map<String, dynamic>>? tsplItems,
+  StockLabelPrintChoice? tsplFormat,
 }) async {
   try {
     final bytes = await buildPdf();
@@ -415,25 +438,40 @@ Future<void> _runPrint(
     final output = await _askLabelOutput(context);
     if (!context.mounted || output == null) return;
 
+    if (output == _LabelOutput.bluetoothTspl) {
+      final items = tsplItems;
+      final format = tsplFormat;
+      if (items == null || format == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Data label tidak tersedia untuk TSPL.')),
+        );
+        return;
+      }
+      await XprinterTsplPrint.printLabels(
+        context: context,
+        items: items,
+        format: format,
+      );
+      return;
+    }
+
     if (output == _LabelOutput.savePdf) {
       await _saveLabelPdf(context, bytes);
       return;
     }
 
-    // Web: lebih andal buka PDF di tab baru, lalu user print dari viewer browser.
-    // `Printing.layoutPdf` sering gagal render barcode/QR pada beberapa driver/printer.
+    // Web: langsung buka dialog cetak browser.
+    // Browser me-render PDF sebelum dikirim ke printer — barcode/QR tetap tajam.
+    // User pilih XP-TT426B (USB) atau printer lain dari daftar di dialog cetak.
     if (kIsWeb) {
-      await open_pdf_web.openPdfInBrowserTab(bytes: bytes);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'PDF label dibuka di tab baru. Gunakan Print di viewer browser untuk hasil paling stabil.',
-            ),
-            duration: Duration(seconds: 4),
-          ),
-        );
-      }
+      await Printing.layoutPdf(
+        name: 'label_stok',
+        format: stockLabelPageFormat,
+        dynamicLayout: false,
+        usePrinterSettings: false,
+        forceCustomPrintPaper: true,
+        onLayout: (_) async => bytes,
+      );
       return;
     }
 
@@ -530,6 +568,8 @@ Future<void> _printOneItem(
       item: item,
     ),
     errorPrefix: 'Gagal cetak label',
+    tsplItems: [item],
+    tsplFormat: format,
   );
 }
 
@@ -547,6 +587,8 @@ Future<void> _printManyItems(
     context,
     () => buildStockItemsLabelPdf(withPayload, format),
     errorPrefix: 'Gagal cetak label',
+    tsplItems: withPayload,
+    tsplFormat: format,
   );
 }
 

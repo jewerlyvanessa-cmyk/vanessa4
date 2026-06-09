@@ -439,7 +439,7 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
                   ),
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: ResponsiveLayout.pagePadding(context),
+                  padding: ResponsiveLayout.safeScrollPadding(context),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -570,7 +570,7 @@ class _KirimKeTokoCreatePageState extends ConsumerState<KirimKeTokoCreatePage> {
               ),
               SafeArea(
                 child: Padding(
-                  padding: ResponsiveLayout.pagePadding(context).copyWith(top: 8),
+                  padding: ResponsiveLayout.safeScrollPadding(context).copyWith(top: 8),
                   child: ResponsiveDualActions(
                     secondary: OutlinedButton(
                       onPressed: _submitting

@@ -17,23 +17,20 @@ import 'utils/sentry_bootstrap.dart';
 import 'providers/websocket_provider.dart';
 
 void main() async {
-  // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize date formatting for Indonesian locale
   await initializeDateFormatting('id_ID', null);
 
-  // Debug: Print network configuration (dart-define harus dari `flutter run`, bukan hot restart saja)
-  if (kDebugMode) {
+  assert(() {
     debugPrint(
       'Network Config - USE_LOCAL_API=${const bool.fromEnvironment('USE_LOCAL_API', defaultValue: false)} '
       'API_HOST="${const String.fromEnvironment('API_HOST', defaultValue: '')}" '
       'API_PORT="${const String.fromEnvironment('API_PORT', defaultValue: '')}" '
       'API_SCHEME="${const String.fromEnvironment('API_SCHEME', defaultValue: '')}"',
     );
-  }
-  debugPrint('Network Config - Base URL: ${NetworkConfig.baseUrl}');
-  debugPrint('Network Config - WebSocket URL: ${NetworkConfig.wsUrl}');
+    debugPrint('Network Config - Base URL: ${NetworkConfig.baseUrl}');
+    debugPrint('Network Config - WebSocket URL: ${NetworkConfig.wsUrl}');
+    return true;
+  }());
 
   await SentryBootstrap.runApp(() {
     runApp(ProviderScope(child: const VanessaApp()));
@@ -43,7 +40,8 @@ void main() async {
 class VanessaApp extends ConsumerStatefulWidget {
   const VanessaApp({super.key});
 
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   ConsumerState<VanessaApp> createState() => _VanessaAppState();
@@ -90,13 +88,11 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Check user state for auto-login
     final userState = ref.watch(userStateProvider);
     NetworkConfig.setAuthToken(
       userState.authToken.isEmpty ? null : userState.authToken,
     );
 
-    // Watch network status for global awareness
     final networkState = ref.watch(networkStatusProvider);
 
     return MaterialApp(
@@ -114,7 +110,6 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
         Locale('en', 'US'),
       ],
       locale: const Locale('id', 'ID'),
-      // Web: hash di URL (#/dashboard) tidak boleh melewati gate login.
       initialRoute: '/',
       routes: <String, WidgetBuilder>{
         '/': (context) => const _AppHomeGate(),
@@ -122,82 +117,96 @@ class _VanessaAppState extends ConsumerState<VanessaApp> {
       },
       onGenerateRoute: AppRoutes.onGenerateRoute,
       builder: (context, child) {
+        // Clamp text scale agar layout tidak pecah di HP dengan teks sangat besar.
         final mq = ResponsiveLayout.clampMediaQuery(MediaQuery.of(context));
-        Widget navigatorChild = MediaQuery(
+        Widget content = MediaQuery(
           data: mq,
           child: child ?? const SizedBox.shrink(),
         );
-        navigatorChild = ResponsiveLayout.webMobileChrome(navigatorChild);
 
-        // Status koneksi: di dalam alur layout (bukan Stack di atas), agar AppBar/web
-        // tidak tertutup banner merah/oranye.
-        final showConnectionBanner =
-            !networkState.isOnline || !networkState.isBackendReachable;
+        // Web: safe area untuk notch/gesture bar browser.
+        if (kIsWeb) content = ResponsiveLayout.appChrome(content);
 
-        if (!showConnectionBanner) return navigatorChild;
+        // Status koneksi — banner di atas Navigator, tidak mengganggu AppBar.
+        final offline = !networkState.isOnline;
+        final unreachable = !networkState.isBackendReachable;
+        if (!offline && !unreachable) return content;
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Material(
-              color: !networkState.isOnline ? Colors.red : Colors.orange,
-              child: InkWell(
-                onTap: () async {
-                  final networkNotifier = ref.read(
-                    networkStatusProvider.notifier,
-                  );
-                  await networkNotifier.refresh();
-
-                  final statusMessage =
-                      await NetworkConnectivity.getDetailedNetworkStatus(
-                        NetworkConfig.baseUrl,
-                      );
-                  if (!context.mounted) return;
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(statusMessage),
-                        duration: const Duration(seconds: 3),
-                      ),
-                    );
-                  });
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 8,
-                    horizontal: 16,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          !networkState.isOnline
-                              ? 'Offline - Tap to retry'
-                              : 'Backend Unreachable - Tap to retry',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.white,
-                              ) ??
-                              const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      const Icon(
-                        Icons.refresh,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Expanded(child: navigatorChild),
-          ],
+        return _ConnectionBanner(
+          offline: offline,
+          networkState: networkState,
+          child: content,
         );
       },
     );
   }
 }
 
+/// Banner koneksi — terpisah agar build method utama tetap bersih.
+class _ConnectionBanner extends ConsumerWidget {
+  const _ConnectionBanner({
+    required this.offline,
+    required this.networkState,
+    required this.child,
+  });
+
+  final bool offline;
+  final dynamic networkState;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final color = offline ? Colors.red : Colors.orange;
+    final label = offline ? 'Offline — Ketuk untuk coba ulang'
+        : 'Server tidak terjangkau — Ketuk untuk coba ulang';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: color,
+          child: InkWell(
+            onTap: () async {
+              final notifier = ref.read(networkStatusProvider.notifier);
+              await notifier.refresh();
+              final status = await NetworkConnectivity.getDetailedNetworkStatus(
+                NetworkConfig.baseUrl,
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                SnackBar(
+                  content: Text(status),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            },
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.refresh, color: Colors.white, size: 16),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
 
 class _AppHomeGate extends ConsumerStatefulWidget {
   const _AppHomeGate();

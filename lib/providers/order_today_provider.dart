@@ -8,32 +8,8 @@ import 'package:vanessa3/providers/network_provider.dart';
 import 'package:vanessa3/providers/websocket_provider.dart';
 import 'package:vanessa3/data/offline_cache.dart';
 import 'package:vanessa3/core/state/user_state.dart';
-import 'package:vanessa3/utils/agent_ndjson.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
 import 'package:vanessa3/modules/admin_toko/data/daily_orders_payments_repository.dart';
-
-/// Aktifkan log NDJSON hanya bila perlu debug (`--dart-define=ORDER_TODAY_NDJSON=true`).
-const bool _kOrderTodayNdjson = bool.fromEnvironment(
-  'ORDER_TODAY_NDJSON',
-  defaultValue: false,
-);
-
-void _otNdjson({
-  required String hypothesisId,
-  required String location,
-  required String message,
-  Map<String, Object?> data = const {},
-  String runId = 'order-today',
-}) {
-  if (!_kOrderTodayNdjson) return;
-  agentDebugNdjson(
-    hypothesisId: hypothesisId,
-    location: location,
-    message: message,
-    data: data,
-    runId: runId,
-  );
-}
 
 AsyncValue<OrderTodayStats> _statsLoadingFrom(AsyncValue<OrderTodayStats> cur) {
   if (cur is AsyncData<OrderTodayStats>) {
@@ -351,13 +327,7 @@ class OrderTodayStatsNotifier
       final userId = userState.userId;
       final branchIds = _orderTodayBranchIds(userState);
       if (branchIds.isEmpty) {
-        _otNdjson(
-          hypothesisId: 'OT3',
-          location: 'order_today_provider.dart:fetchOrderTodayStats:no_branch',
-          message: 'branchId null',
-          data: <String, Object?>{'branchRaw': userState.branch},
-        );
-        state = AsyncValue.error(
+                state = AsyncValue.error(
           Exception(
             'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
           ),
@@ -377,16 +347,7 @@ class OrderTodayStatsNotifier
         final cached = await OfflineCache.instance
             .getJson<Map<String, dynamic>>(cacheKey);
         if (cached != null) {
-          _otNdjson(
-            hypothesisId: 'OT4',
-            location:
-                'order_today_provider.dart:fetchOrderTodayStats:cache_hit',
-            message: 'stats offline cache hit',
-            data: <String, Object?>{
-              'total_orders': cached.value['total_orders'],
-            },
-          );
-          state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
+                    state = AsyncValue.data(OrderTodayStats.fromJson(cached.value));
           return;
         }
       }
@@ -394,30 +355,7 @@ class OrderTodayStatsNotifier
       // Use real API call instead of mock data
       final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
-      _otNdjson(
-        hypothesisId: 'OT2',
-        location: 'order_today_provider.dart:fetchOrderTodayStats:request',
-        message: 'fetch stats request',
-        data: <String, Object?>{
-          'role': userState.role.trim().toLowerCase(),
-          'userId': userId,
-          'branchRaw': userState.branch,
-          'branchIds': branchIds,
-          'dateKey': dateKey,
-          'scopeSeg': scopeSeg,
-          'csScoped': _orderTodayOwnUserOnlyScope(userState),
-          'online': '${networkState.isOnline}',
-          'backendReachable': '${networkState.isBackendReachable}',
-          'baseUrl': baseUrl,
-          'hasAuthHeader':
-              NetworkConfig.defaultHeaders['Authorization']
-                  ?.toString()
-                  .trim()
-                  .isNotEmpty ==
-              true,
-        },
-      );
-
+      
       Map<String, dynamic> mergedJson = <String, dynamic>{
         'total_orders': 0,
         'completed_orders': 0,
@@ -514,17 +452,7 @@ class OrderTodayStatsNotifier
         }
       }
 
-      _otNdjson(
-        hypothesisId: 'OT2',
-        location: 'order_today_provider.dart:fetchOrderTodayStats:ok',
-        message: 'stats response 200',
-        data: <String, Object?>{
-          'total_orders': mergedJson['total_orders'],
-          'pending': mergedJson['pending_orders'],
-          'branchesMerged': branchIds.length,
-        },
-      );
-
+      
       await OfflineCache.instance.setJson(
         cacheKey,
         mergedJson,
@@ -552,17 +480,7 @@ class OrderTodayStatsNotifier
       } catch (_) {
         // ignore cache errors
       }
-      _otNdjson(
-        hypothesisId: 'OT1',
-        location: 'order_today_provider.dart:fetchOrderTodayStats:error',
-        message: 'stats fetch failed',
-        data: <String, Object?>{
-          'err': error.toString().length > 200
-              ? error.toString().substring(0, 200)
-              : error.toString(),
-        },
-      );
-      state = AsyncValue.error(error, stackTrace);
+            state = AsyncValue.error(error, stackTrace);
     }
   }
 
@@ -667,13 +585,7 @@ class TodayOrdersNotifier
       final userId = userState.userId;
       final branchIds = _orderTodayBranchIds(userState);
       if (branchIds.isEmpty) {
-        _otNdjson(
-          hypothesisId: 'OT3',
-          location: 'order_today_provider.dart:fetchTodayOrders:no_branch',
-          message: 'branchId null',
-          data: <String, Object?>{'branchRaw': userState.branch},
-        );
-        state = AsyncValue.error(
+                state = AsyncValue.error(
           Exception(
             'Cabang aktif belum valid. Pilih cabang (kasir / admin toko / lainnya) lalu coba lagi.',
           ),
@@ -698,19 +610,10 @@ class TodayOrdersNotifier
           final list = (cached.value)
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
-          _otNdjson(
-            hypothesisId: 'OT4',
-            location: 'order_today_provider.dart:fetchTodayOrders:cache_hit',
-            message: 'today orders offline cache hit',
-            data: <String, Object?>{'listLen': list.length},
-          );
-          state = AsyncValue.data(list);
+                    state = AsyncValue.data(list);
           return;
         }
       }
-
-      // Use real API call instead of mock data
-      final baseUrl = NetworkConfig.baseUrl; // Use NetworkConfig for proper URL
 
       if (branchIds.length == 1) {
         final snapshotOrders = await tryFetchOrderTodaySnapshotOrdersList(
@@ -719,17 +622,7 @@ class TodayOrdersNotifier
           userState: userState,
         );
         if (snapshotOrders != null) {
-          _otNdjson(
-            hypothesisId: 'OT2',
-            location:
-                'order_today_provider.dart:fetchTodayOrders:snapshot_ok',
-            message: 'order-today-snapshot 200 (orders only)',
-            data: <String, Object?>{
-              'branchId': branchIds.first,
-              'ordersLen': snapshotOrders.length,
-            },
-          );
-          await OfflineCache.instance.setJson(
+                    await OfflineCache.instance.setJson(
             cacheKey,
             snapshotOrders,
             ttl: const Duration(minutes: 5),
@@ -739,30 +632,7 @@ class TodayOrdersNotifier
         }
       }
 
-      _otNdjson(
-        hypothesisId: 'OT2',
-        location: 'order_today_provider.dart:fetchTodayOrders:request',
-        message: 'fetch orders/daily',
-        data: <String, Object?>{
-          'role': userState.role.trim().toLowerCase(),
-          'userId': userId,
-          'branchRaw': userState.branch,
-          'branchIds': branchIds,
-          'dateKey': todayKey,
-          'scopeSeg': scopeSeg,
-          'csScoped': _orderTodayOwnUserOnlyScope(userState),
-          'online': '${networkState.isOnline}',
-          'backendReachable': '${networkState.isBackendReachable}',
-          'baseUrl': baseUrl,
-          'hasAuthHeader':
-              NetworkConfig.defaultHeaders['Authorization']
-                  ?.toString()
-                  .trim()
-                  .isNotEmpty ==
-              true,
-        },
-      );
-
+      
       final scopedUserId = _orderTodayOwnUserOnlyScope(userState) && userId != null
           ? userId.toString()
           : null;
@@ -782,23 +652,11 @@ class TodayOrdersNotifier
       );
 
       final mergedOrders = <Map<String, dynamic>>[];
-      var mergedRawCount = 0;
       for (final grouped in perBranch) {
-        mergedRawCount += grouped.length;
         mergedOrders.addAll(grouped);
       }
 
-      _otNdjson(
-        hypothesisId: 'OT2',
-        location: 'order_today_provider.dart:fetchTodayOrders:ok_merged',
-        message: 'orders/daily 200 (merged branches)',
-        data: <String, Object?>{
-          'branchesMerged': branchIds.length,
-          'mergedRawCount': mergedRawCount,
-          'mergedOrderCount': mergedOrders.length,
-        },
-      );
-
+      
       await OfflineCache.instance.setJson(
         cacheKey,
         mergedOrders,
@@ -830,17 +688,7 @@ class TodayOrdersNotifier
       } catch (_) {
         // ignore cache errors
       }
-      _otNdjson(
-        hypothesisId: 'OT1',
-        location: 'order_today_provider.dart:fetchTodayOrders:error',
-        message: 'today orders fetch failed',
-        data: <String, Object?>{
-          'err': error.toString().length > 200
-              ? error.toString().substring(0, 200)
-              : error.toString(),
-        },
-      );
-      state = AsyncValue.error(error, stackTrace);
+            state = AsyncValue.error(error, stackTrace);
     }
   }
 
@@ -967,17 +815,7 @@ class OrderTodayBundleSync {
             ordersCacheKey: ordersCacheKey,
           );
 
-          _otNdjson(
-            hypothesisId: 'OT2',
-            location:
-                'order_today_provider.dart:OrderTodayBundleSync:snapshot_ok',
-            message: 'order-today-snapshot 200',
-            data: <String, Object?>{
-              'branchId': bid,
-              'ordersLen': mergedOrders.length,
-            },
-          );
-          return;
+                    return;
         }
       } catch (_) {
         // fallback ke endpoint terpisah

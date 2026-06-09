@@ -6,8 +6,14 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import 'package:vanessa3/utils/network_config.dart';
-import 'package:vanessa3/utils/agent_ndjson.dart';
 import 'package:http/http.dart' as http;
+
+void _wsLog(String message) {
+  assert(() {
+    debugPrint(message);
+    return true;
+  }());
+}
 
 // WebSocket provider untuk real-time updates
 final webSocketProvider =
@@ -109,9 +115,9 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
           _channel!.sink.add(
             jsonEncode(<String, dynamic>{'type': 'presence', 'token': t}),
           );
-          debugPrint('🔌 WebSocket: presence handshake sent');
+          _wsLog('🔌 WebSocket: presence handshake sent');
         } catch (e) {
-          debugPrint('🔌 WebSocket: presence send failed: $e');
+          _wsLog('🔌 WebSocket: presence send failed: $e');
         }
         return;
       }
@@ -150,31 +156,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   }
 
   void connect() {
-    // #region agent log
-    agentDebugNdjson(
-      hypothesisId: 'H1',
-      location: 'websocket_provider.dart:connect:entry',
-      message: 'connect() entered',
-      data: <String, Object?>{
-        '_isReconnecting': _isReconnecting,
-        '_reconnectAttempts': _reconnectAttempts,
-        '_isLoggedIn': _isLoggedIn,
-        '_suppressReconnect': _suppressReconnect,
-        'hasChannel': _channel != null,
-      },
-    );
-    // #endregion
     if (_isReconnecting) {
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H1',
-        location: 'websocket_provider.dart:connect:early_return',
-        message: 'connect() aborted: _isReconnecting is true',
-        data: <String, Object?>{
-          '_reconnectAttempts': _reconnectAttempts,
-        },
-      );
-      // #endregion
       return;
     }
 
@@ -197,37 +179,27 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
 
     final wsEndpoint =
         '${wsUri.scheme}://${wsUri.host}${wsUri.hasPort ? ':${wsUri.port}' : ''}${wsUri.path}';
-    debugPrint(
+    _wsLog(
       '🔌 WebSocket: connect $wsEndpoint auth=${token != null && token.isNotEmpty}',
     );
 
     try {
       _channel = WebSocketChannel.connect(wsUri);
       state = _channel;
-      debugPrint('🔌 WebSocket: Connection initiated to $wsEndpoint');
+      _wsLog('🔌 WebSocket: Connection initiated to $wsEndpoint');
 
       // Listen for messages
       _channel!.stream.listen(
         (message) {
           markWsBackendAlive();
-          debugPrint('🔌 WebSocket: Received message: $message');
+          _wsLog('🔌 WebSocket: Received message: $message');
           // Fan-out raw messages so multiple consumers can listen safely.
           _rawMessageController.add(message);
           try {
             final data = jsonDecode(message);
             if (data is Map && data['type'] == 'force_logout') {
               final reason = data['reason']?.toString();
-              debugPrint('🔌 WebSocket: force_logout — $reason');
-              // #region agent log
-              agentDebugNdjson(
-                hypothesisId: 'H3',
-                location: 'websocket_provider.dart:listen:force_logout',
-                message: 'Server sent force_logout',
-                data: <String, Object?>{
-                  'reason': reason ?? '',
-                },
-              );
-              // #endregion
+              _wsLog('🔌 WebSocket: force_logout — $reason');
               disconnectAfterKick();
               onAdminForceLogout?.call(reason);
               return;
@@ -241,49 +213,29 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
               return;
             }
           } catch (e) {
-            debugPrint('🔌 WebSocket: Failed to parse message: $e');
+            _wsLog('🔌 WebSocket: Failed to parse message: $e');
           }
           // Reset reconnect attempts on successful message
           _reconnectAttempts = 0;
         },
         onError: (error) {
-          debugPrint('🔌 WebSocket: Error on $wsEndpoint: $error');
-          // #region agent log
-          agentDebugNdjson(
-            hypothesisId: 'H2',
-            location: 'websocket_provider.dart:listen:onError',
-            message: 'stream onError',
-            data: <String, Object?>{
-              'error': error.toString(),
-            },
-          );
-          // #endregion
+          _wsLog('🔌 WebSocket: Error on $wsEndpoint: $error');
           _handleConnectionError('WebSocket error on $wsEndpoint: $error');
         },
         onDone: () {
-          debugPrint('🔌 WebSocket: Connection closed for $wsEndpoint');
-          // #region agent log
-          agentDebugNdjson(
-            hypothesisId: 'H2',
-            location: 'websocket_provider.dart:listen:onDone',
-            message: 'stream onDone (remote or local close)',
-            data: <String, Object?>{
-              '_reconnectAttempts': _reconnectAttempts,
-            },
-          );
-          // #endregion
+          _wsLog('🔌 WebSocket: Connection closed for $wsEndpoint');
           _handleConnectionClosed();
         },
       );
 
       _isReconnecting = false;
-      debugPrint('🔌 WebSocket: Successfully connected to $wsEndpoint');
+      _wsLog('🔌 WebSocket: Successfully connected to $wsEndpoint');
       markWsBackendAlive();
       _schedulePresenceHandshake();
       _startHeartbeat();
       return;
     } catch (e) {
-      debugPrint('🔌 WebSocket: Failed to connect to $wsEndpoint: $e');
+      _wsLog('🔌 WebSocket: Failed to connect to $wsEndpoint: $e');
       _handleConnectionError('Failed to connect to WebSocket $wsEndpoint: $e');
     }
   }
@@ -300,61 +252,19 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
 
     if (_suppressReconnect || !_isLoggedIn) {
       _isReconnecting = false;
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H1',
-        location: 'websocket_provider.dart:_handleConnectionError:suppress',
-        message: 'error path: reconnect suppressed or not logged in',
-        data: <String, Object?>{
-          '_suppressReconnect': _suppressReconnect,
-          '_isLoggedIn': _isLoggedIn,
-          'errorSnippet': error.length > 120 ? error.substring(0, 120) : error,
-        },
-      );
-      // #endregion
       return;
     }
 
     if (_reconnectAttempts < maxReconnectAttempts) {
       _reconnectAttempts++;
       _reconnectTimer?.cancel();
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H1',
-        location: 'websocket_provider.dart:_handleConnectionError:schedule',
-        message: 'scheduled reconnect after error',
-        data: <String, Object?>{
-          '_reconnectAttempts': _reconnectAttempts,
-          '_isReconnecting': _isReconnecting,
-        },
-      );
-      // #endregion
       _reconnectTimer = Timer(reconnectDelay, () {
         // Allow connect() to run: it would otherwise no-op because
         // _handleConnectionError sets _isReconnecting true before scheduling.
         _isReconnecting = false;
-        // #region agent log
-        agentDebugNdjson(
-          hypothesisId: 'H1',
-          location: 'websocket_provider.dart:_handleConnectionError:timer_fire',
-          message: 'reconnect timer fired, cleared _isReconnecting',
-          runId: 'post-fix',
-          data: <String, Object?>{
-            '_reconnectAttempts': _reconnectAttempts,
-          },
-        );
-        // #endregion
         connect();
       });
     } else {
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H5',
-        location: 'websocket_provider.dart:_handleConnectionError:max',
-        message: 'max reconnect attempts after error',
-        data: <String, Object?>{},
-      );
-      // #endregion
       _isReconnecting = false;
       if (kDebugMode) {
         _startMockUpdates();
@@ -368,49 +278,16 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     _channel = null;
     state = null;
     if (_suppressReconnect || !_isLoggedIn) {
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H4',
-        location: 'websocket_provider.dart:_handleConnectionClosed:noop',
-        message: 'onDone: no reconnect (logged out or suppress)',
-        data: <String, Object?>{
-          '_suppressReconnect': _suppressReconnect,
-          '_isLoggedIn': _isLoggedIn,
-        },
-      );
-      // #endregion
       return;
     }
     if (!_isReconnecting && _reconnectAttempts < maxReconnectAttempts) {
       // Attempt to reconnect if not already reconnecting
       _reconnectTimer?.cancel();
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H2',
-        location: 'websocket_provider.dart:_handleConnectionClosed:schedule',
-        message: 'scheduled reconnect after onDone',
-        data: <String, Object?>{
-          '_reconnectAttempts': _reconnectAttempts,
-          '_isReconnecting': _isReconnecting,
-        },
-      );
-      // #endregion
       _reconnectTimer = Timer(reconnectDelay, () {
         _isReconnecting = false;
         connect();
       });
     } else {
-      // #region agent log
-      agentDebugNdjson(
-        hypothesisId: 'H5',
-        location: 'websocket_provider.dart:_handleConnectionClosed:skipped',
-        message: 'onDone: reconnect skipped',
-        data: <String, Object?>{
-          '_isReconnecting': _isReconnecting,
-          '_reconnectAttempts': _reconnectAttempts,
-        },
-      );
-      // #endregion
     }
   }
 
@@ -438,14 +315,6 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   void disconnectAfterKick() {
     _stopHeartbeat();
     clearWsBackendAliveProof();
-    // #region agent log
-    agentDebugNdjson(
-      hypothesisId: 'H3',
-      location: 'websocket_provider.dart:disconnectAfterKick',
-      message: 'disconnectAfterKick()',
-      data: <String, Object?>{},
-    );
-    // #endregion
     _suppressReconnect = true;
     _isLoggedIn = false;
     _presenceRetryTimer?.cancel();
@@ -462,14 +331,6 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   void disconnect() {
     _stopHeartbeat();
     clearWsBackendAliveProof();
-    // #region agent log
-    agentDebugNdjson(
-      hypothesisId: 'H4',
-      location: 'websocket_provider.dart:disconnect',
-      message: 'disconnect() (logout/local close)',
-      data: <String, Object?>{},
-    );
-    // #endregion
     _suppressReconnect = false;
     _presenceRetryTimer?.cancel();
     _presenceRetryTimer = null;
@@ -510,7 +371,7 @@ final realTimeOrderUpdatesProvider = StreamProvider<Map<String, dynamic>>((
           return message;
         }
       } catch (e) {
-        debugPrint('🔌 WebSocket: Message parse error: $e');
+        _wsLog('🔌 WebSocket: Message parse error: $e');
       }
       return {'type': 'unknown'};
     });
@@ -557,7 +418,7 @@ class HealthCheckNotifier extends StateNotifier<bool> {
       )) {
         if (state != true) {
           state = true;
-          debugPrint('🔍 Health check: Server is healthy (WebSocket)');
+          _wsLog('🔍 Health check: Server is healthy (WebSocket)');
         }
         return;
       }
@@ -595,7 +456,7 @@ class HealthCheckNotifier extends StateNotifier<bool> {
 
       if (state != isHealthy) {
         state = isHealthy;
-        debugPrint(
+        _wsLog(
           '🔍 Health check: ${isHealthy ? 'Server is healthy' : 'Server is unhealthy'}',
         );
       }
@@ -606,13 +467,13 @@ class HealthCheckNotifier extends StateNotifier<bool> {
       if (fallbackWs) {
         if (state != true) {
           state = true;
-          debugPrint('🔍 Health check: Server is healthy (WebSocket after HTTP error)');
+          _wsLog('🔍 Health check: Server is healthy (WebSocket after HTTP error)');
         }
         return;
       }
       if (state != false) {
         state = false;
-        debugPrint('🔍 Health check failed: $e');
+        _wsLog('🔍 Health check failed: $e');
       }
     }
   }

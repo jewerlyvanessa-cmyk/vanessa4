@@ -51,20 +51,39 @@ let wss = null;
 /** Presence WebSocket (JWT); dipakai superadmin active-sessions + kick. */
 const wsPresence = createWsPresenceRegistry(SECRET_KEY);
 
+// Login: bucket per username+IP, hanya hitung percobaan GAGAL (brute-force protection).
+// Banyak user login bersamaan dari WiFi toko tidak saling memblokir.
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: Number(process.env.LOGIN_RATE_LIMIT_MAX) || 60,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many login attempts. Please try again later.' },
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const username = (req.body?.username ?? '').toString().trim().toLowerCase();
+    const ip = req.ip ?? 'unknown';
+    return username ? `login:${username}@${ip}` : `login-ip:${ip}`;
+  },
+  message: {
+    error: 'Terlalu banyak percobaan login gagal. Coba lagi beberapa menit.',
+  },
 });
 
+// Tulis data: skip GET/HEAD, bucket per user (JWT) bila sudah login.
 const writeApiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 120,
+  windowMs: Number(process.env.WRITE_RATE_LIMIT_WINDOW_MS) || 60 * 1000,
+  max: Number(process.env.WRITE_RATE_LIMIT_MAX) || 300,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests. Please slow down.' },
+  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+  keyGenerator: (req) => {
+    const auth = req.headers.authorization;
+    if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+      return `write:${auth.slice(7, 40)}`;
+    }
+    return `write-ip:${req.ip ?? 'unknown'}`;
+  },
+  message: { error: 'Terlalu banyak permintaan. Coba lagi sebentar.' },
 });
 
 // Uploads: JWT required (Authorization header or ?access_token= for Image.network)

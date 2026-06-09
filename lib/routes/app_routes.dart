@@ -400,7 +400,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             default:
               route = AppRoutes.dashboard;
           }
-          debugPrint('Navigating to route: $route for role: $primaryRoleRaw');
           WidgetsBinding.instance.addPostFrameCallback((_) {
             // Use `mounted` (State) guard first; accessing `context` when unmounted throws.
             if (!mounted) return;

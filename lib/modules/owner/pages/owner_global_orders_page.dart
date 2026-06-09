@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:vanessa3/modules/owner/data/owner_dashboard_service.dart';
 import 'package:vanessa3/modules/owner/widgets/owner_global_orders_section.dart';
 import 'package:vanessa3/utils/business_calendar.dart';
+import 'package:vanessa3/utils/responsive_layout.dart';
 
 /// Halaman penuh daftar order global (jika dibuka terpisah dari dashboard).
 class OwnerGlobalOrdersPage extends ConsumerStatefulWidget {
@@ -80,7 +81,7 @@ class _OwnerGlobalOrdersPageState extends ConsumerState<OwnerGlobalOrdersPage> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: ResponsiveLayout.safeScrollPadding(context),
         child: OwnerGlobalOrdersSection(
           ordersRaw: _ordersRaw,
           loading: _loading,

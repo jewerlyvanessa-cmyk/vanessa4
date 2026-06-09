@@ -3,9 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-
-import 'package:image_picker/image_picker.dart'
-    if (dart.library.html) 'image_picker_stub.dart';
+import 'package:image_picker/image_picker.dart';
 
 /// Hasil pilih foto (mobile: file terkompresi; web: bytes).
 class CsOrderPhotoPickResult {
@@ -23,7 +21,7 @@ class CsOrderPhotoPickResult {
       (bytes != null && bytes!.isNotEmpty) || file != null;
 }
 
-/// Kamera / galeri / file (web) — dipakai form CS (Jual, Service, Custom, Buyback, Ambil).
+/// Kamera / galeri / file — dipakai form CS (Jual, Service, Custom, Buyback, Ambil).
 abstract final class CsOrderPhotoPicker {
   CsOrderPhotoPicker._();
 
@@ -45,40 +43,82 @@ abstract final class CsOrderPhotoPicker {
     return file;
   }
 
+  static Future<Uint8List> _compressBytesToJpeg(Uint8List input) async {
+    try {
+      final compressed = await FlutterImageCompress.compressWithList(
+        input,
+        minWidth: 800,
+        minHeight: 800,
+        quality: 90,
+        format: CompressFormat.jpeg,
+      );
+      if (compressed.isNotEmpty) return compressed;
+    } catch (_) {}
+    return input;
+  }
+
+  static String _defaultFileName(String name) =>
+      name.isNotEmpty ? name : 'foto.jpg';
+
+  static Future<Uint8List?> _platformFileBytes(PlatformFile file) async {
+    try {
+      return await file.readAsBytes();
+    } catch (_) {
+      final path = file.path;
+      if (path != null && path.isNotEmpty && !kIsWeb) {
+        return File(path).readAsBytes();
+      }
+    }
+    return null;
+  }
+
   static Future<CsOrderPhotoPickResult?> pickFromFilePicker() async {
-    final f = await FilePicker.pickFile(type: FileType.image);
-    if (f == null) return null;
-    final bytes = await f.readAsBytes();
-    if (bytes.isEmpty) return null;
-    return CsOrderPhotoPickResult(
-      bytes: bytes,
-      fileName: f.name.isNotEmpty ? f.name : 'foto.jpg',
+    final f = await FilePicker.pickFile(
+      type: FileType.image,
     );
+    if (f == null) return null;
+    final bytes = await _platformFileBytes(f);
+    if (bytes == null || bytes.isEmpty) return null;
+    final compressed = await _compressBytesToJpeg(bytes);
+    return CsOrderPhotoPickResult(
+      bytes: compressed,
+      fileName: _defaultFileName(f.name),
+    );
+  }
+
+  static Future<CsOrderPhotoPickResult?> _pickImage(
+    ImageSource source, {
+    int imageQuality = 85,
+  }) async {
+    final picked = await _picker.pickImage(
+      source: source,
+      imageQuality: imageQuality,
+      maxWidth: 1600,
+      maxHeight: 1600,
+    );
+    if (picked == null) return null;
+
+    if (kIsWeb) {
+      final raw = await picked.readAsBytes();
+      if (raw.isEmpty) return null;
+      final bytes = await _compressBytesToJpeg(raw);
+      return CsOrderPhotoPickResult(
+        bytes: bytes,
+        fileName: _defaultFileName(picked.name),
+      );
+    }
+
+    final file = await compressToJpeg(File(picked.path));
+    return CsOrderPhotoPickResult(file: file);
   }
 
   static Future<CsOrderPhotoPickResult?> pickFromCamera({
     int imageQuality = 85,
-  }) async {
-    if (kIsWeb) return pickFromFilePicker();
-    final picked = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: imageQuality,
-    );
-    if (picked == null) return null;
-    final file = await compressToJpeg(File(picked.path));
-    return CsOrderPhotoPickResult(file: file);
-  }
+  }) =>
+      _pickImage(ImageSource.camera, imageQuality: imageQuality);
 
   static Future<CsOrderPhotoPickResult?> pickFromGallery({
     int imageQuality = 85,
-  }) async {
-    if (kIsWeb) return pickFromFilePicker();
-    final picked = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: imageQuality,
-    );
-    if (picked == null) return null;
-    final file = await compressToJpeg(File(picked.path));
-    return CsOrderPhotoPickResult(file: file);
-  }
+  }) =>
+      _pickImage(ImageSource.gallery, imageQuality: imageQuality);
 }

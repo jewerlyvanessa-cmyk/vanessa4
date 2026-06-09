@@ -1,16 +1,11 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Pilih sumber foto: kamera atau galeri (mobile); web → file picker saja.
+/// Pilih sumber foto: kamera atau galeri (mobile & web).
 Future<void> showCsOrderPhotoSourceSheet(
   BuildContext context, {
   required VoidCallback onCamera,
   required VoidCallback onGallery,
 }) async {
-  if (kIsWeb) {
-    onGallery();
-    return;
-  }
   await showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,

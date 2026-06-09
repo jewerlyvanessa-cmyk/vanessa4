@@ -1,15 +1,31 @@
 package com.example.vanessa3
 
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.nio.ByteBuffer
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity diperlukan agar registerForActivityResult (izin Bluetooth) berfungsi.
+class MainActivity : FlutterFragmentActivity() {
+    private var pendingBluetoothPermissionResult: MethodChannel.Result? = null
+
+    private val bluetoothPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants: Map<String, Boolean> ->
+        val granted = grants.values.all { it }
+        pendingBluetoothPermissionResult?.success(granted)
+        pendingBluetoothPermissionResult = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         super.onCreate(savedInstanceState)
@@ -24,9 +40,46 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "printLabelPdf" -> handlePrintLabelPdf(call, result)
                 "saveLabelPdf" -> handleSaveLabelPdf(call, result)
+                "hasBluetoothPermission" -> {
+                    result.success(TsplBluetoothPrinter.hasNearbyPermissions(this))
+                }
+                "requestBluetoothPermission" -> handleRequestBluetoothPermission(result)
+                "openAppSettings" -> {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", packageName, null),
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    result.success(true)
+                }
+                "listBondedBluetoothPrinters" -> handleListBondedBluetooth(result)
+                "printTsplBluetooth" -> handlePrintTsplBluetooth(call, result)
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun handleRequestBluetoothPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            result.success(true)
+            return
+        }
+        if (TsplBluetoothPrinter.hasNearbyPermissions(this)) {
+            result.success(true)
+            return
+        }
+        if (pendingBluetoothPermissionResult != null) {
+            result.error("busy", "Permintaan izin Bluetooth sedang berjalan", null)
+            return
+        }
+        pendingBluetoothPermissionResult = result
+        bluetoothPermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN,
+            ),
+        )
     }
 
     private fun handlePrintLabelPdf(call: MethodCall, result: MethodChannel.Result) {
@@ -66,6 +119,36 @@ class MainActivity : FlutterActivity() {
             result.success(path)
         } catch (e: Exception) {
             result.error("save_failed", e.message, null)
+        }
+    }
+
+    private fun handleListBondedBluetooth(result: MethodChannel.Result) {
+        // Tidak ada pre-check checkSelfPermission — bisa tidak akurat di Xiaomi/MIUI.
+        // SecurityException dari operasi Bluetooth yang mengonfirmasi izin sesungguhnya.
+        try {
+            result.success(TsplBluetoothPrinter.listBondedDevices(this))
+        } catch (e: SecurityException) {
+            result.error("permission_denied", "Izin perangkat terdekat (Bluetooth) belum diberikan", null)
+        } catch (e: Exception) {
+            result.error("bt_error", e.message, null)
+        }
+    }
+
+    private fun handlePrintTsplBluetooth(call: MethodCall, result: MethodChannel.Result) {
+        val address = call.argument<String>("address")?.trim().orEmpty()
+        val data = readPdfBytes(call)
+        if (address.isEmpty() || data == null) {
+            result.error("invalid_args", "address and data required", null)
+            return
+        }
+        // Tidak ada pre-check checkSelfPermission — tidak akurat di Xiaomi/MIUI.
+        try {
+            TsplBluetoothPrinter.print(address, data)
+            result.success(true)
+        } catch (e: SecurityException) {
+            result.error("permission_denied", "Izin perangkat terdekat (Bluetooth) belum diberikan", null)
+        } catch (e: Exception) {
+            result.error("print_failed", e.message, null)
         }
     }
 

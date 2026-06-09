@@ -6,7 +6,10 @@
     "migrate:create": "node-pg-migrate create --migrations-dir backend/migrations_js",
     "migrate:up": "node-pg-migrate up --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
     "migrate:down": "node-pg-migrate down --config backend/migrate.config.cjs --migrations-dir backend/migrations_js",
-    "migrate:sql": "node unesential/scripts/migrate-sql.js"
+    "migrate:sql": "node unesential/scripts/migrate-sql.js",
+    "preflight:backend": "node backend/scripts/preflight.js --ping-db",
+    "start:backend": "node backend/scripts/start.js",
+    "restart:backend:prod": "bash unesential/scripts/restart-backend-production.sh"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

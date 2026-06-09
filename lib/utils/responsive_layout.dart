@@ -47,10 +47,50 @@ abstract final class ResponsiveLayout {
     );
   }
 
-  /// Jarak tambahan di akhir daftar scroll (di atas inset sistem).
+  /// Jarak tambahan di akhir daftar scroll (ruang visual, bukan inset sistem).
   static double scrollEndGap(BuildContext context) {
     if (kIsWeb) return 8;
     return isCompact(context) ? 16 : 8;
+  }
+
+  /// Inset bawah sistem (navigation bar / gesture bar).
+  static double systemBottomInset(BuildContext context) {
+    if (kIsWeb) return 0;
+    return MediaQuery.viewPaddingOf(context).bottom;
+  }
+
+  /// Padding scroll + navigation bar (tanpa mengganggu AppBar).
+  static EdgeInsets safeScrollPadding(BuildContext context) {
+    final pad = pagePadding(context);
+    if (kIsWeb) return pad;
+    return pad.copyWith(
+      bottom: pad.bottom + systemBottomInset(context),
+    );
+  }
+
+  /// Padding bawah [ListView]/[Column] isi halaman.
+  static EdgeInsets contentPadding(BuildContext context) =>
+      safeScrollPadding(context);
+
+  /// Padding bawah daftar — dipakai di dalam [scaffoldBody] / [RoleMenuBody].
+  static EdgeInsets listBottomPadding(BuildContext context) {
+    return EdgeInsets.only(bottom: scrollEndGap(context));
+  }
+
+  /// Padding [SingleChildScrollView] / [ListView] utama di [Scaffold.body].
+  /// Setara `EdgeInsets.all(16)` tapi bottom menyertakan tinggi navigation/gesture bar.
+  /// Gunakan sebagai pengganti `const EdgeInsets.all(16)` di halaman dengan tombol di bawah.
+  static EdgeInsets bodyPadding(BuildContext context, {
+    double horizontal = 16,
+    double top = 16,
+    double bottom = 16,
+  }) {
+    return EdgeInsets.fromLTRB(
+      horizontal,
+      top,
+      horizontal,
+      bottom + systemBottomInset(context),
+    );
   }
 
   /// Padding header (nama cabang / role) di dashboard menu.
@@ -65,29 +105,24 @@ abstract final class ResponsiveLayout {
       EdgeInsets.symmetric(horizontal: 16);
 
   /// Padding bawah [ListView] menu role (antrian, transfer pending, dll.).
-  static EdgeInsets roleMenuListPadding(BuildContext context) => EdgeInsets.only(
-        bottom: scrollEndGap(context),
-      );
+  static EdgeInsets roleMenuListPadding(BuildContext context) =>
+      listBottomPadding(context);
 
   /// Padding bawah [SingleChildScrollView] isi menu.
-  static EdgeInsets roleMenuScrollPadding(BuildContext context) => EdgeInsets.only(
-        bottom: scrollEndGap(context),
-      );
+  static EdgeInsets roleMenuScrollPadding(BuildContext context) =>
+      listBottomPadding(context);
 
   /// Physics scroll konsisten (iOS bounce + selalu bisa drag meski konten pendek).
   static const ScrollPhysics scrollPhysics = AlwaysScrollableScrollPhysics(
     parent: BouncingScrollPhysics(),
   );
 
-  /// Padding scroll + inset bawah (home indicator) tanpa membungkus [SafeArea].
-  static EdgeInsets safeScrollPadding(BuildContext context) {
-    final pad = pagePadding(context);
-    final bottom = MediaQuery.viewPaddingOf(context).bottom;
-    return pad.copyWith(bottom: pad.bottom + bottom);
-  }
-
-  /// Pastikan konten tidak tertutup status bar / tombol navigasi Android.
-  static Widget avoidSystemBars(Widget child) {
+  /// Body [Scaffold] — lindungi konten dari navigation/gesture bar bawah.
+  /// [top: false] — AppBar sudah ditangani oleh Scaffold sendiri.
+  /// [maintainBottomViewPadding: false] — descendant melihat viewPadding.bottom = 0
+  /// sehingga [safeScrollPadding] di dalam tidak double-count inset nav bar.
+  static Widget scaffoldBody(Widget child) {
+    if (kIsWeb) return child;
     return SafeArea(
       top: false,
       left: false,
@@ -97,6 +132,21 @@ abstract final class ResponsiveLayout {
       child: child,
     );
   }
+
+  /// Alias untuk [scaffoldBody].
+  static Widget avoidSystemBars(Widget child) => scaffoldBody(child);
+
+  /// Safe area web mobile (notch / gesture bar browser).
+  static Widget appChrome(Widget child) {
+    if (!kIsWeb) return child;
+    return SafeArea(
+      minimum: EdgeInsets.zero,
+      child: child,
+    );
+  }
+
+  /// @deprecated — tidak dipakai; Gunakan [scaffoldBody] untuk Scaffold body.
+  static Widget webMobileChrome(Widget child) => appChrome(child);
 
   /// Form panjang — [SingleChildScrollView] + [Column] (andalan iOS/simulator).
   static Widget scrollableForm({
@@ -221,14 +271,4 @@ abstract final class ResponsiveLayout {
       ),
     );
   }
-
-  /// Safe area + inset keyboard untuk web mobile (notch, gesture bar).
-  static Widget webMobileChrome(Widget child) {
-    if (!kIsWeb) return child;
-    return SafeArea(
-      minimum: EdgeInsets.zero,
-      child: child,
-    );
-  }
-
 }

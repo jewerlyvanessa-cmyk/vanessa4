@@ -213,6 +213,10 @@ class AppTheme {
         ),
       ),
       scaffoldBackgroundColor: colorScheme.surface,
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
     );
   }
 }

@@ -4,6 +4,13 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { Pool } = require('pg');
 const fs = require('fs');
 
+function envFlag(name) {
+  const raw = process.env[name];
+  if (raw == null) return false;
+  const v = String(raw).trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes';
+}
+
 const requiredDbEnv = ['DB_USER', 'DB_HOST', 'DB_NAME', 'DB_PASSWORD', 'DB_PORT'];
 const missingDbEnv = requiredDbEnv.filter((key) => !process.env[key]);
 const envPath = path.join(__dirname, '.env');
@@ -32,10 +39,19 @@ if (!mustHaveEnv && missingDbEnv.length > 0) {
   );
 }
 
-if (isProduction && process.env.DB_SSL !== 'true') {
+if (isProduction && !envFlag('DB_SSL')) {
+  const seen = process.env.DB_SSL == null ? '(tidak ada)' : JSON.stringify(process.env.DB_SSL);
   throw new Error(
-    '[db] Production requires DB_SSL=true. Set DB_SSL and DB_* in backend/.env.'
+    `[db] Production requires DB_SSL=true. Nilai saat ini: ${seen}. ` +
+      'Edit .env di folder nodeapp, set DB_SSL=true, lalu: pm2 restart vanessa --update-env'
   );
+}
+
+function sslConfigFromEnv() {
+  if (!envFlag('DB_SSL')) return undefined;
+  return {
+    rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+  };
 }
 
 /** Semua TIMESTAMP tanpa zona (orders.created_at, dll.) = jam dinding WIB. */
@@ -63,10 +79,8 @@ if (
   );
 }
 
-if (process.env.DB_SSL === 'true') {
-  poolConfig.ssl = {
-    rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
-  };
+if (envFlag('DB_SSL')) {
+  poolConfig.ssl = sslConfigFromEnv();
 }
 
 const pool = new Pool(poolConfig);

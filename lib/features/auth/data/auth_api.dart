@@ -15,16 +15,21 @@ class AuthApi {
       body: jsonEncode({'username': username, 'password': password}),
     );
     if (res.statusCode != 200) {
-      String message = 'Login failed';
+      String message = 'Login gagal';
+      if (res.statusCode == 429) {
+        message =
+            'Server sibuk (terlalu banyak permintaan). '
+            'Tunggu beberapa detik lalu coba lagi.';
+      }
       try {
         final err = ApiClient.decodeJsonObject(res);
         final detail = (err['detail'] ?? err['details'] ?? err['error'] ?? '')
             .toString()
             .trim();
-        if (detail.isNotEmpty) message = detail;
+        if (detail.isNotEmpty && res.statusCode != 429) message = detail;
       } catch (_) {
         final body = res.body.trim();
-        if (body.isNotEmpty) message = body;
+        if (body.isNotEmpty && res.statusCode != 429) message = body;
       }
       throw ApiException(
         message,

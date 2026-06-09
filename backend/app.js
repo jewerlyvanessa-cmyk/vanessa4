@@ -74,6 +74,12 @@ if (!SECRET_KEY) {
 
 const app = express();
 
+// Di belakang reverse proxy (nginx) agar req.ip = IP klien, bukan IP proxy.
+// Tanpa ini, semua user di production bisa dihitung sebagai 1 IP → mudah kena 429.
+if (process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Middleware (shared)
 app.use(cors({
   origin: (origin, callback) => {
