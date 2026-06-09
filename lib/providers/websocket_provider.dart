@@ -15,6 +15,15 @@ void _wsLog(String message) {
   }());
 }
 
+/// Browser WebSocket hanya menerima close code 1000 atau 3000–4999.
+/// `goingAway` (1001) melempar DartError di Flutter web.
+void _closeWebSocketChannel(WebSocketChannel? channel) {
+  if (channel == null) return;
+  try {
+    channel.sink.close(status.normalClosure);
+  } catch (_) {}
+}
+
 // WebSocket provider untuk real-time updates
 final webSocketProvider =
     StateNotifierProvider<WebSocketNotifier, WebSocketChannel?>((ref) {
@@ -163,11 +172,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     _stopHeartbeat();
     final previous = _channel;
     _channel = null;
-    if (previous != null) {
-      try {
-        previous.sink.close(status.goingAway);
-      } catch (_) {}
-    }
+    _closeWebSocketChannel(previous);
 
     var wsUri = Uri.parse(NetworkConfig.wsUrl);
     final token = NetworkConfig.authToken;
@@ -243,9 +248,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
   void _handleConnectionError(String error) {
     _stopHeartbeat();
     clearWsBackendAliveProof();
-    try {
-      _channel?.sink.close(status.goingAway);
-    } catch (_) {}
+    _closeWebSocketChannel(_channel);
     _channel = null;
     _isReconnecting = true;
     state = null;
@@ -321,9 +324,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     _presenceRetryTimer = null;
     _reconnectTimer?.cancel();
     _reconnectAttempts = maxReconnectAttempts;
-    try {
-      _channel?.sink.close(status.goingAway);
-    } catch (_) {}
+    _closeWebSocketChannel(_channel);
     _channel = null;
     state = null;
   }
@@ -335,7 +336,7 @@ class WebSocketNotifier extends StateNotifier<WebSocketChannel?> {
     _presenceRetryTimer?.cancel();
     _presenceRetryTimer = null;
     _reconnectTimer?.cancel();
-    _channel?.sink.close(status.goingAway);
+    _closeWebSocketChannel(_channel);
     _channel = null;
     state = null;
     _isLoggedIn = false;
