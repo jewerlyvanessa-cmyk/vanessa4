@@ -26,36 +26,79 @@ double _pdfMmToPoints(double mm) => mm * 72.0 / 25.4;
 
 const double _kLabelPadMm = 0.8;
 const double _kCodeGapMm = 1.0;
+const double _kCodeSafetyMm = 1.2;
 
-double _headInnerWidthMm() =>
-    StockLabelGeometry.headPrintableWidthMm - 2 * _kLabelPadMm;
+class StockLabelCodeLayout {
+  const StockLabelCodeLayout({
+    required this.showQr,
+    required this.showBarcode,
+    required this.barcodeWidthMm,
+    required this.gapMm,
+  });
 
-double _barcodeWidthMmForHead(double headInnerW, {required bool withQr}) {
-  if (!withQr) {
-    return kStockLabelBarcodeWidthMm.clamp(0, headInnerW);
+  final bool showQr;
+  final bool showBarcode;
+  final double barcodeWidthMm;
+  final double gapMm;
+
+  double get totalWidthMm {
+    final qr = showQr ? kStockLabelQrMm : 0.0;
+    final bar = showBarcode ? barcodeWidthMm : 0.0;
+    final gap = showQr && showBarcode ? gapMm : 0.0;
+    return qr + gap + bar;
   }
-  final remaining = headInnerW - kStockLabelQrMm - _kCodeGapMm;
-  if (remaining < 4) return 0;
-  return kStockLabelBarcodeWidthMm.clamp(0, remaining);
 }
 
-/// Lebar blok QR/barcode di dalam kepala cetak (mm).
-double stockLabelCodeSectionWidthMm(StockLabelPrintChoice format) =>
-    _codeSectionWidthMm(format);
+double _codeZoneInnerWidthMm() =>
+    StockLabelGeometry.headCodeZoneWidthMm - 2 * _kLabelPadMm;
 
-double _codeSectionWidthMm(StockLabelPrintChoice format) {
-  final headW = _headInnerWidthMm();
+/// Pastikan QR/barcode tetap di kepala kanan.
+StockLabelCodeLayout stockLabelResolveCodeLayout(StockLabelPrintChoice format) {
+  final zoneInnerW = _codeZoneInnerWidthMm();
+  final zoneSafeW = (zoneInnerW - _kCodeSafetyMm).clamp(0, zoneInnerW).toDouble();
+  final qrW = kStockLabelQrMm.clamp(0, zoneInnerW).toDouble();
   switch (format) {
     case StockLabelPrintChoice.qr:
-      return kStockLabelQrMm.clamp(0, headW);
+      return StockLabelCodeLayout(
+        showQr: true,
+        showBarcode: false,
+        barcodeWidthMm: 0,
+        gapMm: 0,
+      );
     case StockLabelPrintChoice.barcode:
-      return _barcodeWidthMmForHead(headW, withQr: false);
+      return StockLabelCodeLayout(
+        showQr: false,
+        showBarcode: true,
+        barcodeWidthMm: kStockLabelBarcodeWidthMm
+            .clamp(0, zoneSafeW)
+            .toDouble(),
+        gapMm: 0,
+      );
     case StockLabelPrintChoice.both:
-      final barW = _barcodeWidthMmForHead(headW, withQr: true);
-      if (barW <= 0) return kStockLabelQrMm.clamp(0, headW);
-      return kStockLabelQrMm + _kCodeGapMm + barW;
+      final availableForBarcode = zoneSafeW - qrW - _kCodeGapMm;
+      if (availableForBarcode < 6) {
+        // Jika tidak muat, prioritaskan QR agar tetap terbaca.
+        return StockLabelCodeLayout(
+          showQr: true,
+          showBarcode: false,
+          barcodeWidthMm: 0,
+          gapMm: 0,
+        );
+      }
+      return StockLabelCodeLayout(
+        showQr: true,
+        showBarcode: true,
+        barcodeWidthMm: kStockLabelBarcodeWidthMm
+            .clamp(0, availableForBarcode)
+            .toDouble(),
+        gapMm: _kCodeGapMm,
+      );
   }
 }
+
+/// Lebar blok QR/barcode di dalam zona kode (kepala kanan), mm.
+double stockLabelCodeSectionWidthMm(StockLabelPrintChoice format) =>
+    stockLabelResolveCodeLayout(format).totalWidthMm;
 
 /// Pilihan format cetak label stok.
 enum StockLabelPrintChoice { qr, barcode, both }
@@ -67,12 +110,6 @@ String stockItemQrPayload(Map<String, dynamic> item) {
   final id = item['item_id'];
   if (id != null) return id.toString();
   return '';
-}
-
-String _displayTitle(String titleLine, String payload) {
-  final t = titleLine.trim();
-  if (t.isNotEmpty) return t;
-  return payload.isNotEmpty ? payload : 'Label stok';
 }
 
 String? _formatLabelWeight(dynamic raw) {
@@ -98,12 +135,22 @@ String? _formatLabelPurity(dynamic raw) {
   );
 }
 
-String? _metaLine({String? weight, String? purity}) {
-  final parts = <String>[];
-  if (weight != null) parts.add('Berat: $weight');
-  if (purity != null) parts.add('Kadar: $purity');
-  if (parts.isEmpty) return null;
-  return parts.join(' · ');
+String _orDash(String? value) {
+  final t = value?.trim() ?? '';
+  return t.isEmpty ? '-' : t;
+}
+
+/// Teks label selalu 3 baris tetap: kode, kadar, berat.
+List<String> stockLabelTextLines({
+  required String payload,
+  String? purity,
+  String? weight,
+}) {
+  return <String>[
+    'Kode: ${payload.trim()}',
+    'Kadar: ${_orDash(purity)}',
+    'Berat: ${_orDash(weight)}',
+  ];
 }
 
 pw.Widget _qrBlock(String payload) {
@@ -116,57 +163,35 @@ pw.Widget _qrBlock(String payload) {
   );
 }
 
-pw.Widget _barcodeBlock(String payload) {
+pw.Widget _barcodeBlock(String payload, double widthMm) {
   return pw.BarcodeWidget(
     barcode: pw.Barcode.code128(),
     data: payload,
-    width: _pdfMmToPoints(kStockLabelBarcodeWidthMm),
+    width: _pdfMmToPoints(widthMm),
     height: _pdfMmToPoints(kStockLabelBarcodeHeightMm),
     drawText: false,
   );
 }
 
 pw.Widget _labelTextColumn({
-  required String displayTitle,
-  required String payload,
-  String? weight,
-  String? purity,
+  required List<String> lines,
 }) {
-  final titleStyle =
-      pw.TextStyle(fontSize: 5.5, fontWeight: pw.FontWeight.bold);
-  final metaStyle = pw.TextStyle(fontSize: 4.8);
-  final codeStyle = pw.TextStyle(fontSize: 5.2);
-
-  final meta = _metaLine(weight: weight, purity: purity);
-  final children = <pw.Widget>[
-    pw.Text(
-      displayTitle,
-      style: titleStyle,
-      maxLines: 1,
-      overflow: pw.TextOverflow.clip,
-    ),
-  ];
-  if (meta != null) {
+  final normal = pw.TextStyle(fontSize: 4.8);
+  final bold = pw.TextStyle(fontSize: 5.1, fontWeight: pw.FontWeight.bold);
+  final children = <pw.Widget>[];
+  for (var i = 0; i < lines.length; i++) {
     children.add(
       pw.Text(
-        meta,
-        style: metaStyle,
+        lines[i],
+        style: i == 0 ? bold : normal,
         maxLines: 1,
         overflow: pw.TextOverflow.clip,
       ),
     );
   }
-  children.add(
-    pw.Text(
-      payload,
-      style: codeStyle,
-      maxLines: 1,
-      overflow: pw.TextOverflow.clip,
-    ),
-  );
 
   return pw.Column(
-    crossAxisAlignment: pw.CrossAxisAlignment.end,
+    crossAxisAlignment: pw.CrossAxisAlignment.start,
     mainAxisAlignment: pw.MainAxisAlignment.center,
     mainAxisSize: pw.MainAxisSize.min,
     children: children,
@@ -175,20 +200,18 @@ pw.Widget _labelTextColumn({
 
 pw.Widget _codeBlocksRow(
   String payload,
-  StockLabelPrintChoice format,
-  double gap,
+  StockLabelCodeLayout layout,
+  double gapPt,
 ) {
   final children = <pw.Widget>[];
-  if (format == StockLabelPrintChoice.qr ||
-      format == StockLabelPrintChoice.both) {
+  if (layout.showQr) {
     children.add(_qrBlock(payload));
   }
-  if (format == StockLabelPrintChoice.both) {
-    children.add(pw.SizedBox(width: gap));
+  if (layout.showQr && layout.showBarcode) {
+    children.add(pw.SizedBox(width: gapPt));
   }
-  if (format == StockLabelPrintChoice.barcode ||
-      format == StockLabelPrintChoice.both) {
-    children.add(_barcodeBlock(payload));
+  if (layout.showBarcode) {
+    children.add(_barcodeBlock(payload, layout.barcodeWidthMm));
   }
   return pw.Row(
     mainAxisSize: pw.MainAxisSize.min,
@@ -203,11 +226,17 @@ pw.Widget _stockLabelPageContent({
   required StockLabelPrintChoice format,
   Map<String, dynamic>? item,
 }) {
-  final displayTitle = _displayTitle(titleLine, payload);
   final meta = _labelMetaFromItem(item);
+  final textLines = stockLabelTextLines(
+    payload: payload,
+    purity: meta.purity,
+    weight: meta.weight,
+  );
+  final layout = stockLabelResolveCodeLayout(format);
   final pad = _pdfMmToPoints(_kLabelPadMm);
-  final gap = _pdfMmToPoints(_kCodeGapMm);
-  final codeWidthMm = _codeSectionWidthMm(format);
+  final gapPt = _pdfMmToPoints(layout.gapMm);
+  final textZoneWPt = _pdfMmToPoints(StockLabelGeometry.headTextZoneWidthMm);
+  final codeZoneWPt = _pdfMmToPoints(StockLabelGeometry.headCodeZoneWidthMm);
 
   return pw.SizedBox(
     width: _pdfMmToPoints(kStockLabelWidthMm),
@@ -220,39 +249,42 @@ pw.Widget _stockLabelPageContent({
           child: pw.SizedBox(
             width: _pdfMmToPoints(StockLabelGeometry.headPrintableWidthMm),
             height: _pdfMmToPoints(StockLabelGeometry.printableHeightMm),
-            child: pw.Padding(
-            padding: pw.EdgeInsets.all(pad),
             child: pw.Stack(
               children: [
                 pw.Positioned(
                   left: 0,
-                  right: _pdfMmToPoints(codeWidthMm + _kCodeGapMm),
                   top: 0,
                   bottom: 0,
-                  child: pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: _labelTextColumn(
-                      displayTitle: displayTitle,
-                      payload: payload,
-                      weight: meta.weight,
-                      purity: meta.purity,
+                  child: pw.SizedBox(
+                    width: textZoneWPt,
+                    child: pw.Padding(
+                      padding: pw.EdgeInsets.all(pad),
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerLeft,
+                        child: _labelTextColumn(
+                          lines: textLines,
+                        ),
+                      ),
                     ),
                   ),
                 ),
                 pw.Positioned(
-                  right: 0,
+                  left: textZoneWPt,
                   top: 0,
                   bottom: 0,
                   child: pw.SizedBox(
-                    width: _pdfMmToPoints(codeWidthMm),
-                    child: pw.Center(
-                      child: _codeBlocksRow(payload, format, gap),
+                    width: codeZoneWPt,
+                    child: pw.Padding(
+                      padding: pw.EdgeInsets.all(pad),
+                      child: pw.Align(
+                        alignment: pw.Alignment.center,
+                        child: _codeBlocksRow(payload, layout, gapPt),
+                      ),
                     ),
                   ),
                 ),
               ],
             ),
-          ),
           ),
         ),
       ],

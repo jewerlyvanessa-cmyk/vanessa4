@@ -112,6 +112,34 @@ abstract final class XprinterTsplPrint {
     );
   }
 
+  // ── Auto-posisi roll baru ─────────────────────────────────────────────────
+
+  /// Kirim EOP ke printer: scan maju hingga sensor gap menemukan celah,
+  /// berhenti tepat di awal label pertama. Gunakan SEKALI per ganti roll.
+  static Future<void> autoPositionNewRoll(
+    BuildContext context,
+    BondedBluetoothPrinter printer,
+  ) async {
+    try {
+      final ok = await _sendRawTspl(
+        address: printer.address,
+        data: StockLabelTspl.buildNewRollPositionJob(),
+      );
+      if (!context.mounted) return;
+      if (ok) {
+        _snack(
+          context,
+          'Posisi label pertama siap. Mulai cetak kapan saja.',
+        );
+      } else {
+        _snack(context, 'Printer tidak merespons. Coba lagi.');
+      }
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      _snack(context, e.message ?? 'Gagal posisi roll baru: ${e.code}');
+    }
+  }
+
   // ── Pick printer UI ───────────────────────────────────────────────────────
 
   static Future<BondedBluetoothPrinter?> pickPrinter(
@@ -195,6 +223,23 @@ abstract final class XprinterTsplPrint {
                     : null,
                 onTap: () => Navigator.pop(ctx, device),
               ),
+            const Divider(height: 1),
+            // Tombol roll baru: EOP sekali untuk auto-posisi dari posisi mana pun.
+            // Dilakukan SEKALI per ganti roll, setelah itu posisi otomatis.
+            for (final device in devices)
+              if (saved?.address == device.address)
+                ListTile(
+                  leading: const Icon(Icons.restart_alt, color: Colors.orange),
+                  title: const Text('Posisikan Roll Baru'),
+                  subtitle: const Text(
+                    'Tekan jika baru ganti roll — printer akan cari '
+                    'label pertama otomatis',
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    autoPositionNewRoll(context, device);
+                  },
+                ),
             const SizedBox(height: 8),
           ],
         ),
@@ -247,13 +292,7 @@ abstract final class XprinterTsplPrint {
     final bytes = StockLabelTspl.buildBatch(labels: labels);
 
     try {
-      final ok = await _channel.invokeMethod<bool>(
-        'printTsplBluetooth',
-        <String, dynamic>{
-          'address': selected.address,
-          'data': bytes,
-        },
-      );
+      final ok = await _sendRawTspl(address: selected.address, data: bytes);
 
       if (ok != true) throw const TsplPrintException('Printer tidak merespons.');
 
@@ -294,6 +333,20 @@ abstract final class XprinterTsplPrint {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  static Future<bool> _sendRawTspl({
+    required String address,
+    required Uint8List data,
+  }) async {
+    final ok = await _channel.invokeMethod<bool>(
+      'printTsplBluetooth',
+      <String, dynamic>{
+        'address': address,
+        'data': data,
+      },
+    );
+    return ok == true;
   }
 }
 

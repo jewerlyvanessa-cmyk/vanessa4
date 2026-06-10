@@ -6,7 +6,12 @@ void main() {
     expect(StockLabelGeometry.dimensionsConsistent, isTrue);
     expect(StockLabelGeometry.headPrintableLeftMm, 32);
     expect(StockLabelGeometry.headPrintableRightMm, 77);
+    expect(StockLabelGeometry.tsplHeadLeftMm, 29);
+    expect(StockLabelGeometry.tsplMediaWidthMm, 74);
     expect(StockLabelGeometry.headPrintableWidthMm, 45);
+    expect(StockLabelGeometry.headTextZoneWidthMm, 23);
+    expect(StockLabelGeometry.headCodeZoneWidthMm, 22);
+    expect(StockLabelGeometry.headCodeZoneLeftMm, 55);
     expect(StockLabelGeometry.printableHeightMm, 12);
   });
 }
