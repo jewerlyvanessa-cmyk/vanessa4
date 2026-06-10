@@ -5,16 +5,15 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:vanessa3/utils/save_download_bytes.dart';
+import 'package:vanessa3/utils/stock_label_geometry.dart';
 import 'package:vanessa3/utils/xprinter_tspl_print.dart';
 
-/// Label stok thermal: 80 × 12 mm (satu label per halaman PDF).
-const double kStockLabelWidthMm = 80;
-const double kStockLabelHeightMm = 12;
+/// Label stok thermal jewelry Yupo — roll 80×12 mm, cetak di kepala 45×12 mm.
+const double kStockLabelWidthMm = StockLabelGeometry.totalWidthMm;
+const double kStockLabelHeightMm = StockLabelGeometry.totalHeightMm;
 const double kStockLabelQrMm = 8;
 const double kStockLabelBarcodeWidthMm = 20;
 const double kStockLabelBarcodeHeightMm = 8;
-/// Jarak tepi kanan label ke area teks (judul / berat / kode): 2,5 cm.
-const double kStockLabelTextOffsetFromRightMm = 25;
 
 PdfPageFormat get stockLabelPageFormat => PdfPageFormat(
       kStockLabelWidthMm * PdfPageFormat.mm,
@@ -28,14 +27,33 @@ double _pdfMmToPoints(double mm) => mm * 72.0 / 25.4;
 const double _kLabelPadMm = 0.8;
 const double _kCodeGapMm = 1.0;
 
+double _headInnerWidthMm() =>
+    StockLabelGeometry.headPrintableWidthMm - 2 * _kLabelPadMm;
+
+double _barcodeWidthMmForHead(double headInnerW, {required bool withQr}) {
+  if (!withQr) {
+    return kStockLabelBarcodeWidthMm.clamp(0, headInnerW);
+  }
+  final remaining = headInnerW - kStockLabelQrMm - _kCodeGapMm;
+  if (remaining < 4) return 0;
+  return kStockLabelBarcodeWidthMm.clamp(0, remaining);
+}
+
+/// Lebar blok QR/barcode di dalam kepala cetak (mm).
+double stockLabelCodeSectionWidthMm(StockLabelPrintChoice format) =>
+    _codeSectionWidthMm(format);
+
 double _codeSectionWidthMm(StockLabelPrintChoice format) {
+  final headW = _headInnerWidthMm();
   switch (format) {
     case StockLabelPrintChoice.qr:
-      return kStockLabelQrMm;
+      return kStockLabelQrMm.clamp(0, headW);
     case StockLabelPrintChoice.barcode:
-      return kStockLabelBarcodeWidthMm;
+      return _barcodeWidthMmForHead(headW, withQr: false);
     case StockLabelPrintChoice.both:
-      return kStockLabelQrMm + _kCodeGapMm + kStockLabelBarcodeWidthMm;
+      final barW = _barcodeWidthMmForHead(headW, withQr: true);
+      if (barW <= 0) return kStockLabelQrMm.clamp(0, headW);
+      return kStockLabelQrMm + _kCodeGapMm + barW;
   }
 }
 
@@ -194,38 +212,50 @@ pw.Widget _stockLabelPageContent({
   return pw.SizedBox(
     width: _pdfMmToPoints(kStockLabelWidthMm),
     height: _pdfMmToPoints(kStockLabelHeightMm),
-    child: pw.Padding(
-      padding: pw.EdgeInsets.all(pad),
-      child: pw.Stack(
-        children: [
-          pw.Positioned(
-            left: 0,
-            right: _pdfMmToPoints(kStockLabelTextOffsetFromRightMm - _kLabelPadMm),
-            top: 0,
-            bottom: 0,
-            child: pw.Align(
-              alignment: pw.Alignment.centerRight,
-              child: _labelTextColumn(
-                displayTitle: displayTitle,
-                payload: payload,
-                weight: meta.weight,
-                purity: meta.purity,
-              ),
+    child: pw.Stack(
+      children: [
+        pw.Positioned(
+          left: _pdfMmToPoints(StockLabelGeometry.headPrintableLeftMm),
+          top: _pdfMmToPoints(StockLabelGeometry.headPrintableTopMm),
+          child: pw.SizedBox(
+            width: _pdfMmToPoints(StockLabelGeometry.headPrintableWidthMm),
+            height: _pdfMmToPoints(StockLabelGeometry.printableHeightMm),
+            child: pw.Padding(
+            padding: pw.EdgeInsets.all(pad),
+            child: pw.Stack(
+              children: [
+                pw.Positioned(
+                  left: 0,
+                  right: _pdfMmToPoints(codeWidthMm + _kCodeGapMm),
+                  top: 0,
+                  bottom: 0,
+                  child: pw.Align(
+                    alignment: pw.Alignment.centerRight,
+                    child: _labelTextColumn(
+                      displayTitle: displayTitle,
+                      payload: payload,
+                      weight: meta.weight,
+                      purity: meta.purity,
+                    ),
+                  ),
+                ),
+                pw.Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: pw.SizedBox(
+                    width: _pdfMmToPoints(codeWidthMm),
+                    child: pw.Center(
+                      child: _codeBlocksRow(payload, format, gap),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          pw.Positioned(
-            right: 0,
-            top: 0,
-            bottom: 0,
-            child: pw.SizedBox(
-              width: _pdfMmToPoints(codeWidthMm),
-              child: pw.Center(
-                child: _codeBlocksRow(payload, format, gap),
-              ),
-            ),
           ),
-        ],
-      ),
+        ),
+      ],
     ),
   );
 }

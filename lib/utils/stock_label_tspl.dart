@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
+import 'package:vanessa3/utils/stock_label_geometry.dart';
 
-/// TSPL untuk Xprinter XP-TT426B — label Yupo gap 80×12 mm @ 203 DPI.
+/// TSPL untuk Xprinter XP-TT426B — label jewelry Yupo 80×12 mm @ 203 DPI.
 ///
-/// Media: Yupo, lebar 80 mm, tinggi 12 mm, 1 baris, core 1″ (25,4 mm).
+/// Cetak di kepala kiri+kanan (45×12 mm); ekor dan tepi backing tidak dicetak.
 /// Sensor gap dipakai untuk mendeteksi posisi label sebelum cetak.
 abstract final class StockLabelTspl {
   StockLabelTspl._();
@@ -28,17 +29,6 @@ abstract final class StockLabelTspl {
     final t = value.trim();
     if (t.length <= maxChars) return t;
     return '${t.substring(0, maxChars - 1)}…';
-  }
-
-  static double _codeSectionWidthMm(StockLabelPrintChoice format) {
-    switch (format) {
-      case StockLabelPrintChoice.qr:
-        return kStockLabelQrMm;
-      case StockLabelPrintChoice.barcode:
-        return kStockLabelBarcodeWidthMm;
-      case StockLabelPrintChoice.both:
-        return kStockLabelQrMm + _kCodeGapMm + kStockLabelBarcodeWidthMm;
-    }
   }
 
   /// Setup media + kalibrasi gap sensor (sekali per job cetak).
@@ -69,18 +59,21 @@ GAPDETECT $labelHDots,$gapDots
     return (zoneRight - width).clamp(zoneLeft, zoneRight);
   }
 
-  static void _writeTextBlock(
+  static void _writeTextBlockInHead(
     StringBuffer buf, {
     required List<String> lines,
     required int zoneLeft,
     required int zoneRight,
-    required int labelH,
+    required int headTop,
+    required int headH,
     required int pad,
   }) {
     if (lines.isEmpty) return;
 
     final blockH = lines.length * _fontLineHeightDots;
-    var y = ((labelH - blockH) / 2).round().clamp(pad, labelH - blockH);
+    var y = (headTop + ((headH - blockH) / 2))
+        .round()
+        .clamp(headTop + pad, headTop + headH - blockH);
 
     for (final line in lines) {
       final x = _textXRightAligned(line, zoneLeft, zoneRight);
@@ -99,11 +92,14 @@ GAPDETECT $labelHDots,$gapDots
     if (payload.trim().isEmpty) return null;
 
     final pad = mmToDots(_kLabelPadMm);
-    final labelW = mmToDots(kStockLabelWidthMm);
-    final labelH = mmToDots(kStockLabelHeightMm);
-    final textZoneLeft = pad;
-    final textZoneRight =
-        labelW - mmToDots(kStockLabelTextOffsetFromRightMm);
+    final headLeft = mmToDots(StockLabelGeometry.headPrintableLeftMm);
+    final headRight = mmToDots(StockLabelGeometry.headPrintableRightMm);
+    final headTop = mmToDots(StockLabelGeometry.headPrintableTopMm);
+    final headH = mmToDots(StockLabelGeometry.printableHeightMm);
+
+    final codeBlockW = mmToDots(stockLabelCodeSectionWidthMm(format));
+    final textZoneLeft = headLeft + pad;
+    final textZoneRight = headRight - pad - codeBlockW;
     if (textZoneRight <= textZoneLeft) return null;
 
     final title = _truncate(
@@ -123,37 +119,40 @@ GAPDETECT $labelHDots,$gapDots
     final qrDots = mmToDots(kStockLabelQrMm);
     final barH = mmToDots(kStockLabelBarcodeHeightMm);
     final codeGap = mmToDots(_kCodeGapMm);
-    final codeBlockW = mmToDots(_codeSectionWidthMm(format));
 
     final buf = StringBuffer();
     buf.writeln('CLS');
 
-    _writeTextBlock(
+    _writeTextBlockInHead(
       buf,
       lines: textLines,
       zoneLeft: textZoneLeft,
       zoneRight: textZoneRight,
-      labelH: labelH,
+      headTop: headTop,
+      headH: headH,
       pad: pad,
     );
 
-    // Blok QR/barcode di tepi kanan, vertikal di tengah (sama seperti PDF).
-    var codeX = labelW - pad - codeBlockW;
+    var codeX = headRight - pad - codeBlockW;
+    final includeBarcode = format == StockLabelPrintChoice.barcode ||
+        (format == StockLabelPrintChoice.both &&
+            stockLabelCodeSectionWidthMm(format) > kStockLabelQrMm + _kCodeGapMm);
 
     if (format == StockLabelPrintChoice.qr ||
         format == StockLabelPrintChoice.both) {
-      final qrY = ((labelH - qrDots) / 2).round().clamp(pad, labelH - qrDots);
+      final qrY =
+          (headTop + ((headH - qrDots) / 2)).round().clamp(headTop + pad, headTop + headH - qrDots);
       buf.writeln(
         'QRCODE $codeX,$qrY,M,3,A,0,M2,S3,"${_esc(payload)}"',
       );
-      if (format == StockLabelPrintChoice.both) {
+      if (includeBarcode && format == StockLabelPrintChoice.both) {
         codeX += qrDots + codeGap;
       }
     }
 
-    if (format == StockLabelPrintChoice.barcode ||
-        format == StockLabelPrintChoice.both) {
-      final barY = ((labelH - barH) / 2).round().clamp(pad, labelH - barH);
+    if (includeBarcode) {
+      final barY =
+          (headTop + ((headH - barH) / 2)).round().clamp(headTop + pad, headTop + headH - barH);
       buf.writeln(
         'BARCODE $codeX,$barY,"128",$barH,0,0,2,4,"${_esc(payload)}"',
       );
