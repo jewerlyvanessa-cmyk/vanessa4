@@ -78,7 +78,9 @@ abstract final class StockLabelGeometry {
   /// Geser ke kanan: naikkan [tsplCalibrationOffsetXMm].
   /// Geser ke bawah: naikkan [tsplCalibrationOffsetYMm].
   static const double tsplCalibrationOffsetXMm = 0;
-  static const double tsplCalibrationOffsetYMm = 0;
+
+  /// Geser konten ke bawah setelah uji fisik (margin bawah ~5mm → ~1mm).
+  static const double tsplCalibrationOffsetYMm = 3.5;
 
   static const double tsplReferenceLeftMm =
       tsplHeadLeftMm + tsplCalibrationOffsetXMm;

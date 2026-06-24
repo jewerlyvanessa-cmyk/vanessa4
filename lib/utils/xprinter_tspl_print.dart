@@ -29,6 +29,8 @@ class BondedBluetoothPrinter {
 abstract final class XprinterTsplPrint {
   XprinterTsplPrint._();
 
+  static bool _printInFlight = false;
+
   // ── Permission ────────────────────────────────────────────────────────────
 
   /// Tampilkan dialog sistem Android untuk meminta izin Bluetooth.
@@ -114,12 +116,17 @@ abstract final class XprinterTsplPrint {
 
   // ── Auto-posisi roll baru ─────────────────────────────────────────────────
 
-  /// Kirim EOP ke printer: scan maju hingga sensor gap menemukan celah,
-  /// berhenti tepat di awal label pertama. Gunakan SEKALI per ganti roll.
+  /// GAPDETECT: kalibrasi sensor gap roll (tanpa HOME — TSPL2 skip label).
+  /// Gunakan SEKALI per ganti roll.
   static Future<void> autoPositionNewRoll(
     BuildContext context,
     BondedBluetoothPrinter printer,
   ) async {
+    if (_printInFlight) {
+      _snack(context, 'Tunggu cetak selesai sebelum posisi roll baru.');
+      return;
+    }
+    _printInFlight = true;
     try {
       final ok = await _sendRawTspl(
         address: printer.address,
@@ -137,6 +144,8 @@ abstract final class XprinterTsplPrint {
     } on PlatformException catch (e) {
       if (!context.mounted) return;
       _snack(context, e.message ?? 'Gagal posisi roll baru: ${e.code}');
+    } finally {
+      _printInFlight = false;
     }
   }
 
@@ -289,12 +298,28 @@ abstract final class XprinterTsplPrint {
       return;
     }
 
-    final bytes = StockLabelTspl.buildBatch(labels: labels);
-
     try {
+      if (_printInFlight) {
+        _snack(
+          context,
+          'Cetak sedang berjalan. Tunggu printer selesai sebelum kirim lagi.',
+        );
+        return;
+      }
+      _printInFlight = true;
+
+      if (!context.mounted) return;
+      _snack(context, 'Mengirim ${labels.length} label ke ${selected.name}…');
+
+      final bytes = StockLabelTspl.buildBatch(labels: labels);
       final ok = await _sendRawTspl(address: selected.address, data: bytes);
 
-      if (ok != true) throw const TsplPrintException('Printer tidak merespons.');
+      if (ok != true) {
+        throw const TsplPrintException(
+          'Printer tidak merespons. Pastikan printer nyala, tidak pause, '
+          'dan coba «Posisikan Roll Baru» jika baru ganti roll.',
+        );
+      }
 
       await _savePrinter(selected);
       if (!context.mounted) return;
@@ -311,6 +336,8 @@ abstract final class XprinterTsplPrint {
       } else {
         _snack(context, e.message ?? 'Gagal cetak TSPL: ${e.code}');
       }
+    } finally {
+      _printInFlight = false;
     }
   }
 

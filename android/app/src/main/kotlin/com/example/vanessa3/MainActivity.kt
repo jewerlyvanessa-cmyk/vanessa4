@@ -141,15 +141,25 @@ class MainActivity : FlutterFragmentActivity() {
             result.error("invalid_args", "address and data required", null)
             return
         }
-        // Tidak ada pre-check checkSelfPermission — tidak akurat di Xiaomi/MIUI.
-        try {
-            TsplBluetoothPrinter.print(address, data)
-            result.success(true)
-        } catch (e: SecurityException) {
-            result.error("permission_denied", "Izin perangkat terdekat (Bluetooth) belum diberikan", null)
-        } catch (e: Exception) {
-            result.error("print_failed", e.message, null)
-        }
+        // Kirim di thread terpisah — write + settle delay bisa >1 detik.
+        Thread {
+            try {
+                TsplBluetoothPrinter.print(address, data)
+                runOnUiThread { result.success(true) }
+            } catch (e: SecurityException) {
+                runOnUiThread {
+                    result.error(
+                        "permission_denied",
+                        "Izin perangkat terdekat (Bluetooth) belum diberikan",
+                        null,
+                    )
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    result.error("print_failed", e.message, null)
+                }
+            }
+        }.start()
     }
 
     private fun readPdfBytes(call: MethodCall): ByteArray? {

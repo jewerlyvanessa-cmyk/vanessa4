@@ -7,30 +7,29 @@ import 'package:vanessa3/utils/stock_label_geometry.dart';
 /// TSPL untuk Xprinter XP-TT426B — label jewelry Yupo @ 203 DPI.
 ///
 /// Skenario cetak:
-///  1. Header kirim BACKFEED = persis sama dengan feed akhir job sebelumnya.
-///     Printer menarik kertas mundur ke posisi label pertama sebelum cetak.
-///  2. Cetak semua label, teks di tengah kepala kiri, barcode di kepala kanan.
-///  3. Setelah label terakhir, feed maju [kPostPrintExtraLabels] label kosong
-///     agar label terakhir mudah disobek.
-///
-/// Simetri: BACKFEED == post-print feed → posisi selalu tepat secara otomatis.
-/// Pertama kali (fresh roll): user tekan FEED printer 1× untuk align awal.
+///  1. Header: SIZE/GAP/SET TEAR ON — tanpa HOME (TSPL2 HOME feed maju → skip label).
+///  2. PRINT otomatis deteksi gap per label via sensor.
+///  3. Tanpa FEED ekstra di akhir job — SET TEAR ON sudah maju ke tear bar;
+///     FEED 2 pitch sebelumnya membuang 2 label kosong antar sesi cetak.
 abstract final class StockLabelTspl {
   StockLabelTspl._();
 
   static const int _dpi = 203;
   static const int _density = 8;
 
-  /// Jarak antar-label (celah die-cut) pada roll gap Yupo, mm.
-  static const double kYupoLabelGapMm = 2.0;
+  /// Jarak antar-label (celah die-cut) pada roll gap Yupo, mm — ukur fisik roll.
+  static const double kYupoLabelGapMm = 3.0;
 
-  /// Jumlah label kosong yang dikeluarkan setelah cetak terakhir.
-  static const double kPostPrintExtraLabels = 4.0;
-
-  static const int _fontCharWidthDots = 8;
-  static const int _fontLineHeightDots = 14;
+  static const int _fontBaseCharWidthDots = 8;
+  static const int _fontBaseCharHeightDots = 12;
 
   static int mmToDots(double mm) => (mm * _dpi / 25.4).round();
+
+  /// Xprinter TSPL mengharapkan CRLF; LF saja kadang diabaikan firmware.
+  static Uint8List _encodeTspl(String commands) {
+    final normalized = commands.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+    return Uint8List.fromList(utf8.encode(normalized));
+  }
 
   static String _esc(String value) =>
       value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
@@ -45,14 +44,19 @@ abstract final class StockLabelTspl {
 
   static int get _headHeightDots => mmToDots(StockLabelGeometry.headPrintableHeightMm);
 
-  /// Setup media + anchor origin kepala, plus retrak otomatis.
+  /// Batas maksimum jarak pencarian gap oleh sensor (mm).
+  /// 4× pitch agar sensor tidak runaway jika gap terlewat.
+  static double get _limitFeedMm =>
+      (StockLabelGeometry.tsplMediaHeightMm + kYupoLabelGapMm) * 4;
+
+  /// Setup media + anchor origin kepala.
   ///
-  /// BACKFEED = persis sama dengan post-print feed akhir job sebelumnya,
-  /// sehingga printer selalu kembali ke label pertama secara otomatis.
+  /// Tidak ada HOME/FORMFEED di sini — XP-TT426B adalah TSPL2 di mana
+  /// HOME feeds FORWARD (skip label). SET TEAR ON + PRINT menangani
+  /// posisi secara otomatis via gap sensor untuk setiap label.
   static String _jobHeader() {
     final refX = mmToDots(StockLabelGeometry.tsplReferenceLeftMm);
     final refY = mmToDots(StockLabelGeometry.tsplReferenceTopMm);
-    final backfeedDots = _postPrintFeedDots();
 
     return '''
 SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,${StockLabelGeometry.tsplMediaHeightMm} mm
@@ -65,7 +69,7 @@ OFFSET 0 mm
 SET TEAR ON
 SET PEEL OFF
 SET CUTTER OFF
-BACKFEED $backfeedDots
+LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
 ''';
   }
 
@@ -81,31 +85,16 @@ BACKFEED $backfeedDots
       )
       ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
-    return Uint8List.fromList(utf8.encode(buf.toString()));
+    return _encodeTspl(buf.toString());
   }
 
-  /// Auto-posisi untuk roll baru dari POSISI MANA PUN.
+  /// Auto-posisi untuk roll baru / setelah buka cover printer dari posisi mana pun.
   ///
-  /// Kirim SIZE + GAP lalu [EOP]: printer scan maju sampai sensor gap
-  /// menemukan celah antar-label, berhenti tepat di awal label berikutnya.
-  /// Membuang paling banyak 1 label (bagian label saat ini yang terlewat).
-  /// Cukup dilakukan SEKALI setiap ganti roll; setelah itu BACKFEED simetris
-  /// menangani posisi otomatis antar job.
+  /// Hanya GAPDETECT — HOME pada TSPL2 feed maju dan membuang label kosong.
+  /// Panggil SEKALI saat pasang roll baru, lalu cetak normal.
   static Uint8List buildNewRollPositionJob() {
-    final buf = StringBuffer()
-      ..writeln(
-        'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
-        '${StockLabelGeometry.tsplMediaHeightMm} mm',
-      )
-      ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
-      ..writeln('DIRECTION 1,0')
-      ..writeln('EOP');
-    return Uint8List.fromList(utf8.encode(buf.toString()));
-  }
-
-  /// Pre-check posisi awal paper sebelum job print:
-  /// minta printer cari top-of-label saat ini (tanpa cetak).
-  static Uint8List buildPrePrintCheckJob() {
+    final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
+    final gapDots = mmToDots(kYupoLabelGapMm);
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
@@ -114,14 +103,81 @@ BACKFEED $backfeedDots
       ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
-      ..writeln('HOME');
-    return Uint8List.fromList(utf8.encode(buf.toString()));
+      ..writeln('LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm')
+      ..writeln('GAPDETECT $labelHDots,$gapDots');
+    return _encodeTspl(buf.toString());
   }
 
-  static int _maxCharsForZone(int zoneLeft, int zoneRight) {
-    final zoneW = (zoneRight - zoneLeft).clamp(0, 10000);
-    return (zoneW / _fontCharWidthDots).floor().clamp(4, 40);
+  /// Pre-check posisi awal paper sebelum job print (tanpa cetak).
+  static Uint8List buildPrePrintCheckJob() {
+    final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
+    final gapDots = mmToDots(kYupoLabelGapMm);
+    final buf = StringBuffer()
+      ..writeln(
+        'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
+        '${StockLabelGeometry.tsplMediaHeightMm} mm',
+      )
+      ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
+      ..writeln('DIRECTION 1,0')
+      ..writeln('OFFSET 0 mm')
+      ..writeln('GAPDETECT $labelHDots,$gapDots');
+    return _encodeTspl(buf.toString());
   }
+
+  static int _maxCharsForZone(int zoneLeft, int zoneRight, {int xMul = 1}) {
+    final zoneW = (zoneRight - zoneLeft).clamp(0, 10000);
+    final charW = _fontBaseCharWidthDots * xMul;
+    return (zoneW / charW).floor().clamp(4, 40);
+  }
+
+  /// Tinggi vertikal zona konten — sama dengan slot QR (9 mm) atau barcode (8 mm).
+  static int _contentBandHeightDots(StockLabelCodeLayout layout) {
+    if (layout.showQr) return mmToDots(kStockLabelQrMm);
+    return mmToDots(kStockLabelBarcodeHeightMm);
+  }
+
+  /// Skala font TSPL "1" agar [lineCount] baris memenuhi [bandHeightDots].
+  static ({
+    int yMul,
+    int xMul,
+    int lineHeightDots,
+    int charHeightDots,
+  }) _fitTextMetrics(int bandHeightDots, int lineCount) {
+    for (final yMul in [2, 1]) {
+      final charH = _fontBaseCharHeightDots * yMul;
+      if (lineCount <= 0) break;
+      if (lineCount == 1) {
+        if (charH <= bandHeightDots) {
+          return (
+            yMul: yMul,
+            xMul: 1,
+            lineHeightDots: charH,
+            charHeightDots: charH,
+          );
+        }
+        continue;
+      }
+      final step = ((bandHeightDots - charH) / (lineCount - 1)).floor();
+      if (step < (charH * 2 / 3).floor()) continue;
+      final blockH = charH + (lineCount - 1) * step;
+      if (blockH <= bandHeightDots) {
+        return (
+          yMul: yMul,
+          xMul: 1,
+          lineHeightDots: step,
+          charHeightDots: charH,
+        );
+      }
+    }
+    return (
+      yMul: 1,
+      xMul: 1,
+      lineHeightDots: 15,
+      charHeightDots: _fontBaseCharHeightDots,
+    );
+  }
+
+  static int _bandTopY(int bandHeightDots) => _yFromBottomDots(bandHeightDots);
 
   static ({int narrow, int wide}) _barcodeModuleWidthForPayload(String payload) {
     final len = payload.trim().length;
@@ -130,24 +186,53 @@ BACKFEED $backfeedDots
     return (narrow: 1, wide: 2);
   }
 
+  /// Perkiraan jumlah modul QR (EC level M) dari panjang payload.
+  static int _estimatedQrModules(String payload) {
+    final len = payload.trim().length;
+    if (len <= 6) return 21;
+    if (len <= 10) return 25;
+    if (len <= 14) return 29;
+    if (len <= 20) return 33;
+    return 37;
+  }
+
+  /// Module 3 (~9mm) untuk kode pendek; turun ke 2 jika tidak muat band 9mm.
+  static int _qrModuleSizeForPayload(String payload) {
+    final modules = _estimatedQrModules(payload);
+    final bandDots = mmToDots(kStockLabelQrMm);
+    if (modules * 3 <= bandDots) return 3;
+    if (modules * 2 <= bandDots) return 2;
+    return 1;
+  }
+
+  static int _codeYInBand(int bandTopY, int bandH, int elementH) {
+    if (elementH >= bandH) return bandTopY + bandH - elementH;
+    return bandTopY + ((bandH - elementH) / 2).round();
+  }
+
+  /// Y (dots) agar elemen [elementHeightDots] rapat ke bawah kepala.
+  static int _yFromBottomDots(int elementHeightDots) {
+    final bottomPad = mmToDots(_kContentBottomMarginMm);
+    return (_headHeightDots - bottomPad - elementHeightDots)
+        .clamp(0, _headHeightDots - elementHeightDots);
+  }
+
   static void _writeTextBlockInHead(
     StringBuffer buf, {
     required List<String> lines,
     required int zoneLeft,
-    required int zoneRight,
-    required int pad,
+    required int bandHeightDots,
   }) {
     if (lines.isEmpty) return;
 
-    final blockH = lines.length * _fontLineHeightDots;
-    var y = ((_headHeightDots - blockH) / 2)
-        .round()
-        .clamp(pad, _headHeightDots - blockH);
+    final metrics = _fitTextMetrics(bandHeightDots, lines.length);
+    var y = _bandTopY(bandHeightDots);
 
     for (final line in lines) {
-      final x = zoneLeft;
-      buf.writeln('TEXT $x,$y,"1",0,1,1,"${_esc(line)}"');
-      y += _fontLineHeightDots;
+      buf.writeln(
+        'TEXT $zoneLeft,$y,"1",0,${metrics.xMul},${metrics.yMul},"${_esc(line)}"',
+      );
+      y += metrics.lineHeightDots;
     }
   }
 
@@ -161,15 +246,21 @@ BACKFEED $backfeedDots
     if (payload.trim().isEmpty) return null;
 
     final layout = stockLabelResolveCodeLayout(format);
-    final pad = mmToDots(_kLabelPadMm);
     final textZoneW = mmToDots(StockLabelGeometry.headTextZoneWidthMm);
     final codeZoneLeft = textZoneW;
     final codeZoneW = mmToDots(StockLabelGeometry.headCodeZoneWidthMm);
     final codeBlockW = mmToDots(layout.totalWidthMm);
-    final textZoneLeft = pad;
-    final textZoneRight = textZoneW - pad;
+    final textPad = mmToDots(_kTextPadMm);
+    final textZoneLeft = textPad;
+    final textZoneRight = textZoneW - textPad;
     if (textZoneRight <= textZoneLeft) return null;
-    final maxTextChars = _maxCharsForZone(textZoneLeft, textZoneRight);
+    final bandH = _contentBandHeightDots(layout);
+    final textMetrics = _fitTextMetrics(bandH, 3);
+    final maxTextChars = _maxCharsForZone(
+      textZoneLeft,
+      textZoneRight,
+      xMul: textMetrics.xMul,
+    );
 
     final textLines = stockLabelTextLines(
       payload: payload,
@@ -180,6 +271,7 @@ BACKFEED $backfeedDots
     final qrDots = mmToDots(kStockLabelQrMm);
     final barH = mmToDots(kStockLabelBarcodeHeightMm);
     final codeGap = mmToDots(_kCodeGapMm);
+    final bandTopY = _bandTopY(bandH);
 
     final buf = StringBuffer();
     buf.writeln('CLS');
@@ -188,19 +280,18 @@ BACKFEED $backfeedDots
       buf,
       lines: textLines,
       zoneLeft: textZoneLeft,
-      zoneRight: textZoneRight,
-      pad: pad,
+      bandHeightDots: bandH,
     );
 
     var codeX = codeZoneLeft + ((codeZoneW - codeBlockW) / 2).round();
     final includeBarcode = layout.showBarcode;
 
     if (layout.showQr) {
-      final qrY = ((_headHeightDots - qrDots) / 2)
-          .round()
-          .clamp(pad, _headHeightDots - qrDots);
+      final qrModule = _qrModuleSizeForPayload(payload);
+      final qrHeightDots = _estimatedQrModules(payload) * qrModule;
+      final qrY = _codeYInBand(bandTopY, bandH, qrHeightDots);
       buf.writeln(
-        'QRCODE $codeX,$qrY,M,3,A,0,M2,S3,"${_esc(payload)}"',
+        'QRCODE $codeX,$qrY,M,$qrModule,A,0,M2,S3,"${_esc(payload)}"',
       );
       if (includeBarcode) {
         codeX += qrDots + codeGap;
@@ -208,9 +299,7 @@ BACKFEED $backfeedDots
     }
 
     if (includeBarcode) {
-      final barY = ((_headHeightDots - barH) / 2)
-          .round()
-          .clamp(pad, _headHeightDots - barH);
+      final barY = _codeYInBand(bandTopY, bandH, barH);
       final module = _barcodeModuleWidthForPayload(payload);
       buf.writeln(
         'BARCODE $codeX,$barY,"128",$barH,0,0,${module.narrow},${module.wide},"${_esc(payload)}"',
@@ -232,18 +321,7 @@ BACKFEED $backfeedDots
       ..writeln('TEXT 2,2,"1",0,1,1,"ATAS-KIRI"')
       ..writeln('TEXT 2,${h - 14},"1",0,1,1,"BAWAH"')
       ..writeln('PRINT 1,1');
-    return Uint8List.fromList(utf8.encode(buf.toString()));
-  }
-
-  static int _postPrintFeedDots() {
-    final pitchMm = StockLabelGeometry.tsplMediaHeightMm + kYupoLabelGapMm;
-    return mmToDots(pitchMm * kPostPrintExtraLabels);
-  }
-
-  static String _tearFeedCommand() {
-    final dots = _postPrintFeedDots();
-    if (dots <= 0) return '';
-    return 'FEED $dots\n';
+    return _encodeTspl(buf.toString());
   }
 
   static String buildOne({
@@ -261,7 +339,7 @@ BACKFEED $backfeedDots
       purity: purity,
     );
     if (body == null) return '';
-    return '${_jobHeader()}$body${_tearFeedCommand()}';
+    return '${_jobHeader()}$body';
   }
 
   static Uint8List buildBatch({
@@ -284,10 +362,14 @@ BACKFEED $backfeedDots
       );
       if (body != null) buf.write(body);
     }
-    buf.write(_tearFeedCommand());
-    return Uint8List.fromList(utf8.encode(buf.toString()));
+    return _encodeTspl(buf.toString());
   }
 }
 
-const double _kLabelPadMm = 0.8;
+// Teks: inset kiri — sudut die-cut leher memotong huruf jika terlalu kiri.
+const double _kTextPadMm = 3.0;
+
+// Jarak tepi bawah kepala ke dasar band konten (+ tsplCalibrationOffsetYMm).
+const double _kContentBottomMarginMm = 0.5;
+
 const double _kCodeGapMm = 1.0;

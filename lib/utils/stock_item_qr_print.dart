@@ -11,7 +11,7 @@ import 'package:vanessa3/utils/xprinter_tspl_print.dart';
 /// Label stok thermal jewelry Yupo — roll 80×12 mm, cetak di kepala 45×12 mm.
 const double kStockLabelWidthMm = StockLabelGeometry.totalWidthMm;
 const double kStockLabelHeightMm = StockLabelGeometry.totalHeightMm;
-const double kStockLabelQrMm = 8;
+const double kStockLabelQrMm = 9;
 const double kStockLabelBarcodeWidthMm = 20;
 const double kStockLabelBarcodeHeightMm = 8;
 
@@ -140,7 +140,7 @@ String _orDash(String? value) {
   return t.isEmpty ? '-' : t;
 }
 
-/// Teks label selalu 3 baris tetap: kode, kadar, berat.
+/// Teks label 3 baris: kode, kadar, berat (font normal TSPL).
 List<String> stockLabelTextLines({
   required String payload,
   String? purity,
