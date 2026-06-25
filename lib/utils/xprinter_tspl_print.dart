@@ -149,6 +149,106 @@ abstract final class XprinterTsplPrint {
     }
   }
 
+  // ── Diagnostics / calibration (TSPL) ──────────────────────────────────────
+
+  /// Pre-check posisi label sebelum cetak (GAPDETECT tanpa PRINT).
+  ///
+  /// Gunakan jika printer lama idle / baru tarik label / posisi ragu,
+  /// terutama untuk label kecil agar job pertama tidak meleset.
+  static Future<void> prePrintCheck(
+    BuildContext context,
+    BondedBluetoothPrinter printer,
+  ) async {
+    if (_printInFlight) {
+      _snack(context, 'Tunggu cetak selesai sebelum pre-check.');
+      return;
+    }
+    _printInFlight = true;
+    try {
+      final ok = await _sendRawTspl(
+        address: printer.address,
+        data: StockLabelTspl.buildPrePrintCheckJob(),
+      );
+      if (!context.mounted) return;
+      if (ok) {
+        _snack(context, 'Pre-check selesai. Label siap untuk dicetak.');
+      } else {
+        _snack(context, 'Printer tidak merespons. Coba lagi.');
+      }
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      _snack(context, e.message ?? 'Gagal pre-check: ${e.code}');
+    } finally {
+      _printInFlight = false;
+    }
+  }
+
+  /// Kalibrasi gap sensor (GAPDETECT) — sebaiknya **sekali** per ganti roll
+  /// atau saat printer baru dinyalakan.
+  ///
+  /// Catatan: proses ini normalnya membuang beberapa label kosong.
+  static Future<void> calibrateGapSensor(
+    BuildContext context,
+    BondedBluetoothPrinter printer,
+  ) async {
+    if (_printInFlight) {
+      _snack(context, 'Tunggu cetak selesai sebelum kalibrasi gap.');
+      return;
+    }
+    _printInFlight = true;
+    try {
+      final ok = await _sendRawTspl(
+        address: printer.address,
+        data: StockLabelTspl.buildGapCalibrationJob(),
+      );
+      if (!context.mounted) return;
+      if (ok) {
+        _snack(
+          context,
+          'Kalibrasi gap dikirim. Tunggu printer selesai bergerak, lalu coba cetak 1 label.',
+        );
+      } else {
+        _snack(context, 'Printer tidak merespons. Coba lagi.');
+      }
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      _snack(context, e.message ?? 'Gagal kalibrasi gap: ${e.code}');
+    } finally {
+      _printInFlight = false;
+    }
+  }
+
+  /// Cetak sample kotak penanda untuk mengecek offset (REFERENCE) terhadap label fisik.
+  ///
+  /// Gunakan jika konten sering kepotong / terlalu naik-turun.
+  static Future<void> printCalibrationSample(
+    BuildContext context,
+    BondedBluetoothPrinter printer,
+  ) async {
+    if (_printInFlight) {
+      _snack(context, 'Tunggu cetak selesai sebelum cetak sample kalibrasi.');
+      return;
+    }
+    _printInFlight = true;
+    try {
+      final ok = await _sendRawTspl(
+        address: printer.address,
+        data: StockLabelTspl.buildCalibrationSample(),
+      );
+      if (!context.mounted) return;
+      if (ok) {
+        _snack(context, 'Sample kalibrasi dikirim. Cek posisi kotak/tepi di label.');
+      } else {
+        _snack(context, 'Printer tidak merespons. Coba lagi.');
+      }
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      _snack(context, e.message ?? 'Gagal cetak sample: ${e.code}');
+    } finally {
+      _printInFlight = false;
+    }
+  }
+
   // ── Pick printer UI ───────────────────────────────────────────────────────
 
   static Future<BondedBluetoothPrinter?> pickPrinter(
@@ -249,6 +349,36 @@ abstract final class XprinterTsplPrint {
                     autoPositionNewRoll(context, device);
                   },
                 ),
+            for (final device in devices)
+              if (saved?.address == device.address) ...[
+                ListTile(
+                  leading: const Icon(Icons.check_circle_outline),
+                  title: const Text('Pre-check sebelum cetak'),
+                  subtitle: const Text('Cek posisi label via sensor (tanpa cetak)'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    prePrintCheck(context, device);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.tune, color: Colors.blueGrey),
+                  title: const Text('Kalibrasi Gap Sensor'),
+                  subtitle: const Text('Sekali per ganti roll/printer nyala (bisa buang beberapa label)'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    calibrateGapSensor(context, device);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.crop_square, color: Colors.teal),
+                  title: const Text('Cetak Sample Kalibrasi'),
+                  subtitle: const Text('Kotak/marker untuk cek offset & area cetak'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    printCalibrationSample(context, device);
+                  },
+                ),
+              ],
             const SizedBox(height: 8),
           ],
         ),
@@ -310,6 +440,13 @@ abstract final class XprinterTsplPrint {
 
       if (!context.mounted) return;
       _snack(context, 'Mengirim ${labels.length} label ke ${selected.name}…');
+
+      // Pre-check posisi sebelum batch: kurangi risiko label pertama meleset
+      // ketika printer baru idle / posisi kertas tidak tepat.
+      await _sendRawTspl(
+        address: selected.address,
+        data: StockLabelTspl.buildPrePrintCheckJob(),
+      );
 
       final bytes = StockLabelTspl.buildBatch(labels: labels);
       final ok = await _sendRawTspl(address: selected.address, data: bytes);
