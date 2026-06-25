@@ -191,6 +191,28 @@ abstract final class XprinterTsplPrint {
     BuildContext context,
     BondedBluetoothPrinter printer,
   ) async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Kalibrasi gap sensor?'),
+        content: const Text(
+          'Kalibrasi gap akan membuat printer bergerak dan biasanya membuang beberapa label kosong.\n\n'
+          'Lanjutkan?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Kalibrasi'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !context.mounted) return;
+
     if (_printInFlight) {
       _snack(context, 'Tunggu cetak selesai sebelum kalibrasi gap.');
       return;
@@ -443,10 +465,20 @@ abstract final class XprinterTsplPrint {
 
       // Pre-check posisi sebelum batch: kurangi risiko label pertama meleset
       // ketika printer baru idle / posisi kertas tidak tepat.
-      await _sendRawTspl(
-        address: selected.address,
-        data: StockLabelTspl.buildPrePrintCheckJob(),
-      );
+      //
+      // Untuk 1 label, skip agar lebih cepat dan tidak menambah peluang timeout BT.
+      if (labels.length > 1) {
+        final precheckOk = await _sendRawTspl(
+          address: selected.address,
+          data: StockLabelTspl.buildPrePrintCheckJob(),
+        );
+        if (precheckOk != true) {
+          throw const TsplPrintException(
+            'Pre-check gagal (printer tidak merespons). Coba «Posisikan Roll Baru». '
+            'Jika masih meleset, jalankan «Kalibrasi Gap Sensor».',
+          );
+        }
+      }
 
       final bytes = StockLabelTspl.buildBatch(labels: labels);
       final ok = await _sendRawTspl(address: selected.address, data: bytes);
