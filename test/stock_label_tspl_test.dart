@@ -224,4 +224,15 @@ void main() {
     expect(headerOnly, isNot(contains('BACKUP ')));
     expect(headerOnly, isNot(contains('\nHOME\n')));
   });
+
+  test('eject job feeds exactly one pitch', () {
+    const settings = StockLabelTsplSettings(gapMm: 3.0);
+    final text = String.fromCharCodes(
+      StockLabelTspl.buildEjectLastLabelJob(settings: settings),
+    );
+    expect(text, contains('FEED '));
+    // 12mm label + 3mm gap = 15mm ≈ 120 dots @203dpi.
+    expect(text, contains('FEED 120'));
+    expect(text, isNot(contains('GAPDETECT')));
+  });
 }

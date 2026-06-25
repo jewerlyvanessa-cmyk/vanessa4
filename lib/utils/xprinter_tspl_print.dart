@@ -843,6 +843,13 @@ abstract final class XprinterTsplPrint {
         );
       }
 
+      // Auto-eject: keluarkan label terakhir supaya bisa dirobek manual.
+      // Majukan 1 pitch (label + gap) tanpa GAPDETECT agar tidak membuang label kosong.
+      await _sendRawTspl(
+        address: selected.address,
+        data: StockLabelTspl.buildEjectLastLabelJob(settings: settings),
+      );
+
       await _savePrinter(selected);
       if (!context.mounted) return;
       _snack(

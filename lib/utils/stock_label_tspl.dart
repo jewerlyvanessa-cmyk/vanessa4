@@ -157,6 +157,26 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
     return _encodeTspl(buf.toString());
   }
 
+  /// Majukan media 1 pitch (label + gap) agar label terakhir keluar dan
+  /// bisa dirobek manual.
+  ///
+  /// Tidak memakai GAPDETECT supaya tidak membuang label kosong.
+  static Uint8List buildEjectLastLabelJob({
+    StockLabelTsplSettings settings = const StockLabelTsplSettings(),
+  }) {
+    final pitchMm = StockLabelGeometry.tsplMediaHeightMm + settings.gapMm;
+    final pitchDots = mmToDots(pitchMm).clamp(1, 2000);
+    final buf = StringBuffer()
+      ..writeln(
+        'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
+        '${StockLabelGeometry.tsplMediaHeightMm} mm',
+      )
+      ..writeln('DIRECTION 1,0')
+      ..writeln('OFFSET 0 mm')
+      ..writeln('FEED $pitchDots');
+    return _encodeTspl(buf.toString());
+  }
+
   static int _maxCharsForZone(int zoneLeft, int zoneRight, {int xMul = 1}) {
     final zoneW = (zoneRight - zoneLeft).clamp(0, 10000);
     final charW = _fontBaseCharWidthDots * xMul;
