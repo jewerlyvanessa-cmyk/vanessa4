@@ -830,22 +830,8 @@ abstract final class XprinterTsplPrint {
 
       final settings = await _loadLabelSettings(selected);
 
-      // Pre-check posisi sebelum batch: kurangi risiko label pertama meleset
-      // ketika printer baru idle / posisi kertas tidak tepat.
-      //
-      // Untuk 1 label, skip agar lebih cepat dan tidak menambah peluang timeout BT.
-      if (labels.length > 1) {
-        final precheckOk = await _sendRawTspl(
-          address: selected.address,
-          data: StockLabelTspl.buildPrePrintCheckJob(settings: settings),
-        );
-        if (precheckOk != true) {
-          throw const TsplPrintException(
-            'Pre-check gagal (printer tidak merespons). Coba «Posisikan Roll Baru». '
-            'Jika masih meleset, jalankan «Kalibrasi Gap Sensor».',
-          );
-        }
-      }
+      // Jangan GAPDETECT otomatis sebelum cetak — membuang label kosong antar sesi
+      // jika posisi sudah benar. Gunakan «Pre-check» manual dari menu printer.
 
       final bytes = StockLabelTspl.buildBatch(labels: labels, settings: settings);
       final ok = await _sendRawTspl(address: selected.address, data: bytes);

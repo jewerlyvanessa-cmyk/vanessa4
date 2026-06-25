@@ -24,7 +24,9 @@ object TsplBluetoothPrinter {
     private const val CHUNK_DELAY_MS = 25L
     private const val BASE_SETTLE_MS = 250L
     private const val SETTLE_PER_KB_MS = 40L
-    private const val MAX_SETTLE_MS = 2500L
+    private const val SETTLE_PER_LABEL_MS = 400L
+    private const val MAX_SETTLE_MS = 15000L
+    private const val GAPDETECT_SETTLE_MS = 8000L
     private const val CONNECT_RETRY_DELAY_MS = 400L
 
     fun hasNearbyPermissions(context: Context): Boolean {
@@ -141,14 +143,26 @@ object TsplBluetoothPrinter {
             if (offset < data.size) Thread.sleep(CHUNK_DELAY_MS)
         }
 
-        val settleMs = (BASE_SETTLE_MS + (data.size / 1024) * SETTLE_PER_KB_MS)
-            .coerceAtMost(MAX_SETTLE_MS)
-        Thread.sleep(settleMs)
+        Thread.sleep(estimateSettleMs(data))
 
         try {
             socket.close()
         } catch (_: IOException) {
         }
+    }
+
+    private fun estimateSettleMs(data: ByteArray): Long {
+        val text = String(data, Charsets.UTF_8)
+        if (text.contains("GAPDETECT", ignoreCase = true)) {
+            return GAPDETECT_SETTLE_MS
+        }
+
+        val printCount = Regex("PRINT\\s+1,1", RegexOption.IGNORE_CASE)
+            .findAll(text)
+            .count()
+        val sizeBased = BASE_SETTLE_MS + (data.size / 1024) * SETTLE_PER_KB_MS
+        val labelBased = printCount * SETTLE_PER_LABEL_MS
+        return (sizeBased + labelBased).coerceIn(BASE_SETTLE_MS, MAX_SETTLE_MS)
     }
 
     private fun BluetoothDevice.toMap(): Map<String, String> = mapOf(

@@ -39,10 +39,11 @@ class StockLabelTsplSettings {
 /// TSPL untuk Xprinter XP-TT426B — label jewelry Yupo @ 203 DPI.
 ///
 /// Skenario cetak:
-///  1. Header: SIZE/GAP/SET TEAR ON — tanpa HOME (TSPL2 HOME feed maju → skip label).
+///  1. Header: SIZE/GAP/SET TEAR OFF — tanpa HOME (TSPL2 HOME feed maju → skip label).
 ///  2. PRINT otomatis deteksi gap per label via sensor.
-///  3. Tanpa FEED ekstra di akhir job — SET TEAR ON sudah maju ke tear bar;
-///     FEED 2 pitch sebelumnya membuang 2 label kosong antar sesi cetak.
+///  3. SET TEAR OFF: berhenti di gap (print head aligned) — tidak maju ke tear bar
+///     tiap job. SET TEAR ON membuang banyak label kosong antar sesi cetak.
+///  4. Tanpa FEED/GAPDETECT otomatis di job cetak — posisi sudah benar setelah job sebelumnya.
 abstract final class StockLabelTspl {
   StockLabelTspl._();
 
@@ -83,8 +84,8 @@ abstract final class StockLabelTspl {
   /// Setup media + anchor origin kepala.
   ///
   /// Tidak ada HOME/FORMFEED di sini — XP-TT426B adalah TSPL2 di mana
-  /// HOME feeds FORWARD (skip label). SET TEAR ON + PRINT menangani
-  /// posisi secara otomatis via gap sensor untuk setiap label.
+  /// HOME feeds FORWARD (skip label). SET TEAR OFF + PRINT menangani
+  /// posisi via gap sensor tanpa feed ekstra ke tear bar antar sesi.
   static String _jobHeader(StockLabelTsplSettings settings) {
     final refLeftMm = StockLabelGeometry.tsplHeadLeftMm + settings.calibrationOffsetXMm;
     final refTopMm = settings.calibrationOffsetYMm;
@@ -99,7 +100,7 @@ DENSITY ${settings.density}
 DIRECTION 1,0
 REFERENCE $refX,$refY
 OFFSET 0 mm
-SET TEAR ON
+SET TEAR OFF
 SET PEEL OFF
 SET CUTTER OFF
 LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
@@ -111,12 +112,12 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
   static Uint8List buildGapCalibrationJob({StockLabelTsplSettings settings = const StockLabelTsplSettings()}) {
     final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
     final gapDots = mmToDots(settings.gapMm);
+    // TSPL: jangan kirim GAP bersamaan GAPDETECT — bisa konflik & feed berlebihan.
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
     return _encodeTspl(buf.toString());
   }
@@ -133,7 +134,6 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
       ..writeln('LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm')
@@ -150,9 +150,9 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
+      ..writeln('LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
     return _encodeTspl(buf.toString());
   }

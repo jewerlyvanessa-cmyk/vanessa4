@@ -13,11 +13,12 @@ void main() {
     expect(job, contains('SIZE 74.0 mm,12.0 mm'));
     expect(job, isNot(contains('GAPDETECT')));
     // TSPL2: HOME feeds FORWARD → skip label. Tidak dipakai di print job.
-    // SET TEAR ON + PRINT menangani posisi otomatis via gap sensor.
+    // SET TEAR OFF: berhenti di gap tanpa feed ekstra ke tear bar antar sesi.
     expect(job, isNot(contains('HOME')));
     expect(job, isNot(contains('BACKFEED')));
     expect(job, isNot(contains('BACKUP')));
-    expect(job, contains('SET TEAR ON'));
+    expect(job, contains('SET TEAR OFF'));
+    expect(job, isNot(contains('SET TEAR ON')));
     expect(job, contains('QRCODE'));
     expect(job, contains('GAP 3.0 mm,0 mm'));
     expect(job, isNot(matches(RegExp(r'PRINT 1,1\r?\nFEED'))));
@@ -40,12 +41,15 @@ void main() {
     expect(precheck, contains('GAPDETECT'));
     expect(precheck, isNot(contains('HOME')));
     expect(precheck, isNot(contains('PRINT')));
+    // TSPL: GAP + GAPDETECT bersamaan bisa feed berlebihan.
+    expect(precheck, isNot(contains(RegExp(r'\nGAP \d'))));
   });
 
   test('gap calibration job includes GAPDETECT only', () {
     final text = String.fromCharCodes(StockLabelTspl.buildGapCalibrationJob());
     expect(text, contains('GAPDETECT'));
     expect(text, isNot(contains('PRINT')));
+    expect(text, isNot(contains(RegExp(r'\nGAP \d'))));
   });
 
   test('code layout always fits right head zone', () {
@@ -188,7 +192,8 @@ void main() {
     expect(text, contains('GAPDETECT'));
     expect(text, isNot(contains('HOME')));
     expect(text, isNot(contains('PRINT')));
-    expect(text, contains('GAP 3.0 mm,0 mm'));
+    expect(text, isNot(contains(RegExp(r'\nGAP \d'))));
+    expect(text, contains('LIMITFEED'));
   });
 
   test('TSPL jobs use CRLF line endings', () {
