@@ -12,13 +12,12 @@ void main() {
     );
     expect(job, contains('SIZE 74.0 mm,12.0 mm'));
     expect(job, isNot(contains('GAPDETECT')));
-    // TSPL2: HOME feeds FORWARD → skip label. Tidak dipakai di print job.
-    // SET TEAR OFF: berhenti di gap tanpa feed ekstra ke tear bar antar sesi.
+    // Header SET TEAR OFF; label terakhir pakai SET TEAR ON agar bisa dirobek tanpa FEED eject.
     expect(job, isNot(contains('HOME')));
     expect(job, isNot(contains('BACKFEED')));
     expect(job, isNot(contains('BACKUP')));
     expect(job, contains('SET TEAR OFF'));
-    expect(job, isNot(contains('SET TEAR ON')));
+    expect(job, contains('SET TEAR ON'));
     expect(job, contains('QRCODE'));
     expect(job, contains('GAP 3.0 mm,0 mm'));
     expect(job, isNot(matches(RegExp(r'PRINT 1,1\r?\nFEED'))));
@@ -225,12 +224,29 @@ void main() {
     expect(headerOnly, isNot(contains('\nHOME\n')));
   });
 
-  test('eject job feeds exactly one pitch', () {
-    const settings = StockLabelTsplSettings(gapMm: 3.0);
+  test('batch uses SET TEAR ON only before last PRINT', () {
     final text = String.fromCharCodes(
-      StockLabelTspl.buildEjectLastLabelJob(settings: settings),
+      StockLabelTspl.buildBatch(
+        labels: [
+          (
+            payload: 'A',
+            titleLine: 'A',
+            format: StockLabelPrintChoice.qr,
+            weight: null,
+            purity: null,
+          ),
+          (
+            payload: 'B',
+            titleLine: 'B',
+            format: StockLabelPrintChoice.qr,
+            weight: null,
+            purity: null,
+          ),
+        ],
+      ),
     );
-    expect(text, contains('FEED '));
-    expect(text, isNot(contains('GAPDETECT')));
+    expect('SET TEAR ON'.allMatches(text).length, 1);
+    expect(text.indexOf('SET TEAR ON'), lessThan(text.lastIndexOf('PRINT 1,1')));
+    expect(text.lastIndexOf('SET TEAR ON'), lessThan(text.lastIndexOf('PRINT 1,1')));
   });
 }

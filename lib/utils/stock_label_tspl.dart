@@ -11,7 +11,6 @@ class StockLabelTsplSettings {
     this.density = 8,
     this.calibrationOffsetXMm = StockLabelGeometry.tsplCalibrationOffsetXMm,
     this.calibrationOffsetYMm = StockLabelGeometry.tsplCalibrationOffsetYMm,
-    this.ejectMm = 22.0,
   });
 
   final double gapMm;
@@ -19,9 +18,6 @@ class StockLabelTsplSettings {
   final int density;
   final double calibrationOffsetXMm;
   final double calibrationOffsetYMm;
-  /// Seberapa jauh printer maju setelah selesai cetak agar label mudah dirobek.
-  /// Nilai ini tergantung jarak head → tear bar; bisa dituning per printer.
-  final double ejectMm;
 
   StockLabelTsplSettings copyWith({
     double? gapMm,
@@ -29,7 +25,6 @@ class StockLabelTsplSettings {
     int? density,
     double? calibrationOffsetXMm,
     double? calibrationOffsetYMm,
-    double? ejectMm,
   }) {
     return StockLabelTsplSettings(
       gapMm: gapMm ?? this.gapMm,
@@ -37,7 +32,6 @@ class StockLabelTsplSettings {
       density: density ?? this.density,
       calibrationOffsetXMm: calibrationOffsetXMm ?? this.calibrationOffsetXMm,
       calibrationOffsetYMm: calibrationOffsetYMm ?? this.calibrationOffsetYMm,
-      ejectMm: ejectMm ?? this.ejectMm,
     );
   }
 }
@@ -47,9 +41,10 @@ class StockLabelTsplSettings {
 /// Skenario cetak:
 ///  1. Header: SIZE/GAP/SET TEAR OFF — tanpa HOME (TSPL2 HOME feed maju → skip label).
 ///  2. PRINT otomatis deteksi gap per label via sensor.
-///  3. SET TEAR OFF: berhenti di gap (print head aligned) — tidak maju ke tear bar
-///     tiap job. SET TEAR ON membuang banyak label kosong antar sesi cetak.
-///  4. Tanpa FEED/GAPDETECT otomatis di job cetak — posisi sudah benar setelah job sebelumnya.
+///  3. Label tengah batch: SET TEAR OFF — berhenti di awal label berikutnya (siap cetak lagi).
+///  4. Label terakhir batch: SET TEAR ON sebelum PRINT — label jadi di tear bar, bisa dirobek.
+///     Tanpa FEED eject terpisah (printer tidak rewind; eject memajukan label berikutnya → kosong).
+///  5. Tanpa GAPDETECT otomatis di job cetak — posisi sudah benar setelah job sebelumnya.
 abstract final class StockLabelTspl {
   StockLabelTspl._();
 
@@ -160,26 +155,6 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
       ..writeln('OFFSET 0 mm')
       ..writeln('LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
-    return _encodeTspl(buf.toString());
-  }
-
-  /// Majukan media 1 pitch (label + gap) agar label terakhir keluar dan
-  /// bisa dirobek manual.
-  ///
-  /// Tidak memakai GAPDETECT supaya tidak membuang label kosong.
-  static Uint8List buildEjectLastLabelJob({
-    StockLabelTsplSettings settings = const StockLabelTsplSettings(),
-  }) {
-    final buf = StringBuffer()
-      ..writeln(
-        'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
-        '${StockLabelGeometry.tsplMediaHeightMm} mm',
-      )
-      ..writeln('DIRECTION 1,0')
-      ..writeln('OFFSET 0 mm')
-      // Jangan gunakan GAPDETECT / TEAR mode di sini (berisiko buang label).
-      // Majukan sejauh [ejectMm] agar label terakhir keluar cukup untuk dirobek.
-      ..writeln('FEED ${mmToDots(settings.ejectMm)}');
     return _encodeTspl(buf.toString());
   }
 
@@ -401,7 +376,8 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
       purity: purity,
     );
     if (body == null) return '';
-    return '${_jobHeader(settings)}$body';
+    // Satu label = label terakhir → posisikan di tear bar tanpa FEED eject.
+    return '${_jobHeader(settings)}SET TEAR ON\n$body';
   }
 
   static Uint8List buildBatch({
@@ -414,7 +390,7 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
     })> labels,
     StockLabelTsplSettings settings = const StockLabelTsplSettings(),
   }) {
-    final buf = StringBuffer(_jobHeader(settings));
+    final bodies = <String>[];
     for (final label in labels) {
       final body = _buildLabelBody(
         payload: label.payload,
@@ -423,7 +399,13 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
         weight: label.weight,
         purity: label.purity,
       );
-      if (body != null) buf.write(body);
+      if (body != null) bodies.add(body);
+    }
+
+    final buf = StringBuffer(_jobHeader(settings));
+    for (var i = 0; i < bodies.length; i++) {
+      if (i == bodies.length - 1) buf.writeln('SET TEAR ON');
+      buf.write(bodies[i]);
     }
     return _encodeTspl(buf.toString());
   }
