@@ -35,7 +35,8 @@ void main() {
   });
 
   test('pre-print check job gap-detects without printing', () {
-    final precheck = String.fromCharCodes(StockLabelTspl.buildPrePrintCheckJob());
+    final precheck =
+        String.fromCharCodes(StockLabelTspl.buildPrePrintCheckJob());
     expect(precheck, contains('GAPDETECT'));
     expect(precheck, isNot(contains('HOME')));
     expect(precheck, isNot(contains('PRINT')));

@@ -4,6 +4,38 @@ import 'dart:typed_data';
 import 'package:vanessa3/utils/stock_item_qr_print.dart';
 import 'package:vanessa3/utils/stock_label_geometry.dart';
 
+class StockLabelTsplSettings {
+  const StockLabelTsplSettings({
+    this.gapMm = StockLabelTspl.kDefaultGapMm,
+    this.speed = 4,
+    this.density = 8,
+    this.calibrationOffsetXMm = StockLabelGeometry.tsplCalibrationOffsetXMm,
+    this.calibrationOffsetYMm = StockLabelGeometry.tsplCalibrationOffsetYMm,
+  });
+
+  final double gapMm;
+  final int speed;
+  final int density;
+  final double calibrationOffsetXMm;
+  final double calibrationOffsetYMm;
+
+  StockLabelTsplSettings copyWith({
+    double? gapMm,
+    int? speed,
+    int? density,
+    double? calibrationOffsetXMm,
+    double? calibrationOffsetYMm,
+  }) {
+    return StockLabelTsplSettings(
+      gapMm: gapMm ?? this.gapMm,
+      speed: speed ?? this.speed,
+      density: density ?? this.density,
+      calibrationOffsetXMm: calibrationOffsetXMm ?? this.calibrationOffsetXMm,
+      calibrationOffsetYMm: calibrationOffsetYMm ?? this.calibrationOffsetYMm,
+    );
+  }
+}
+
 /// TSPL untuk Xprinter XP-TT426B — label jewelry Yupo @ 203 DPI.
 ///
 /// Skenario cetak:
@@ -15,10 +47,9 @@ abstract final class StockLabelTspl {
   StockLabelTspl._();
 
   static const int _dpi = 203;
-  static const int _density = 8;
 
-  /// Jarak antar-label (celah die-cut) pada roll gap Yupo, mm — ukur fisik roll.
-  static const double kYupoLabelGapMm = 3.0;
+  /// Default jarak antar-label (celah die-cut) pada roll gap Yupo, mm.
+  static const double kDefaultGapMm = 3.0;
 
   static const int _fontBaseCharWidthDots = 8;
   static const int _fontBaseCharHeightDots = 12;
@@ -46,44 +77,46 @@ abstract final class StockLabelTspl {
 
   /// Batas maksimum jarak pencarian gap oleh sensor (mm).
   /// 4× pitch agar sensor tidak runaway jika gap terlewat.
-  static double get _limitFeedMm =>
-      (StockLabelGeometry.tsplMediaHeightMm + kYupoLabelGapMm) * 4;
+  static double _limitFeedMm(StockLabelTsplSettings settings) =>
+      (StockLabelGeometry.tsplMediaHeightMm + settings.gapMm) * 4;
 
   /// Setup media + anchor origin kepala.
   ///
   /// Tidak ada HOME/FORMFEED di sini — XP-TT426B adalah TSPL2 di mana
   /// HOME feeds FORWARD (skip label). SET TEAR ON + PRINT menangani
   /// posisi secara otomatis via gap sensor untuk setiap label.
-  static String _jobHeader() {
-    final refX = mmToDots(StockLabelGeometry.tsplReferenceLeftMm);
-    final refY = mmToDots(StockLabelGeometry.tsplReferenceTopMm);
+  static String _jobHeader(StockLabelTsplSettings settings) {
+    final refLeftMm = StockLabelGeometry.tsplHeadLeftMm + settings.calibrationOffsetXMm;
+    final refTopMm = settings.calibrationOffsetYMm;
+    final refX = mmToDots(refLeftMm);
+    final refY = mmToDots(refTopMm);
 
     return '''
 SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,${StockLabelGeometry.tsplMediaHeightMm} mm
-GAP $kYupoLabelGapMm mm,0 mm
-SPEED 4
-DENSITY $_density
+GAP ${settings.gapMm} mm,0 mm
+SPEED ${settings.speed}
+DENSITY ${settings.density}
 DIRECTION 1,0
 REFERENCE $refX,$refY
 OFFSET 0 mm
 SET TEAR ON
 SET PEEL OFF
 SET CUTTER OFF
-LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
+LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
 ''';
   }
 
   /// Kalibrasi gap sensor — **hanya sekali** saat ganti roll / printer nyala.
   /// Akan membuang beberapa label kosong (normal).
-  static Uint8List buildGapCalibrationJob() {
+  static Uint8List buildGapCalibrationJob({StockLabelTsplSettings settings = const StockLabelTsplSettings()}) {
     final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
-    final gapDots = mmToDots(kYupoLabelGapMm);
+    final gapDots = mmToDots(settings.gapMm);
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
+      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
     return _encodeTspl(buf.toString());
   }
@@ -92,32 +125,32 @@ LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
   ///
   /// Hanya GAPDETECT — HOME pada TSPL2 feed maju dan membuang label kosong.
   /// Panggil SEKALI saat pasang roll baru, lalu cetak normal.
-  static Uint8List buildNewRollPositionJob() {
+  static Uint8List buildNewRollPositionJob({StockLabelTsplSettings settings = const StockLabelTsplSettings()}) {
     final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
-    final gapDots = mmToDots(kYupoLabelGapMm);
+    final gapDots = mmToDots(settings.gapMm);
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
+      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
-      ..writeln('LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm')
+      ..writeln('LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
     return _encodeTspl(buf.toString());
   }
 
   /// Pre-check posisi awal paper sebelum job print (tanpa cetak).
-  static Uint8List buildPrePrintCheckJob() {
+  static Uint8List buildPrePrintCheckJob({StockLabelTsplSettings settings = const StockLabelTsplSettings()}) {
     final labelHDots = mmToDots(StockLabelGeometry.tsplMediaHeightMm);
-    final gapDots = mmToDots(kYupoLabelGapMm);
+    final gapDots = mmToDots(settings.gapMm);
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
         '${StockLabelGeometry.tsplMediaHeightMm} mm',
       )
-      ..writeln('GAP $kYupoLabelGapMm mm,0 mm')
+      ..writeln('GAP ${settings.gapMm} mm,0 mm')
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
       ..writeln('GAPDETECT $labelHDots,$gapDots');
@@ -311,10 +344,12 @@ LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
   }
 
   /// Label uji: kotak + garis tengah zona kepala — untuk kalibrasi offset.
-  static Uint8List buildCalibrationSample() {
+  static Uint8List buildCalibrationSample({
+    StockLabelTsplSettings settings = const StockLabelTsplSettings(),
+  }) {
     final w = _headWidthDots;
     final h = _headHeightDots;
-    final buf = StringBuffer(_jobHeader())
+    final buf = StringBuffer(_jobHeader(settings))
       ..writeln('CLS')
       ..writeln('BOX 0,0,$w,$h,2')
       ..writeln('BAR $w,0,$w,$h')
@@ -330,6 +365,7 @@ LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
     required StockLabelPrintChoice format,
     String? weight,
     String? purity,
+    StockLabelTsplSettings settings = const StockLabelTsplSettings(),
   }) {
     final body = _buildLabelBody(
       payload: payload,
@@ -339,7 +375,7 @@ LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
       purity: purity,
     );
     if (body == null) return '';
-    return '${_jobHeader()}$body';
+    return '${_jobHeader(settings)}$body';
   }
 
   static Uint8List buildBatch({
@@ -350,8 +386,9 @@ LIMITFEED ${_limitFeedMm.toStringAsFixed(0)} mm
       String? weight,
       String? purity,
     })> labels,
+    StockLabelTsplSettings settings = const StockLabelTsplSettings(),
   }) {
-    final buf = StringBuffer(_jobHeader());
+    final buf = StringBuffer(_jobHeader(settings));
     for (final label in labels) {
       final body = _buildLabelBody(
         payload: label.payload,

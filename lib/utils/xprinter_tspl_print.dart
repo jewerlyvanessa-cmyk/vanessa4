@@ -31,6 +31,259 @@ abstract final class XprinterTsplPrint {
 
   static bool _printInFlight = false;
 
+  static String _prefGapKey(String address) => 'tspl_gap_mm_$address';
+  static String _prefOffsetXKey(String address) => 'tspl_offset_x_mm_$address';
+  static String _prefOffsetYKey(String address) => 'tspl_offset_y_mm_$address';
+  static String _prefSpeedKey(String address) => 'tspl_speed_$address';
+  static String _prefDensityKey(String address) => 'tspl_density_$address';
+
+  static Future<StockLabelTsplSettings> _loadLabelSettings(
+    BondedBluetoothPrinter printer,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    const d = StockLabelTsplSettings();
+    final addr = printer.address;
+    return StockLabelTsplSettings(
+      gapMm: prefs.getDouble(_prefGapKey(addr)) ?? d.gapMm,
+      calibrationOffsetXMm:
+          prefs.getDouble(_prefOffsetXKey(addr)) ?? d.calibrationOffsetXMm,
+      calibrationOffsetYMm:
+          prefs.getDouble(_prefOffsetYKey(addr)) ?? d.calibrationOffsetYMm,
+      speed: prefs.getInt(_prefSpeedKey(addr)) ?? d.speed,
+      density: prefs.getInt(_prefDensityKey(addr)) ?? d.density,
+    );
+  }
+
+  static Future<void> _saveLabelSettings(
+    BondedBluetoothPrinter printer,
+    StockLabelTsplSettings settings,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final addr = printer.address;
+    await prefs.setDouble(_prefGapKey(addr), settings.gapMm);
+    await prefs.setDouble(_prefOffsetXKey(addr), settings.calibrationOffsetXMm);
+    await prefs.setDouble(_prefOffsetYKey(addr), settings.calibrationOffsetYMm);
+    await prefs.setInt(_prefSpeedKey(addr), settings.speed);
+    await prefs.setInt(_prefDensityKey(addr), settings.density);
+  }
+
+  static Future<Map<String, StockLabelTsplSettings>> _loadSettingsForDevices(
+    List<BondedBluetoothPrinter> devices,
+  ) async {
+    if (devices.isEmpty) return const {};
+    final prefs = await SharedPreferences.getInstance();
+    const d = StockLabelTsplSettings();
+    final out = <String, StockLabelTsplSettings>{};
+    for (final p in devices) {
+      final addr = p.address;
+      out[addr] = StockLabelTsplSettings(
+        gapMm: prefs.getDouble(_prefGapKey(addr)) ?? d.gapMm,
+        calibrationOffsetXMm:
+            prefs.getDouble(_prefOffsetXKey(addr)) ?? d.calibrationOffsetXMm,
+        calibrationOffsetYMm:
+            prefs.getDouble(_prefOffsetYKey(addr)) ?? d.calibrationOffsetYMm,
+        speed: prefs.getInt(_prefSpeedKey(addr)) ?? d.speed,
+        density: prefs.getInt(_prefDensityKey(addr)) ?? d.density,
+      );
+    }
+    return out;
+  }
+
+  static String _fmtSettings(StockLabelTsplSettings s) {
+    String mm(double v) => v.toStringAsFixed(1);
+    return 'Gap ${mm(s.gapMm)} • OffX ${mm(s.calibrationOffsetXMm)} • '
+        'OffY ${mm(s.calibrationOffsetYMm)} • D${s.density} • S${s.speed}';
+  }
+
+  static Future<void> editPrinterLabelSettings(
+    BuildContext context,
+    BondedBluetoothPrinter printer,
+  ) async {
+    final current = await _loadLabelSettings(printer);
+    if (!context.mounted) return;
+
+    final gapCtrl = TextEditingController(text: current.gapMm.toString());
+    final offXCtrl =
+        TextEditingController(text: current.calibrationOffsetXMm.toString());
+    final offYCtrl =
+        TextEditingController(text: current.calibrationOffsetYMm.toString());
+    final speedCtrl = TextEditingController(text: current.speed.toString());
+    final densityCtrl = TextEditingController(text: current.density.toString());
+
+    StockLabelTsplSettings? result;
+    try {
+      result = await showDialog<StockLabelTsplSettings>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Pengaturan Label (${printer.name})'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Setelan ini khusus untuk printer ini (berdasarkan alamat Bluetooth).',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: gapCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Gap (mm)',
+                    hintText: 'mis. 3.0',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: offXCtrl,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Offset X (mm)',
+                          hintText: 'mis. 0.0',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: offYCtrl,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Offset Y (mm)',
+                          hintText: 'mis. 3.5',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: speedCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Speed',
+                          hintText: 'mis. 4',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: densityCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Density',
+                          hintText: 'mis. 8',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Tip: setelah ubah Offset/Gap, jalankan «Pre-check» lalu cetak 1 label untuk verifikasi.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Batal'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, const StockLabelTsplSettings()),
+              child: const Text('Reset default'),
+            ),
+            FilledButton(
+              onPressed: () {
+                double? parseD(String s) => double.tryParse(s.trim());
+                int? parseI(String s) => int.tryParse(s.trim());
+
+                final gap = parseD(gapCtrl.text);
+                final offX = parseD(offXCtrl.text);
+                final offY = parseD(offYCtrl.text);
+                final speed = parseI(speedCtrl.text);
+                final density = parseI(densityCtrl.text);
+
+                if (gap == null ||
+                    offX == null ||
+                    offY == null ||
+                    speed == null ||
+                    density == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Input tidak valid.')),
+                  );
+                  return;
+                }
+
+                final safeGap = gap.clamp(0.5, 10.0).toDouble();
+                final safeSpeed = speed.clamp(1, 8);
+                final safeDensity = density.clamp(0, 15);
+
+                Navigator.pop(
+                  ctx,
+                  StockLabelTsplSettings(
+                    gapMm: safeGap,
+                    speed: safeSpeed,
+                    density: safeDensity,
+                    calibrationOffsetXMm: offX,
+                    calibrationOffsetYMm: offY,
+                  ),
+                );
+              },
+              child: const Text('Simpan'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      gapCtrl.dispose();
+      offXCtrl.dispose();
+      offYCtrl.dispose();
+      speedCtrl.dispose();
+      densityCtrl.dispose();
+    }
+
+    if (!context.mounted || result == null) return;
+    await _saveLabelSettings(printer, result);
+    if (!context.mounted) return;
+    _snack(context, 'Pengaturan label tersimpan untuk ${printer.name}.');
+  }
+
+  static Future<void> _runToolAndCloseSheet({
+    required BuildContext sheetContext,
+    required BuildContext appContext,
+    required Future<void> Function() action,
+  }) async {
+    Navigator.pop(sheetContext);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    if (!appContext.mounted) return;
+    await action();
+  }
+
   // ── Permission ────────────────────────────────────────────────────────────
 
   /// Tampilkan dialog sistem Android untuk meminta izin Bluetooth.
@@ -128,9 +381,10 @@ abstract final class XprinterTsplPrint {
     }
     _printInFlight = true;
     try {
+      final settings = await _loadLabelSettings(printer);
       final ok = await _sendRawTspl(
         address: printer.address,
-        data: StockLabelTspl.buildNewRollPositionJob(),
+        data: StockLabelTspl.buildNewRollPositionJob(settings: settings),
       );
       if (!context.mounted) return;
       if (ok) {
@@ -165,9 +419,10 @@ abstract final class XprinterTsplPrint {
     }
     _printInFlight = true;
     try {
+      final settings = await _loadLabelSettings(printer);
       final ok = await _sendRawTspl(
         address: printer.address,
-        data: StockLabelTspl.buildPrePrintCheckJob(),
+        data: StockLabelTspl.buildPrePrintCheckJob(settings: settings),
       );
       if (!context.mounted) return;
       if (ok) {
@@ -219,9 +474,10 @@ abstract final class XprinterTsplPrint {
     }
     _printInFlight = true;
     try {
+      final settings = await _loadLabelSettings(printer);
       final ok = await _sendRawTspl(
         address: printer.address,
-        data: StockLabelTspl.buildGapCalibrationJob(),
+        data: StockLabelTspl.buildGapCalibrationJob(settings: settings),
       );
       if (!context.mounted) return;
       if (ok) {
@@ -253,9 +509,10 @@ abstract final class XprinterTsplPrint {
     }
     _printInFlight = true;
     try {
+      final settings = await _loadLabelSettings(printer);
       final ok = await _sendRawTspl(
         address: printer.address,
-        data: StockLabelTspl.buildCalibrationSample(),
+        data: StockLabelTspl.buildCalibrationSample(settings: settings),
       );
       if (!context.mounted) return;
       if (ok) {
@@ -329,6 +586,9 @@ abstract final class XprinterTsplPrint {
     final saved = await loadSavedPrinter();
     if (!context.mounted) return null;
 
+    final settingsByAddr = await _loadSettingsForDevices(devices);
+    if (!context.mounted) return null;
+
     return showModalBottomSheet<BondedBluetoothPrinter>(
       context: context,
       showDragHandle: true,
@@ -348,10 +608,106 @@ abstract final class XprinterTsplPrint {
               ListTile(
                 leading: const Icon(Icons.print_outlined),
                 title: Text(device.name),
-                subtitle: Text(device.address),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(device.address),
+                    const SizedBox(height: 2),
+                    Text(
+                      _fmtSettings(
+                        settingsByAddr[device.address] ??
+                            const StockLabelTsplSettings(),
+                      ),
+                      style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(ctx)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.85),
+                            height: 1.2,
+                          ),
+                    ),
+                  ],
+                ),
                 trailing: saved?.address == device.address
                     ? const Icon(Icons.check_circle, color: Colors.green)
-                    : null,
+                    : PopupMenuButton<String>(
+                        tooltip: 'Tools',
+                        onSelected: (value) async {
+                          if (value == 'new_roll') {
+                            await _runToolAndCloseSheet(
+                              sheetContext: ctx,
+                              appContext: context,
+                              action: () => autoPositionNewRoll(context, device),
+                            );
+                          } else if (value == 'precheck') {
+                            await _runToolAndCloseSheet(
+                              sheetContext: ctx,
+                              appContext: context,
+                              action: () => prePrintCheck(context, device),
+                            );
+                          } else if (value == 'gap_cal') {
+                            await _runToolAndCloseSheet(
+                              sheetContext: ctx,
+                              appContext: context,
+                              action: () => calibrateGapSensor(context, device),
+                            );
+                          } else if (value == 'sample') {
+                            await _runToolAndCloseSheet(
+                              sheetContext: ctx,
+                              appContext: context,
+                              action: () => printCalibrationSample(context, device),
+                            );
+                          } else if (value == 'settings') {
+                            await _runToolAndCloseSheet(
+                              sheetContext: ctx,
+                              appContext: context,
+                              action: () => editPrinterLabelSettings(context, device),
+                            );
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'new_roll',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.restart_alt, color: Colors.orange),
+                              title: Text('Posisikan Roll Baru'),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'precheck',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.check_circle_outline),
+                              title: Text('Pre-check sebelum cetak'),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'gap_cal',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.tune, color: Colors.blueGrey),
+                              title: Text('Kalibrasi Gap Sensor'),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'sample',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.crop_square, color: Colors.teal),
+                              title: Text('Cetak Sample Kalibrasi'),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'settings',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(Icons.settings),
+                              title: Text('Pengaturan Label…'),
+                            ),
+                          ),
+                        ],
+                      ),
                 onTap: () => Navigator.pop(ctx, device),
               ),
             const Divider(height: 1),
@@ -373,6 +729,15 @@ abstract final class XprinterTsplPrint {
                 ),
             for (final device in devices)
               if (saved?.address == device.address) ...[
+                ListTile(
+                  leading: const Icon(Icons.settings),
+                  title: const Text('Pengaturan Label…'),
+                  subtitle: const Text('Gap/offset/density/speed untuk printer ini'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    editPrinterLabelSettings(context, device);
+                  },
+                ),
                 ListTile(
                   leading: const Icon(Icons.check_circle_outline),
                   title: const Text('Pre-check sebelum cetak'),
@@ -463,6 +828,8 @@ abstract final class XprinterTsplPrint {
       if (!context.mounted) return;
       _snack(context, 'Mengirim ${labels.length} label ke ${selected.name}…');
 
+      final settings = await _loadLabelSettings(selected);
+
       // Pre-check posisi sebelum batch: kurangi risiko label pertama meleset
       // ketika printer baru idle / posisi kertas tidak tepat.
       //
@@ -470,7 +837,7 @@ abstract final class XprinterTsplPrint {
       if (labels.length > 1) {
         final precheckOk = await _sendRawTspl(
           address: selected.address,
-          data: StockLabelTspl.buildPrePrintCheckJob(),
+          data: StockLabelTspl.buildPrePrintCheckJob(settings: settings),
         );
         if (precheckOk != true) {
           throw const TsplPrintException(
@@ -480,7 +847,7 @@ abstract final class XprinterTsplPrint {
         }
       }
 
-      final bytes = StockLabelTspl.buildBatch(labels: labels);
+      final bytes = StockLabelTspl.buildBatch(labels: labels, settings: settings);
       final ok = await _sendRawTspl(address: selected.address, data: bytes);
 
       if (ok != true) {
