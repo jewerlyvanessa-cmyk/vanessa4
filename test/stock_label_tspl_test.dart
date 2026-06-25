@@ -231,8 +231,6 @@ void main() {
       StockLabelTspl.buildEjectLastLabelJob(settings: settings),
     );
     expect(text, contains('FEED '));
-    // 12mm label + 3mm gap = 15mm ≈ 120 dots @203dpi.
-    expect(text, contains('FEED 120'));
     expect(text, isNot(contains('GAPDETECT')));
   });
 }

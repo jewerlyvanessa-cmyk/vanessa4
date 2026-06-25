@@ -36,6 +36,7 @@ abstract final class XprinterTsplPrint {
   static String _prefOffsetYKey(String address) => 'tspl_offset_y_mm_$address';
   static String _prefSpeedKey(String address) => 'tspl_speed_$address';
   static String _prefDensityKey(String address) => 'tspl_density_$address';
+  static String _prefEjectKey(String address) => 'tspl_eject_mm_$address';
 
   static Future<StockLabelTsplSettings> _loadLabelSettings(
     BondedBluetoothPrinter printer,
@@ -51,6 +52,7 @@ abstract final class XprinterTsplPrint {
           prefs.getDouble(_prefOffsetYKey(addr)) ?? d.calibrationOffsetYMm,
       speed: prefs.getInt(_prefSpeedKey(addr)) ?? d.speed,
       density: prefs.getInt(_prefDensityKey(addr)) ?? d.density,
+      ejectMm: prefs.getDouble(_prefEjectKey(addr)) ?? d.ejectMm,
     );
   }
 
@@ -65,6 +67,7 @@ abstract final class XprinterTsplPrint {
     await prefs.setDouble(_prefOffsetYKey(addr), settings.calibrationOffsetYMm);
     await prefs.setInt(_prefSpeedKey(addr), settings.speed);
     await prefs.setInt(_prefDensityKey(addr), settings.density);
+    await prefs.setDouble(_prefEjectKey(addr), settings.ejectMm);
   }
 
   static Future<Map<String, StockLabelTsplSettings>> _loadSettingsForDevices(
@@ -84,6 +87,7 @@ abstract final class XprinterTsplPrint {
             prefs.getDouble(_prefOffsetYKey(addr)) ?? d.calibrationOffsetYMm,
         speed: prefs.getInt(_prefSpeedKey(addr)) ?? d.speed,
         density: prefs.getInt(_prefDensityKey(addr)) ?? d.density,
+        ejectMm: prefs.getDouble(_prefEjectKey(addr)) ?? d.ejectMm,
       );
     }
     return out;
@@ -92,7 +96,8 @@ abstract final class XprinterTsplPrint {
   static String _fmtSettings(StockLabelTsplSettings s) {
     String mm(double v) => v.toStringAsFixed(1);
     return 'Gap ${mm(s.gapMm)} • OffX ${mm(s.calibrationOffsetXMm)} • '
-        'OffY ${mm(s.calibrationOffsetYMm)} • D${s.density} • S${s.speed}';
+        'OffY ${mm(s.calibrationOffsetYMm)} • Ej ${mm(s.ejectMm)} • '
+        'D${s.density} • S${s.speed}';
   }
 
   static Future<void> editPrinterLabelSettings(
@@ -109,6 +114,7 @@ abstract final class XprinterTsplPrint {
         TextEditingController(text: current.calibrationOffsetYMm.toString());
     final speedCtrl = TextEditingController(text: current.speed.toString());
     final densityCtrl = TextEditingController(text: current.density.toString());
+    final ejectCtrl = TextEditingController(text: current.ejectMm.toString());
 
     StockLabelTsplSettings? result;
     try {
@@ -200,6 +206,18 @@ abstract final class XprinterTsplPrint {
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: ejectCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Eject (mm)',
+                    hintText: 'mis. 22.0',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 const Text(
                   'Tip: setelah ubah Offset/Gap, jalankan «Pre-check» lalu cetak 1 label untuk verifikasi.',
@@ -227,12 +245,14 @@ abstract final class XprinterTsplPrint {
                 final offY = parseD(offYCtrl.text);
                 final speed = parseI(speedCtrl.text);
                 final density = parseI(densityCtrl.text);
+                final eject = parseD(ejectCtrl.text);
 
                 if (gap == null ||
                     offX == null ||
                     offY == null ||
                     speed == null ||
-                    density == null) {
+                    density == null ||
+                    eject == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Input tidak valid.')),
                   );
@@ -242,6 +262,7 @@ abstract final class XprinterTsplPrint {
                 final safeGap = gap.clamp(0.5, 10.0).toDouble();
                 final safeSpeed = speed.clamp(1, 8);
                 final safeDensity = density.clamp(0, 15);
+                final safeEject = eject.clamp(5.0, 60.0).toDouble();
 
                 Navigator.pop(
                   ctx,
@@ -251,6 +272,7 @@ abstract final class XprinterTsplPrint {
                     density: safeDensity,
                     calibrationOffsetXMm: offX,
                     calibrationOffsetYMm: offY,
+                    ejectMm: safeEject,
                   ),
                 );
               },
@@ -265,6 +287,7 @@ abstract final class XprinterTsplPrint {
       offYCtrl.dispose();
       speedCtrl.dispose();
       densityCtrl.dispose();
+      ejectCtrl.dispose();
     }
 
     if (!context.mounted || result == null) return;

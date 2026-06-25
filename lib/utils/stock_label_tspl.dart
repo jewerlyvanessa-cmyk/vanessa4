@@ -11,6 +11,7 @@ class StockLabelTsplSettings {
     this.density = 8,
     this.calibrationOffsetXMm = StockLabelGeometry.tsplCalibrationOffsetXMm,
     this.calibrationOffsetYMm = StockLabelGeometry.tsplCalibrationOffsetYMm,
+    this.ejectMm = 22.0,
   });
 
   final double gapMm;
@@ -18,6 +19,9 @@ class StockLabelTsplSettings {
   final int density;
   final double calibrationOffsetXMm;
   final double calibrationOffsetYMm;
+  /// Seberapa jauh printer maju setelah selesai cetak agar label mudah dirobek.
+  /// Nilai ini tergantung jarak head → tear bar; bisa dituning per printer.
+  final double ejectMm;
 
   StockLabelTsplSettings copyWith({
     double? gapMm,
@@ -25,6 +29,7 @@ class StockLabelTsplSettings {
     int? density,
     double? calibrationOffsetXMm,
     double? calibrationOffsetYMm,
+    double? ejectMm,
   }) {
     return StockLabelTsplSettings(
       gapMm: gapMm ?? this.gapMm,
@@ -32,6 +37,7 @@ class StockLabelTsplSettings {
       density: density ?? this.density,
       calibrationOffsetXMm: calibrationOffsetXMm ?? this.calibrationOffsetXMm,
       calibrationOffsetYMm: calibrationOffsetYMm ?? this.calibrationOffsetYMm,
+      ejectMm: ejectMm ?? this.ejectMm,
     );
   }
 }
@@ -164,8 +170,6 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
   static Uint8List buildEjectLastLabelJob({
     StockLabelTsplSettings settings = const StockLabelTsplSettings(),
   }) {
-    final pitchMm = StockLabelGeometry.tsplMediaHeightMm + settings.gapMm;
-    final pitchDots = mmToDots(pitchMm).clamp(1, 2000);
     final buf = StringBuffer()
       ..writeln(
         'SIZE ${StockLabelGeometry.tsplMediaWidthMm} mm,'
@@ -173,7 +177,9 @@ LIMITFEED ${_limitFeedMm(settings).toStringAsFixed(0)} mm
       )
       ..writeln('DIRECTION 1,0')
       ..writeln('OFFSET 0 mm')
-      ..writeln('FEED $pitchDots');
+      // Jangan gunakan GAPDETECT / TEAR mode di sini (berisiko buang label).
+      // Majukan sejauh [ejectMm] agar label terakhir keluar cukup untuk dirobek.
+      ..writeln('FEED ${mmToDots(settings.ejectMm)}');
     return _encodeTspl(buf.toString());
   }
 
